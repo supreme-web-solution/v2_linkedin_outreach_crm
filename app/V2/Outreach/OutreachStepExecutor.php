@@ -1,0 +1,143 @@
+<?php
+
+namespace App\V2\Outreach;
+
+use App\Models\V2IntegrationAccount;
+use App\Models\V2OutreachCampaign;
+use App\Models\V2OutreachLead;
+use App\V2\Integrations\Unipile\UnipileException;
+use App\V2\Outreach\Channels\ChannelExecutorInterface;
+use App\V2\Outreach\Channels\EmailChannelExecutor;
+use App\V2\Outreach\Channels\LinkedInChannelExecutor;
+use App\V2\Outreach\Channels\MessagingChannelExecutor;
+use App\V2\Services\LinkedInConnectionService;
+use App\V2\Services\UnifiedInboxService;
+use Throwable;
+
+class OutreachStepExecutor
+{
+    /** @var array<string, ChannelExecutorInterface> */
+    private array $executors;
+
+    public function __construct(
+        LinkedInChannelExecutor $linkedIn,
+        EmailChannelExecutor $email,
+        LinkedInConnectionService $linkedInConnection,
+        OutreachChannelGuard $guard,
+        OutreachSequenceResolver $resolver,
+        \App\V2\Integrations\ProviderManager $providerManager,
+        UnifiedInboxService $unifiedInbox,
+    ) {
+        $this->resolver = $resolver;
+        $this->linkedInConnection = $linkedInConnection;
+        $this->guard = $guard;
+        $contactResolver = app(OutreachLeadContactResolver::class);
+        $this->executors = [
+            'linkedin' => $linkedIn,
+            'email' => $email,
+            'whatsapp' => new MessagingChannelExecutor('whatsapp', $providerManager, $contactResolver, $unifiedInbox),
+            'instagram' => new MessagingChannelExecutor('instagram', $providerManager, $contactResolver, $unifiedInbox),
+            'telegram' => new MessagingChannelExecutor('telegram', $providerManager, $contactResolver, $unifiedInbox),
+            'twitter' => new MessagingChannelExecutor('twitter', $providerManager, $contactResolver, $unifiedInbox),
+        ];
+    }
+
+    private OutreachSequenceResolver $resolver;
+
+    private LinkedInConnectionService $linkedInConnection;
+
+    private OutreachChannelGuard $guard;
+
+    /**
+     * @param  array<string, mixed>  $node
+     * @return array<string, mixed>
+     */
+    public function execute(
+        V2OutreachCampaign $campaign,
+        V2OutreachLead $lead,
+        array $node,
+    ): array {
+        $type = (string) ($node['type'] ?? 'action');
+
+        if ($type === 'delay') {
+            $seconds = $this->resolver->delaySeconds($node);
+
+            return [
+                'status' => 'scheduled',
+                'payload' => ['wait_seconds' => $seconds],
+                'next_run_at' => now()->addSeconds($seconds),
+            ];
+        }
+
+        if ($type === 'condition') {
+            return ['status' => 'waiting', 'payload' => ['reason' => 'awaiting_condition']];
+        }
+
+        if ($type === 'end') {
+            return ['status' => 'completed', 'payload' => ['halt' => true]];
+        }
+
+        $channel = (string) ($node['channel'] ?? '');
+        $action = (string) ($node['action'] ?? '');
+
+        if ($channel === '' || $action === '') {
+            return ['status' => 'failed', 'error_message' => 'Step missing channel or action.'];
+        }
+
+        $integrationProvider = OutreachChannelRegistry::channels()[$channel]['integration_provider'] ?? $channel;
+        $accountId = V2IntegrationAccount::activeUnipileAccountIdForProvider((int) $campaign->user_id, $integrationProvider);
+
+        if ($accountId === null) {
+            return [
+                'status' => 'channel_disconnected',
+                'error_message' => OutreachChannelRegistry::channelLabel($channel).' is not connected.',
+                'payload' => ['channel' => $channel],
+            ];
+        }
+
+        $executor = $this->executors[$channel] ?? null;
+        if ($executor === null) {
+            return ['status' => 'failed', 'error_message' => "No executor for channel: {$channel}"];
+        }
+
+        $context = [
+            'owner_id' => (string) $campaign->user_id,
+            'organization_id' => $campaign->organization_id,
+            'account_id' => $accountId,
+            'outreach_campaign_id' => $campaign->id,
+            'outreach_lead_id' => $lead->id,
+            'channel' => $channel,
+        ];
+
+        try {
+            $result = $executor->execute($action, $campaign, $lead, $node, $context);
+
+            if (($result['status'] ?? '') === 'failed') {
+                $error = (string) ($result['error_message'] ?? '');
+                if ($this->guard->isDisconnectedMessage($error)) {
+                    return ['status' => 'channel_disconnected', 'error_message' => $error, 'payload' => ['channel' => $channel]];
+                }
+            }
+
+            return $result;
+        } catch (Throwable $e) {
+            if ($e instanceof UnipileException && $this->linkedInConnection->isDisconnectedError($e)) {
+                return [
+                    'status' => 'channel_disconnected',
+                    'error_message' => $e->getMessage(),
+                    'payload' => ['channel' => $channel],
+                ];
+            }
+
+            if ($this->guard->isDisconnected($e)) {
+                return [
+                    'status' => 'channel_disconnected',
+                    'error_message' => $e->getMessage(),
+                    'payload' => ['channel' => $channel],
+                ];
+            }
+
+            return ['status' => 'failed', 'error_message' => $e->getMessage()];
+        }
+    }
+}

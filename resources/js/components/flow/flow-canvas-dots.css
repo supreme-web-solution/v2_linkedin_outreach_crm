@@ -1,0 +1,12 @@
+/* Shared dot canvas — pane must stay transparent so Vue Flow Background shows through */
+.flow-canvas-dots :deep(.vue-flow__pane) {
+    background-color: transparent !important;
+}
+
+.flow-canvas-dots :deep(.vue-flow__background) {
+    background-color: #eef2f7;
+}
+
+.flow-canvas-dots :deep(.vue-flow__background pattern circle) {
+    opacity: 0.55;
+}

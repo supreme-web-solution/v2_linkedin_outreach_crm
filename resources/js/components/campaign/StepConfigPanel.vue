@@ -1,0 +1,166 @@
+<script setup lang="ts">
+import { computed } from 'vue';
+import { Clock, Trash2 } from '@lucide/vue';
+import FlowMessageAiHelp from '@/components/flow/FlowMessageAiHelp.vue';
+import CampaignActionIcon from '@/components/campaign/CampaignActionIcon.vue';
+import { CAMPAIGN_ACTIONS, type CampaignStep } from '@/components/campaign/types';
+
+const props = defineProps<{
+    step: CampaignStep;
+}>();
+
+const emit = defineEmits<{
+    updateField: [field: string, value: unknown];
+    updateConfig: [key: string, value: unknown];
+    delete: [];
+    addAfter: [type: 'action' | 'delay', value?: string];
+}>();
+
+const isAction = computed(() => props.step.type === 'action');
+const isDelay = computed(() => props.step.type === 'delay');
+const isCondition = computed(() => props.step.type === 'condition');
+const isEnd = computed(() => props.step.type === 'end');
+</script>
+
+<template>
+    <div class="flex flex-col gap-4">
+        <div class="flex items-start justify-between gap-2">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected step</p>
+                <p class="text-sm font-semibold">{{ step.label }}</p>
+                <p class="text-[11px] capitalize text-muted-foreground">{{ step.type }}</p>
+            </div>
+            <button
+                v-if="!isEnd && !isCondition"
+                type="button"
+                class="rounded-lg p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-500"
+                title="Remove step"
+                @click="emit('delete')"
+            >
+                <Trash2 class="h-4 w-4" />
+            </button>
+        </div>
+
+        <template v-if="isDelay">
+            <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-amber-700">Wait</span>
+                <input
+                    type="number"
+                    :value="step.value"
+                    min="1"
+                    max="365"
+                    class="w-16 rounded-lg border border-amber-200 px-2 py-1 text-xs text-center"
+                    @change="emit('updateField', 'value', +(($event.target as HTMLInputElement).value))"
+                />
+                <select
+                    :value="step.time"
+                    class="rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs"
+                    @change="emit('updateField', 'time', ($event.target as HTMLSelectElement).value)"
+                >
+                    <option value="hours">hours</option>
+                    <option value="days">days</option>
+                </select>
+            </div>
+        </template>
+
+        <template v-if="isAction">
+            <div class="flex flex-col gap-1">
+                <label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Action type</label>
+                <select
+                    :value="step.value"
+                    class="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400/20"
+                    @change="emit('updateField', 'value', ($event.target as HTMLSelectElement).value)"
+                >
+                    <option v-for="action in CAMPAIGN_ACTIONS" :key="action.value" :value="action.value">
+                        {{ action.label }}
+                    </option>
+                </select>
+            </div>
+
+            <template v-if="step.value === 'message' || step.value === 'send-invite'">
+                <div class="flex flex-col gap-1">
+                    <div class="flex items-center justify-between gap-2">
+                        <label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            {{ step.value === 'send-invite' ? 'Invite note (optional)' : 'Message text' }}
+                        </label>
+                        <FlowMessageAiHelp
+                            channel="linkedin"
+                            :action="step.value === 'send-invite' ? 'send_invite' : 'send_message'"
+                            field="message"
+                            :current-text="(step.config?.message as string) ?? ''"
+                            @apply="emit('updateConfig', 'message', $event)"
+                        />
+                    </div>
+                    <textarea
+                        :value="(step.config?.message as string) ?? ''"
+                        rows="4"
+                        placeholder="Use {{firstName}}, {{lastName}}, {{company}}, {{position}}"
+                        class="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30"
+                        @input="emit('updateConfig', 'message', ($event.target as HTMLTextAreaElement).value)"
+                    />
+                    <p class="text-[10px] text-muted-foreground" v-pre>
+                        Variables:
+                        <code class="rounded bg-muted px-0.5">{{firstName}}</code>
+                        <code class="rounded bg-muted px-0.5">{{company}}</code>
+                        <code class="rounded bg-muted px-0.5">{{position}}</code>
+                    </p>
+                </div>
+            </template>
+
+            <template v-if="step.value === 'endorse'">
+                <div class="flex items-center gap-3">
+                    <label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Skills to endorse
+                    </label>
+                    <input
+                        type="number"
+                        :value="(step.config?.skills as number) ?? 3"
+                        min="1"
+                        max="10"
+                        class="w-16 rounded-lg border border-border bg-background px-2 py-1 text-sm text-center"
+                        @input="emit('updateConfig', 'skills', +(($event.target as HTMLInputElement).value))"
+                    />
+                </div>
+            </template>
+
+            <template v-if="step.value === 'profile-view' || step.value === 'follow' || step.value === 'like-post'">
+                <p class="text-xs text-muted-foreground">No additional configuration needed.</p>
+            </template>
+        </template>
+
+        <template v-if="isCondition">
+            <p class="text-xs text-muted-foreground">
+                Edit the accepted and not-accepted branches on the canvas. Select any branch step to configure it.
+            </p>
+        </template>
+
+        <div v-if="!isEnd" class="border-t border-border pt-3">
+            <p class="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Add step after</p>
+            <div class="flex flex-col gap-1">
+                <button
+                    v-for="action in CAMPAIGN_ACTIONS"
+                    :key="action.value"
+                    type="button"
+                    class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted"
+                    @click="emit('addAfter', 'action', action.value)"
+                >
+                    <span
+                        class="flex h-6 w-6 items-center justify-center rounded-md border"
+                        :style="{ background: action.light, borderColor: action.border, color: action.accent }"
+                    >
+                        <CampaignActionIcon :value="action.value" :size="13" />
+                    </span>
+                    {{ action.label }}
+                </button>
+                <button
+                    type="button"
+                    class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-amber-700 transition-colors hover:bg-amber-50"
+                    @click="emit('addAfter', 'delay')"
+                >
+                    <Clock class="h-4 w-4" />
+                    Add Wait / Delay
+                </button>
+            </div>
+        </div>
+    </div>
+</template>

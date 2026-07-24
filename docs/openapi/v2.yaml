@@ -1,0 +1,663 @@
+openapi: 3.1.0
+info:
+  title: LinkDominator CRM V2 API
+  version: 0.3.0
+  description: Production API for extension-driven LinkedIn automation using Unipile-first integrations.
+servers:
+  - url: https://app.linkedempire.com/api/v2
+  - url: http://127.0.0.1:8000/api/v2
+paths:
+  /auth/extension-token:
+    post:
+      summary: Issue extension bearer token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtensionTokenRequest"
+      responses:
+        "200":
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtensionTokenResponse"
+        "422":
+          description: Invalid credentials
+  /integration-accounts:
+    get:
+      summary: List integration accounts
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Accounts list
+  /integration-accounts/hosted-auth-link:
+    post:
+      summary: Create Unipile hosted auth link
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Link payload
+  /integration-accounts/sync:
+    post:
+      summary: Sync linked provider account
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Synced account
+  /leads:
+    get:
+      summary: List stored leads
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Leads list
+  /leads/search:
+    post:
+      summary: Search and optionally persist leads
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeadSearchRequest"
+      responses:
+        "200":
+          description: Search results
+  /leads/sn/import:
+    post:
+      summary: Import Sales Navigator lead set into CRM
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "201":
+          description: SN import completed
+  /leads/sn/sources:
+    get:
+      summary: List imported Sales Navigator sources
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Source list
+  /leads/sn/imported:
+    get:
+      summary: List leads imported from Sales Navigator
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: source_external_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Imported leads list
+  /conversations:
+    get:
+      summary: List conversations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Conversation list
+  /conversations/{conversationId}/messages:
+    get:
+      summary: List messages for a conversation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Message list
+        "404":
+          description: Conversation not found
+  /campaigns:
+    get:
+      summary: List campaigns
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Campaign list
+    post:
+      summary: Create campaign
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "201":
+          description: Campaign created
+  /campaigns/{campaignId}:
+    get:
+      summary: Campaign details and recent runs
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: campaignId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Campaign detail
+  /campaigns/{campaignId}/status:
+    post:
+      summary: Update campaign status
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: campaignId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Updated campaign
+  /campaigns/{campaignId}/run:
+    post:
+      summary: Queue campaign run
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+        - name: campaignId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "202":
+          description: Campaign queued
+  /autoresponses:
+    get:
+      summary: List auto responses
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Auto response list
+    post:
+      summary: Create auto response
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "201":
+          description: Auto response created
+  /autoresponses/{id}:
+    get:
+      summary: Get auto response
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Auto response
+    put:
+      summary: Update auto response
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Updated auto response
+    delete:
+      summary: Delete auto response
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+  /stats/mini:
+    post:
+      summary: Store mini stats snapshot
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "201":
+          description: Stored
+  /stats/activities:
+    post:
+      summary: Store activity event
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "201":
+          description: Stored
+  /stats/summary:
+    get:
+      summary: Get stats summary
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Summary
+  /stats/content-analytics:
+    get:
+      summary: Get content analytics window and daily trend
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 90, default: 14 }
+      responses:
+        "200":
+          description: Content analytics summary
+  /stats/content-analytics/cohorts:
+    get:
+      summary: Get content cohort analytics
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 7, maximum: 180, default: 30 }
+      responses:
+        "200":
+          description: Cohort analytics
+  /stats/content-analytics/attribution:
+    get:
+      summary: Get channel attribution and funnel metrics with first/last/linear models
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 180, default: 30 }
+      responses:
+        "200":
+          description: Attribution analytics
+  /outreach/invite:
+    post:
+      summary: Queue invitation delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteRequest"
+      responses:
+        "202":
+          description: Queued
+        "409":
+          description: Duplicate idempotency key
+  /outreach/start-chat:
+    post:
+      summary: Queue chat start action
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartChatRequest"
+      responses:
+        "202":
+          description: Queued
+  /outreach/message:
+    post:
+      summary: Queue message delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "202":
+          description: Queued
+  /calls:
+    post:
+      summary: Create call orchestration item
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "201":
+          description: Created
+  /calls/ready-to-send:
+    get:
+      summary: List calls pending automated send
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Calls list
+  /calls/process-reply:
+    post:
+      summary: Process inbound reply and generate AI-assisted next action
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Reply analyzed and reminder queued
+  /calls/generate-message:
+    post:
+      summary: Generate call follow-up message template by intent
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Message generated
+  /reminders/pending:
+    get:
+      summary: List pending reminders
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Reminder list
+  /call-campaigns/ready-to-send:
+    get:
+      summary: List call campaign queue ready to send
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Queue list
+  /content-creator/scheduled-posts:
+    get:
+      summary: List content posts and schedules
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Content post list
+  /content-creator/posts:
+    post:
+      summary: Create content post draft or scheduled post
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "201":
+          description: Content post created
+  /inspiration:
+    get:
+      summary: List inspiration posts
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Inspiration list
+  /esp/config:
+    get:
+      summary: List ESP integrations
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: ESP integrations
+    post:
+      summary: Create or update ESP integration config
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Upserted integration
+  /esp/deliveries:
+    get:
+      summary: List ESP deliveries and statuses
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Delivery list
+  /esp/push-leads:
+    post:
+      summary: Push selected leads to ESP provider
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      responses:
+        "201":
+          description: Deliveries created
+  /esp/delivery-feedback:
+    post:
+      summary: Ingest ESP delivery status callback
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Delivery updated
+  /team/members:
+    get:
+      summary: List team members for organization
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Team members list
+  /team/capability-templates:
+    get:
+      summary: List role capability templates
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Templates list
+  /team/role-matrix:
+    get:
+      summary: Get team role matrix counts
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Role matrix
+  /team/preview-template:
+    post:
+      summary: Preview resolved role and capabilities for a template key
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Template preview
+  /team/bulk-apply-template:
+    post:
+      summary: Bulk apply a capability template to selected member IDs
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Bulk update result
+  /team/members/{memberId}:
+    patch:
+      summary: Update team member role and capabilities
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: memberId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Team member updated
+    delete:
+      summary: Remove team member from organization
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: memberId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Team member removed
+  /team/invites:
+    get:
+      summary: List team invites
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "200":
+          description: Team invites list
+    post:
+      summary: Create team invite
+      security: [ { bearerAuth: [] } ]
+      parameters: [ { $ref: "#/components/parameters/OrganizationIdHeader" } ]
+      responses:
+        "201":
+          description: Team invite created
+  /team/invites/accept/{token}:
+    post:
+      summary: Accept team invite token
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Invite accepted
+  /provider-events/unipile:
+    post:
+      summary: Ingest Unipile webhook
+      responses:
+        "200":
+          description: Accepted for processing
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+  parameters:
+    OrganizationIdHeader:
+      name: X-Organization-Id
+      in: header
+      required: true
+      schema:
+        type: integer
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        maxLength: 255
+  schemas:
+    ExtensionTokenRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        device_name:
+          type: string
+    ExtensionTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        user:
+          type: object
+        organization:
+          type: object
+    LeadSearchRequest:
+      type: object
+      properties:
+        keywords:
+          type: string
+        company:
+          type: string
+        location:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        persist_results:
+          type: boolean
+    InviteRequest:
+      type: object
+      required: [recipient_id]
+      properties:
+        recipient_id:
+          type: string
+        message:
+          type: string
+    StartChatRequest:
+      type: object
+      required: [attendee_ids]
+      properties:
+        attendee_ids:
+          type: array
+          items:
+            type: string
+        text:
+          type: string
+    SendMessageRequest:
+      type: object
+      required: [chat_id, text]
+      properties:
+        chat_id:
+          type: string
+        text:
+          type: string
