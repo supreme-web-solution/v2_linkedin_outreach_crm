@@ -10,6 +10,18 @@ export const buttonVariants = cva(
       variant: {
         default:
           "bg-gradient-to-b from-blue-500 to-blue-600 text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 dark:from-blue-500 dark:to-blue-600 dark:shadow-blue-950/40 dark:hover:from-blue-400 dark:hover:to-blue-600",
+        success:
+          "bg-gradient-to-b from-emerald-500 to-emerald-600 text-white shadow-sm shadow-emerald-950/20 ring-1 ring-inset ring-white/15 hover:from-emerald-500 hover:to-emerald-700 active:from-emerald-600 active:to-emerald-700",
+        info:
+          "bg-gradient-to-b from-sky-500 to-sky-600 text-white shadow-sm shadow-sky-950/20 ring-1 ring-inset ring-white/15 hover:from-sky-500 hover:to-sky-700 active:from-sky-600 active:to-sky-700",
+        violet:
+          "bg-gradient-to-b from-violet-500 to-violet-600 text-white shadow-sm shadow-violet-950/20 ring-1 ring-inset ring-white/15 hover:from-violet-500 hover:to-violet-700 active:from-violet-600 active:to-violet-700",
+        amber:
+          "bg-gradient-to-b from-amber-500 to-amber-600 text-white shadow-sm shadow-amber-950/20 ring-1 ring-inset ring-white/15 hover:from-amber-500 hover:to-amber-700 active:from-amber-600 active:to-amber-700",
+        slate:
+          "bg-gradient-to-b from-slate-600 to-slate-700 text-white shadow-sm shadow-slate-950/20 ring-1 ring-inset ring-white/15 hover:from-slate-600 hover:to-slate-800 active:from-slate-700 active:to-slate-800 dark:from-slate-500 dark:to-slate-600",
+        dangerGradient:
+          "bg-gradient-to-b from-red-500 to-red-600 text-white shadow-sm shadow-red-950/20 ring-1 ring-inset ring-white/15 hover:from-red-500 hover:to-red-700 active:from-red-600 active:to-red-700",
         destructive:
           "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
@@ -27,6 +39,7 @@ export const buttonVariants = cva(
         "icon": "size-9",
         "icon-sm": "size-8",
         "icon-lg": "size-10",
+        toolbar: "h-9 rounded-lg px-3 py-2 gap-2 text-sm has-[>svg]:px-3",
       },
     },
     defaultVariants: {

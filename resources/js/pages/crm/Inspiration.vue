@@ -15,6 +15,8 @@ import {
 } from '@lucide/vue';
 import { ref } from 'vue';
 import CheckboxField from '@/components/CheckboxField.vue';
+import { Button } from '@/components/ui/button';
+import { stashInspirationDraft } from '@/lib/contentDraft';
 import ListPagination from '@/components/crm/ListPagination.vue';
 
 defineOptions({
@@ -158,6 +160,11 @@ function copyText(text: string) {
     navigator.clipboard?.writeText(text);
 }
 
+function useInContent(content: string) {
+    stashInspirationDraft(content);
+    router.visit('/content?compose=1');
+}
+
 function fmt(n: number | undefined): string {
     const v = n ?? 0;
     if (v >= 1000) return (v / 1000).toFixed(1).replace('.0', '') + 'k';
@@ -283,10 +290,14 @@ function fmt(n: number | undefined): string {
                 <div v-if="remixResult && remixResult.id === post.id" class="mb-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
                     <p class="mb-2 text-xs font-medium text-primary">Remixed version</p>
                     <p class="whitespace-pre-line text-sm text-foreground/90">{{ remixResult.content }}</p>
-                    <button type="button" class="mt-2 text-xs font-medium text-primary hover:underline" @click="copyText(remixResult.content)">Copy</button>
+                    <div class="mt-2 flex gap-2">
+                        <Button variant="success" size="sm" @click="useInContent(remixResult.content)">Use</Button>
+                        <button type="button" class="text-xs font-medium text-primary hover:underline" @click="copyText(remixResult.content)">Copy</button>
+                    </div>
                 </div>
 
-                <div class="mt-auto flex items-center gap-2 border-t border-border pt-3">
+                <div class="mt-auto flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                    <Button variant="success" size="sm" @click="useInContent(post.content)">Use</Button>
                     <button type="button" :disabled="remixing === post.id" class="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 disabled:opacity-60" @click="remix(post)">
                         <Loader2 v-if="remixing === post.id" class="h-3.5 w-3.5 animate-spin" />
                         <Repeat v-else class="h-3.5 w-3.5" />

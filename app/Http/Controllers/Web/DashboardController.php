@@ -36,7 +36,7 @@ class DashboardController extends Controller
         $recentActivity = $orgId
             ? V2UserActivity::where('organization_id', $orgId)
                 ->latest()
-                ->limit(10)
+                ->limit(5)
                 ->get(['module', 'identifier', 'stat', 'created_at'])
             : collect();
 

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
-import { AlertCircle, CheckCircle2, ExternalLink, Link2, Mail, RefreshCw, Trash2 } from '@lucide/vue';
+import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, Mail, RefreshCw, Trash2 } from '@lucide/vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
-import { computed, onMounted, ref } from 'vue';
+import PasswordInput from '@/components/PasswordInput.vue';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { computed, nextTick, onMounted, ref } from 'vue';
 
 defineOptions({
     layout: { breadcrumbs: [{ title: 'Dashboard', href: '/dashboard' }, { title: 'Integrations', href: '/integrations' }] },
@@ -35,6 +37,7 @@ interface EspProvider {
     key: string;
     label: string;
     fields: string[];
+    wired?: boolean;
 }
 
 interface ChannelRow {
@@ -44,6 +47,7 @@ interface ChannelRow {
     status: string;
     email?: string | null;
     account_name?: string | null;
+    integration_account_id?: number | null;
 }
 
 const props = defineProps<{
@@ -57,13 +61,26 @@ const props = defineProps<{
     connectionError: boolean;
     unipileConfigured: boolean;
     unipileWebhookCallbackUrl?: string | null;
-    defaultUserAgent: string;
     deliveryStats: { total: number; sent: number; failed: number };
     espProviders: EspProvider[];
 }>();
 
 const page = usePage();
 const showEspForm = ref(false);
+const linkedinAdvancedOpen = ref(false);
+
+const linkedinChannel = computed(() => props.connectedChannels?.find((c) => c.channel === 'linkedin') ?? null);
+
+const connectedPlatformCount = computed(() => props.connectedChannels?.filter((c) => c.connected).length ?? 0);
+const totalPlatformCount = computed(() => props.connectedChannels?.length ?? 0);
+
+const platformsConnectedLabel = computed(() => {
+    const connected = connectedPlatformCount.value;
+    const total = totalPlatformCount.value;
+    if (connected === 0) return 'No channels connected yet';
+    if (connected === total) return `All ${total} channels connected`;
+    return `${connected} of ${total} channels connected`;
+});
 
 const csrfToken = computed(() => {
     const meta = document.querySelector('meta[name="csrf-token"]');
@@ -72,19 +89,18 @@ const csrfToken = computed(() => {
 
 const sessionForm = useForm({
     li_at: '',
-    user_agent: props.defaultUserAgent,
 });
 
 onMounted(() => {
-    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-    if (!sessionForm.user_agent && ua) {
-        sessionForm.user_agent = ua;
+    if (props.connectionError || (linkedinChannel.value && !linkedinChannel.value.connected)) {
+        linkedinAdvancedOpen.value = true;
     }
 });
 
 const espForm = useForm({
     provider: 'mailchimp',
     api_key: '',
+    api_base: '',
     audience_id: '',
     from_email: '',
     from_name: '',
@@ -98,13 +114,45 @@ const statusColor = (s: string) => {
     return 'bg-muted text-muted-foreground border-border';
 };
 
-const activeAccounts = () => props.accounts.filter((a) => a.status === 'active' && a.live_status !== 'disconnected');
-
 const disconnectedAccounts = () => props.accounts.filter((a) => a.live_status === 'disconnected' || a.status === 'disconnected');
 
 const selectedProvider = () => props.espProviders.find((p) => p.key === espForm.provider);
 
-const sessionReady = () => sessionForm.li_at.trim() !== '' && sessionForm.user_agent.trim() !== '';
+const sessionReady = () => sessionForm.li_at.trim() !== '';
+
+function openLinkedInAdvanced() {
+    linkedinAdvancedOpen.value = true;
+    nextTick(() => {
+        document.getElementById('linkedin-advanced')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+}
+
+function connectLinkedInFromGrid() {
+    openLinkedInAdvanced();
+}
+
+function disconnectLinkedInFromGrid() {
+    const accountId = linkedinChannel.value?.integration_account_id ?? props.accounts.find((a) => a.status === 'active')?.id;
+    if (accountId) {
+        disconnectUnipile(accountId);
+    }
+}
+
+function handleChannelConnect(ch: ChannelRow) {
+    if (ch.channel === 'linkedin') {
+        connectLinkedInFromGrid();
+        return;
+    }
+    connectChannel(ch.channel);
+}
+
+function handleChannelDisconnect(ch: ChannelRow) {
+    if (ch.channel === 'linkedin') {
+        disconnectLinkedInFromGrid();
+        return;
+    }
+    disconnectChannel(ch.channel, ch.label);
+}
 
 function verifyUnipile() {
     router.post('/integrations/unipile/verify', {}, { preserveScroll: true });
@@ -147,7 +195,7 @@ function saveEsp() {
     espForm.post('/integrations/esp', {
         preserveScroll: true,
         onSuccess: () => {
-            espForm.reset('api_key', 'audience_id', 'from_email', 'from_name', 'portal_id');
+            espForm.reset('api_key', 'api_base', 'audience_id', 'from_email', 'from_name', 'portal_id');
             showEspForm.value = false;
         },
     });
@@ -176,9 +224,9 @@ function removeEsp(id: number, provider: string) {
 
         <div class="grid gap-3 sm:grid-cols-2">
             <div class="rounded-xl border border-border bg-card p-4 shadow-sm">
-                <p class="text-xs font-medium uppercase text-muted-foreground">LinkedIn</p>
-                <p class="mt-1 text-2xl font-semibold">{{ activeAccounts().length ? 1 : 0 }}</p>
-                <p class="text-xs text-muted-foreground">{{ activeAccounts().length ? 'Connected' : disconnectedAccounts().length ? 'Disconnected' : 'Not connected' }}</p>
+                <p class="text-xs font-medium uppercase text-muted-foreground">Platforms connected</p>
+                <p class="mt-1 text-2xl font-semibold">{{ connectedPlatformCount }}</p>
+                <p class="text-xs text-muted-foreground">{{ platformsConnectedLabel }}</p>
             </div>
             <div class="rounded-xl border border-border bg-card p-4 shadow-sm">
                 <p class="text-xs font-medium uppercase text-muted-foreground">ESP deliveries</p>
@@ -213,18 +261,18 @@ function removeEsp(id: number, provider: string) {
         </div>
         <div v-if="disconnectedAccounts().length" class="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
             <AlertCircle class="h-4 w-4 shrink-0" />
-            LinkedIn is disconnected. Paste a fresh <code class="rounded bg-white/70 px-1">li_at</code> cookie below, or use the browser extension on LinkedIn and click <strong>Detect &amp; save LinkedIn session</strong>.
+            LinkedIn is disconnected. Open <strong>LinkedIn advanced setup</strong> below to paste a fresh <code class="rounded bg-white/70 px-1">li_at</code> cookie, or use the browser extension on LinkedIn and click <strong>Detect &amp; save LinkedIn session</strong>.
         </div>
 
         <!-- Multi-channel outreach -->
         <section v-if="connectedChannels?.length" class="rounded-xl border border-border bg-card shadow-sm">
             <div class="border-b border-border px-4 py-3">
-                <h2 class="text-sm font-semibold">Multi-channel outreach</h2>
-                <p class="text-xs text-muted-foreground">Connect channels for <Link href="/outreach" class="text-primary hover:underline">Multi-Channel Outreach</Link>. Use <strong>Connect</strong> or <strong>Reconnect</strong> to sign in; use <strong>Disconnect</strong> to remove a channel from this workspace.</p>
+                <h2 class="text-sm font-semibold">Connected channels</h2>
+                <p class="text-xs text-muted-foreground">Connect LinkedIn and other platforms for <Link href="/outreach" class="text-primary hover:underline">Multi-Channel Outreach</Link> and the unified inbox.</p>
             </div>
             <div class="grid gap-3 p-4 sm:grid-cols-2">
                 <div
-                    v-for="ch in connectedChannels.filter(c => c.channel !== 'linkedin')"
+                    v-for="ch in connectedChannels"
                     :key="ch.channel"
                     class="flex items-center justify-between rounded-lg border border-border px-3 py-3"
                 >
@@ -240,7 +288,7 @@ function removeEsp(id: number, provider: string) {
                             v-if="!ch.connected"
                             type="button"
                             class="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
-                            @click="connectChannel(ch.channel)"
+                            @click="handleChannelConnect(ch)"
                         >
                             {{ ch.status === 'disconnected' ? 'Reconnect' : 'Connect' }}
                         </button>
@@ -248,14 +296,14 @@ function removeEsp(id: number, provider: string) {
                             <button
                                 type="button"
                                 class="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted/50"
-                                @click="connectChannel(ch.channel)"
+                                @click="handleChannelConnect(ch)"
                             >
                                 Reconnect
                             </button>
                             <button
                                 type="button"
                                 class="text-xs text-red-600 hover:underline"
-                                @click="disconnectChannel(ch.channel, ch.label)"
+                                @click="handleChannelDisconnect(ch)"
                             >
                                 Disconnect
                             </button>
@@ -265,129 +313,129 @@ function removeEsp(id: number, provider: string) {
             </div>
         </section>
 
-        <!-- LinkedIn session credentials — always visible, required -->
-        <section class="rounded-xl border border-border bg-card shadow-sm">
-            <div class="flex items-center gap-2 border-b border-border px-4 py-3">
-                <Link2 class="h-4 w-4 text-[#0077b5]" />
-                <h2 class="text-sm font-semibold">LinkedIn session credentials</h2>
-                <span class="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium uppercase text-red-600">Required</span>
-            </div>
+        <!-- LinkedIn advanced (cookie / secure login) — collapsed by default -->
+        <Collapsible v-model:open="linkedinAdvancedOpen">
+            <section id="linkedin-advanced" class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+                <CollapsibleTrigger class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted/30">
+                    <div class="flex min-w-0 items-center gap-3">
+                        <OutreachChannelIcon channel="linkedin" :size="22" class="h-5 w-5 shrink-0" />
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h2 class="text-sm font-semibold">LinkedIn advanced setup</h2>
+                                <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">Advanced</span>
+                            </div>
+                            <p class="text-xs text-muted-foreground">
+                                Cookie paste, secure login, and session details — use Connect above or open here.
+                            </p>
+                        </div>
+                    </div>
+                    <ChevronDown
+                        class="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200"
+                        :class="linkedinAdvancedOpen ? 'rotate-180' : ''"
+                    />
+                </CollapsibleTrigger>
 
-            <div class="space-y-4 p-4">
-                <p class="text-sm text-muted-foreground">
-                    Open LinkedIn in your browser while using the extension — it can read the <code class="rounded bg-muted px-1">li_at</code> cookie automatically.
-                    You can also paste the cookie manually from DevTools → Application → Cookies → www.linkedin.com.
-                </p>
+                <CollapsibleContent>
+                    <div class="space-y-4 border-t border-border p-4">
+                        <p class="text-sm text-muted-foreground">
+                            Open LinkedIn in your browser while using the extension — it can read the <code class="rounded bg-muted px-1">li_at</code> cookie automatically.
+                            You can also paste the cookie manually from DevTools → Application → Cookies → www.linkedin.com.
+                        </p>
 
-                <div class="space-y-3">
-                    <label class="grid gap-1.5 text-sm">
-                        <span class="font-medium">li_at cookie <span class="text-red-500">*</span></span>
-                        <textarea
-                            v-model="sessionForm.li_at"
-                            rows="3"
-                            required
-                            placeholder="Paste your LinkedIn li_at cookie value"
-                            class="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
-                            :class="{ 'border-red-300': sessionForm.errors.li_at }"
-                        />
-                        <span v-if="sessionForm.errors.li_at" class="text-xs text-red-600">{{ sessionForm.errors.li_at }}</span>
-                    </label>
+                        <label class="grid gap-1.5 text-sm">
+                            <span class="font-medium">li_at cookie <span class="text-red-500">*</span></span>
+                            <textarea
+                                v-model="sessionForm.li_at"
+                                rows="3"
+                                placeholder="Paste your LinkedIn li_at cookie value"
+                                class="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
+                                :class="{ 'border-red-300': sessionForm.errors.li_at }"
+                            />
+                            <span v-if="sessionForm.errors.li_at" class="text-xs text-red-600">{{ sessionForm.errors.li_at }}</span>
+                        </label>
 
-                    <label class="grid gap-1.5 text-sm">
-                        <span class="font-medium">User agent <span class="text-red-500">*</span></span>
-                        <input
-                            v-model="sessionForm.user_agent"
-                            type="text"
-                            required
-                            placeholder="Your browser user agent string"
-                            class="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
-                            :class="{ 'border-red-300': sessionForm.errors.user_agent }"
-                        />
-                        <span v-if="sessionForm.errors.user_agent" class="text-xs text-red-600">{{ sessionForm.errors.user_agent }}</span>
-                    </label>
-                </div>
+                        <div v-if="!unipileConfigured" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                            LinkedIn messaging is not available on this server yet. Contact your administrator if this persists.
+                        </div>
 
-                <div v-if="!unipileConfigured" class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                    LinkedIn messaging is not available on this server yet. Contact your administrator if this persists.
-                </div>
-                
-                <div class="flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        class="inline-flex items-center gap-2 rounded-md bg-[#0077b5] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#005885] disabled:cursor-not-allowed disabled:opacity-50"
-                        :disabled="!sessionReady() || sessionForm.processing || !unipileConfigured"
-                        @click="connectUnipile"
-                    >
-                        Connect LinkedIn (Messaging)
-                    </button>
-                    <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted/50"
-                        @click="verifyUnipile"
-                    >
-                        <RefreshCw class="h-3 w-3" /> Verify connection
-                    </button>
-                </div>
-
-                <div class="rounded-lg border border-dashed border-border px-4 py-3">
-                    <p class="text-xs text-muted-foreground">
-                        Prefer signing in on LinkedIn's secure login page instead of pasting a cookie?
-                    </p>
-                    <form method="POST" action="/integrations/unipile/hosted-auth" class="mt-2">
-                        <input type="hidden" name="_token" :value="csrfToken" />
-                        <button
-                            type="submit"
-                            class="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                            :disabled="!unipileConfigured"
-                        >
-                            <ExternalLink class="h-3 w-3" />
-                            Connect via secure login
-                        </button>
-                    </form>
-                </div>
-            </div>
-        </section>
-
-        <!-- LinkedIn connection status -->
-        <section v-if="accounts.length" class="rounded-xl border border-border bg-card shadow-sm">
-            <div class="border-b border-border px-4 py-3">
-                <h2 class="text-sm font-semibold">LinkedIn connection</h2>
-            </div>
-            <table class="w-full text-sm">
-                <thead class="border-b border-border bg-muted/40">
-                    <tr>
-                        <th class="px-3 py-2 text-left font-medium text-muted-foreground">Account</th>
-                        <th class="px-3 py-2 text-left font-medium text-muted-foreground">Method</th>
-                        <th class="px-3 py-2 text-left font-medium text-muted-foreground">Status</th>
-                        <th class="px-3 py-2 text-right font-medium text-muted-foreground">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-border">
-                    <tr v-for="acc in accounts" :key="acc.id">
-                        <td class="px-3 py-3">
-                            <p class="font-medium">{{ acc.email ?? 'LinkedIn session' }}</p>
-                            <p v-if="acc.connected_at" class="text-[10px] text-muted-foreground">Connected {{ acc.connected_at }}</p>
-                        </td>
-                        <td class="px-3 py-3 capitalize text-xs">{{ acc.connection_method }}</td>
-                        <td class="px-3 py-3">
-                            <span class="rounded-full border px-2 py-0.5 text-xs capitalize" :class="statusColor(acc.live_status === 'disconnected' || acc.status === 'disconnected' ? 'disconnected' : acc.status)">
-                                {{ acc.live_status === 'disconnected' || acc.status === 'disconnected' ? 'disconnected' : acc.status }}
-                            </span>
-                        </td>
-                        <td class="px-3 py-3 text-right">
+                        <div class="flex flex-wrap items-center gap-2">
                             <button
-                                v-if="acc.status === 'active'"
                                 type="button"
-                                class="text-xs text-red-600 hover:underline"
-                                @click="disconnectUnipile(acc.id)"
+                                class="inline-flex items-center gap-2 rounded-md bg-[#0077b5] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#005885] disabled:cursor-not-allowed disabled:opacity-50"
+                                :disabled="!sessionReady() || sessionForm.processing || !unipileConfigured"
+                                @click="connectUnipile"
                             >
-                                Disconnect
+                                Connect LinkedIn (Messaging)
                             </button>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </section>
+                            <button
+                                type="button"
+                                class="inline-flex items-center gap-1 rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted/50"
+                                @click="verifyUnipile"
+                            >
+                                <RefreshCw class="h-3 w-3" /> Verify connection
+                            </button>
+                        </div>
+
+                        <div class="rounded-lg border border-dashed border-border px-4 py-3">
+                            <p class="text-xs text-muted-foreground">
+                                Prefer signing in on LinkedIn's secure login page instead of pasting a cookie?
+                            </p>
+                            <form method="POST" action="/integrations/unipile/hosted-auth" class="mt-2">
+                                <input type="hidden" name="_token" :value="csrfToken" />
+                                <button
+                                    type="submit"
+                                    class="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                                    :disabled="!unipileConfigured"
+                                >
+                                    <ExternalLink class="h-3 w-3" />
+                                    Connect via secure login
+                                </button>
+                            </form>
+                        </div>
+
+                        <div v-if="accounts.length" class="overflow-hidden rounded-lg border border-border">
+                            <div class="border-b border-border bg-muted/40 px-3 py-2">
+                                <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">LinkedIn sessions</p>
+                            </div>
+                            <table class="w-full text-sm">
+                                <thead class="border-b border-border bg-muted/20">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left font-medium text-muted-foreground">Account</th>
+                                        <th class="px-3 py-2 text-left font-medium text-muted-foreground">Method</th>
+                                        <th class="px-3 py-2 text-left font-medium text-muted-foreground">Status</th>
+                                        <th class="px-3 py-2 text-right font-medium text-muted-foreground">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-border">
+                                    <tr v-for="acc in accounts" :key="acc.id">
+                                        <td class="px-3 py-3">
+                                            <p class="font-medium">{{ acc.email ?? 'LinkedIn session' }}</p>
+                                            <p v-if="acc.connected_at" class="text-[10px] text-muted-foreground">Connected {{ acc.connected_at }}</p>
+                                        </td>
+                                        <td class="px-3 py-3 capitalize text-xs">{{ acc.connection_method }}</td>
+                                        <td class="px-3 py-3">
+                                            <span class="rounded-full border px-2 py-0.5 text-xs capitalize" :class="statusColor(acc.live_status === 'disconnected' || acc.status === 'disconnected' ? 'disconnected' : acc.status)">
+                                                {{ acc.live_status === 'disconnected' || acc.status === 'disconnected' ? 'disconnected' : acc.status }}
+                                            </span>
+                                        </td>
+                                        <td class="px-3 py-3 text-right">
+                                            <button
+                                                v-if="acc.status === 'active'"
+                                                type="button"
+                                                class="text-xs text-red-600 hover:underline"
+                                                @click="disconnectUnipile(acc.id)"
+                                            >
+                                                Disconnect
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </CollapsibleContent>
+            </section>
+        </Collapsible>
 
         <section class="rounded-xl border border-border bg-card shadow-sm">
             <div class="flex items-center justify-between border-b border-border px-4 py-3">
@@ -420,11 +468,15 @@ function removeEsp(id: number, provider: string) {
                         </label>
                         <label class="grid gap-1 text-sm">
                             <span class="font-medium">API key</span>
-                            <input v-model="espForm.api_key" type="password" placeholder="Leave blank to keep existing" class="rounded-lg border border-border bg-background px-3 py-2" />
+                            <PasswordInput v-model="espForm.api_key" placeholder="Leave blank to keep existing" autocomplete="off" class="rounded-lg" />
                         </label>
                     </div>
+                    <div v-if="selectedProvider()?.fields.includes('api_base')" class="grid gap-1 text-sm">
+                        <span class="font-medium">API URL</span>
+                        <input v-model="espForm.api_base" type="url" placeholder="https://youraccount.api-us1.com" class="rounded-lg border border-border bg-background px-3 py-2" />
+                    </div>
                     <div v-if="selectedProvider()?.fields.includes('audience_id')" class="grid gap-1 text-sm">
-                        <span class="font-medium">Audience / List ID</span>
+                        <span class="font-medium">{{ espForm.provider === 'convertkit' ? 'Form ID' : espForm.provider === 'activecampaign' ? 'List ID' : 'Audience / List ID' }}</span>
                         <input v-model="espForm.audience_id" type="text" class="rounded-lg border border-border bg-background px-3 py-2" />
                     </div>
                     <div v-if="selectedProvider()?.fields.includes('from_email')" class="grid gap-3 sm:grid-cols-2">
@@ -445,7 +497,7 @@ function removeEsp(id: number, provider: string) {
                 </form>
 
                 <div v-if="!espIntegrations.length && !showEspForm" class="py-4 text-center text-sm text-muted-foreground">
-                    No ESP configured. Add Mailchimp, SendGrid, or HubSpot to push leads from campaigns.
+                    No ESP configured. Connect Mailchimp, SendGrid, HubSpot, Klaviyo, Brevo, ActiveCampaign, MailerLite, ConvertKit, or GetResponse to subscribe leads from the extension when keys and list IDs are valid.
                 </div>
 
                 <table v-if="espIntegrations.length" class="w-full text-sm">

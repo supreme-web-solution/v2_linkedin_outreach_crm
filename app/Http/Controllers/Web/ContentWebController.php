@@ -5,16 +5,13 @@ namespace App\Http\Controllers\Web;
 use App\Http\Controllers\Controller;
 use App\Jobs\V2\PublishV2ContentPostJob;
 use App\Models\V2ContentPost;
-use App\Models\V2InspirationPost;
 use App\Models\V2IntegrationAccount;
+use App\V2\Services\CloudinaryMediaService;
 use App\V2\Services\OpenAIContentService;
-use App\V2\Services\RapidApiLinkedinService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -22,7 +19,6 @@ class ContentWebController extends Controller
 {
     public function __construct(
         private readonly OpenAIContentService $openai,
-        private readonly RapidApiLinkedinService $rapidApi,
     ) {
     }
 
@@ -50,10 +46,6 @@ class ContentWebController extends Controller
             ? $postsQuery->latest()->paginate(20)->appends($request->query())
             : collect()->paginate(1);
 
-        $inspiration = $orgId
-            ? V2InspirationPost::where('organization_id', $orgId)->latest()->limit(30)->get()
-            : collect();
-
         $stats = $orgId ? [
             'total'     => V2ContentPost::where('organization_id', $orgId)->count(),
             'published' => V2ContentPost::where('organization_id', $orgId)->where('status', 'published')->count(),
@@ -70,7 +62,6 @@ class ContentWebController extends Controller
 
         return Inertia::render('crm/Content', [
             'posts'        => $posts,
-            'inspiration'  => $inspiration,
             'contentStats' => $stats,
             'hasOrg'       => (bool) $orgId,
             'filters'      => [
@@ -78,9 +69,7 @@ class ContentWebController extends Controller
                 'status' => $status !== '' ? $status : null,
             ],
             'hasLinkedIn'  => $hasLinkedIn,
-            'templates'    => $this->defaultTemplates(),
             'aiConfigured' => $this->openai->isConfigured(),
-            'rapidConfigured' => $this->rapidApi->isConfigured(),
         ]);
     }
 
@@ -99,6 +88,7 @@ class ContentWebController extends Controller
             'images.*'     => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
             'video'        => ['nullable', 'file', 'mimes:mp4,mov,avi,wmv', 'max:102400'],
             'ai_image_url' => ['nullable', 'string', 'max:2048'],
+            'ai_image_path' => ['nullable', 'string', 'max:2048'],
         ]);
 
         [$status, $scheduledAt] = $this->resolveActionStatus($data['action'], $data['scheduled_at'] ?? null);
@@ -149,6 +139,7 @@ class ContentWebController extends Controller
             'images.*'     => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
             'video'        => ['nullable', 'file', 'mimes:mp4,mov,avi,wmv', 'max:102400'],
             'ai_image_url' => ['nullable', 'string', 'max:2048'],
+            'ai_image_path' => ['nullable', 'string', 'max:2048'],
         ]);
 
         [$status, $scheduledAt] = $this->resolveActionStatus($data['action'], $data['scheduled_at'] ?? null);
@@ -239,6 +230,7 @@ class ContentWebController extends Controller
             'topic'  => ['required', 'string', 'max:500'],
             'style'  => ['nullable', 'in:professional,casual,motivational,educational,storytelling'],
             'length' => ['nullable', 'in:short,medium,long'],
+            'generate_image' => ['nullable', 'boolean'],
         ]);
 
         if (!$this->openai->isConfigured()) {
@@ -251,9 +243,26 @@ class ContentWebController extends Controller
             $data['topic'],
             $data['style'] ?? 'professional',
             $data['length'] ?? 'medium',
+            (bool) ($data['generate_image'] ?? false),
+            (int) auth()->id(),
         );
 
-        return response()->json($result + ['source' => 'openai']);
+        $response = [
+            'content' => $result['content'],
+            'hashtags' => $result['hashtags'],
+            'source' => 'openai',
+        ];
+
+        if (isset($result['image'])) {
+            $response['url'] = $result['image']['url'];
+            $response['path'] = $result['image']['path'];
+        }
+
+        if (isset($result['image_error'])) {
+            $response['image_error'] = $result['image_error'];
+        }
+
+        return response()->json($response);
     }
 
     public function improveAi(Request $request): JsonResponse
@@ -268,7 +277,13 @@ class ContentWebController extends Controller
         }
 
         $improved = $this->openai->improvePost($data['content'], $data['action']);
-        return response()->json(['content' => $improved, 'word_count' => str_word_count($improved)]);
+        [$content, $hashtags] = $this->splitImprovedContent($improved);
+
+        return response()->json([
+            'content' => $content,
+            'hashtags' => $hashtags,
+            'word_count' => str_word_count($content),
+        ]);
     }
 
     public function rewriteAi(Request $request): JsonResponse
@@ -288,8 +303,13 @@ class ContentWebController extends Controller
             $data['tone'] ?? 'professional',
             $data['mode'] ?? null,
         );
+        [$content, $hashtags] = $this->splitImprovedContent($rewritten);
 
-        return response()->json(['content' => $rewritten, 'word_count' => str_word_count($rewritten)]);
+        return response()->json([
+            'content' => $content,
+            'hashtags' => $hashtags,
+            'word_count' => str_word_count($content),
+        ]);
     }
 
     public function generateImageAi(Request $request): JsonResponse
@@ -306,122 +326,39 @@ class ContentWebController extends Controller
         return response()->json($image);
     }
 
-    public function templates(): JsonResponse
-    {
-        return response()->json(['templates' => $this->defaultTemplates()]);
-    }
-
-    public function fetchInspiration(Request $request): JsonResponse
-    {
-        $user = auth()->user();
-        $orgId = (int) $user->current_organization_id;
-        $data = $request->validate([
-            'keyword' => ['required', 'string', 'max:200'],
-            'limit' => ['nullable', 'integer', 'min:1', 'max:30'],
-        ]);
-
-        if (!$this->rapidApi->isConfigured()) {
-            return response()->json(['message' => 'RAPIDAPI_KEY is missing.'], 422);
-        }
-
-        $items = $this->rapidApi->searchPosts($data['keyword'], 1, $data['limit'] ?? 18, 'Past month');
-        $saved = [];
-        foreach ($items as $item) {
-            $row = V2InspirationPost::query()->updateOrCreate(
-                [
-                    'user_id' => $user->id,
-                    'organization_id' => $orgId,
-                    'source' => 'linkedin',
-                    'post_id' => $item['post_id'] ?: Str::slug($item['author_name']).'_'.substr(md5($item['content']), 0, 10),
-                ],
-                [
-                    'content' => $item['content'],
-                    'meta' => [
-                        'author_name' => $item['author_name'],
-                        'author_headline' => $item['author_headline'],
-                        'author_profile_url' => $item['author_profile_url'],
-                        'post_url' => $item['post_url'],
-                        'likes' => $item['likes'],
-                        'comments' => $item['comments'],
-                        'shares' => $item['shares'],
-                        'views' => $item['views'],
-                        'posted' => $item['posted'],
-                        'images' => $item['images'],
-                        'video' => $item['video'],
-                    ],
-                ]
-            );
-            $saved[] = $row;
-        }
-
-        return response()->json(['data' => $saved, 'count' => count($saved)]);
-    }
-
-    public function useInspiration(int $id): JsonResponse
-    {
-        $row = $this->findOwnedInspiration($id);
-        return response()->json([
-            'content' => (string) ($row->content ?? ''),
-            'author' => (string) ($row->meta['author_name'] ?? 'Unknown'),
-        ]);
-    }
-
-    public function remixInspiration(Request $request, int $id): JsonResponse
-    {
-        $data = $request->validate([
-            'tone' => ['nullable', 'in:professional,casual,motivational,educational,storytelling'],
-        ]);
-
-        if (!$this->openai->isConfigured()) {
-            return response()->json(['message' => 'OPENAI_API_KEY is missing.'], 422);
-        }
-
-        $row = $this->findOwnedInspiration($id);
-        $remix = $this->openai->rewritePost((string) ($row->content ?? ''), $data['tone'] ?? 'professional');
-
-        return response()->json([
-            'content' => $remix,
-            'author' => (string) ($row->meta['author_name'] ?? 'Unknown'),
-            'word_count' => str_word_count($remix),
-        ]);
-    }
-
-    private function findOwnedInspiration(int $id): V2InspirationPost
-    {
-        $user = auth()->user();
-        return V2InspirationPost::query()
-            ->where('id', $id)
-            ->where('user_id', $user->id)
-            ->where('organization_id', (int) $user->current_organization_id)
-            ->firstOrFail();
-    }
-
     /**
      * @param array<string,mixed> $data
      * @return array<string,mixed>
      */
     private function collectMediaMeta(Request $request, int $userId, array $data): array
     {
+        $cloudinary = app(CloudinaryMediaService::class);
+
         $meta = [
             'post_type' => $data['post_type'] ?? 'text',
             'image_urls' => [],
+            'image_paths' => [],
             'video_url' => null,
+            'video_path' => null,
             'ai_image_url' => $data['ai_image_url'] ?? null,
+            'ai_image_path' => $data['ai_image_path'] ?? null,
         ];
 
         if ($request->hasFile('images')) {
             foreach ((array) $request->file('images') as $file) {
-                if (!$file) {
+                if (! $file) {
                     continue;
                 }
-                $path = $file->store('content-images/u'.$userId, 'public');
-                $meta['image_urls'][] = Storage::disk('public')->url($path);
+                $upload = $cloudinary->upload($file, 'content-images/u'.$userId);
+                $meta['image_paths'][] = $upload['public_id'];
+                $meta['image_urls'][] = $upload['secure_url'] ?: $upload['url'];
             }
         }
 
         if ($request->hasFile('video')) {
-            $path = $request->file('video')->store('content-videos/u'.$userId, 'public');
-            $meta['video_url'] = Storage::disk('public')->url($path);
+            $upload = $cloudinary->upload($request->file('video'), 'content-videos/u'.$userId);
+            $meta['video_path'] = $upload['public_id'];
+            $meta['video_url'] = $upload['secure_url'] ?: $upload['url'];
         }
 
         return $meta;
@@ -454,43 +391,22 @@ class ContentWebController extends Controller
     }
 
     /**
-     * @return array<int, array<string,mixed>>
+     * @return array{0:string,1:string}
      */
-    private function defaultTemplates(): array
+    private function splitImprovedContent(string $text): array
     {
-        return [
-            [
-                'id' => 1,
-                'title' => 'Contrarian Hook',
-                'category' => 'engagement',
-                'industry' => 'general',
-                'engagement_score' => 92,
-                'content' => "Unpopular opinion: {topic} is being done wrong by most teams.\n\nHere is what actually works:\n\n1) ...\n2) ...\n3) ...\n\nWhat would you add?",
-            ],
-            [
-                'id' => 2,
-                'title' => 'Story + Lesson',
-                'category' => 'storytelling',
-                'industry' => 'general',
-                'engagement_score' => 88,
-                'content' => "A year ago, I learned this about {topic} the hard way.\n\n[Short story]\n\nLesson:\n...\n\nIf I had to start over, I would...",
-            ],
-            [
-                'id' => 3,
-                'title' => 'Educational 3-Point',
-                'category' => 'educational',
-                'industry' => 'general',
-                'engagement_score' => 85,
-                'content' => "3 things every founder should know about {topic}:\n\n• ...\n• ...\n• ...\n\nSave this for later.",
-            ],
-            [
-                'id' => 4,
-                'title' => 'Soft CTA Lead Gen',
-                'category' => 'sales',
-                'industry' => 'b2b',
-                'engagement_score' => 86,
-                'content' => "If you're struggling with {topic}, this framework might help:\n\n[Framework]\n\nIf useful, I can send a one-page version.",
-            ],
-        ];
+        $text = trim($text);
+        if ($text === '') {
+            return ['', ''];
+        }
+
+        if (preg_match('/(?:\s|^)((?:#\w+\s*){2,})\s*$/u', $text, $matches)) {
+            $hashtags = trim($matches[1]);
+            $content = trim(substr($text, 0, -strlen($matches[0])));
+
+            return [$content, $hashtags];
+        }
+
+        return [$text, ''];
     }
 }

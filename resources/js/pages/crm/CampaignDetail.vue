@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import { Button } from '@/components/ui/button';
 import LinkedInDisconnectBanner from '@/components/campaign/LinkedInDisconnectBanner.vue';
 import CampaignStepIcon from '@/components/campaign/CampaignStepIcon.vue';
 
@@ -314,27 +316,26 @@ function toggleStatus() {
                 </div>
             </div>
             <div class="flex items-center gap-2 shrink-0 flex-wrap">
-                <button v-if="campaign.status === 'draft'" @click="launchCampaign" :disabled="launching"
-                    class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 disabled:opacity-60">
+                <AppToolbarButton v-if="campaign.status === 'draft'" :disabled="launching" @click="launchCampaign">
                     <Rocket class="h-4 w-4" /> {{ launching ? 'Launching…' : 'Launch' }}
-                </button>
-                <button v-else @click="toggleStatus"
-                    class="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors"
-                    :class="campaign.status === 'running' || campaign.status === 'active'
-                        ? 'border-yellow-300 bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
-                        : 'border-green-300 bg-green-50 text-green-700 hover:bg-green-100'">
+                </AppToolbarButton>
+                <AppToolbarButton
+                    v-else
+                    :variant="campaign.status === 'running' || campaign.status === 'active' ? 'amber' : 'success'"
+                    @click="toggleStatus"
+                >
                     <Pause v-if="campaign.status === 'running' || campaign.status === 'active'" class="h-4 w-4" />
                     <Play v-else class="h-4 w-4" />
                     {{ campaign.status === 'running' || campaign.status === 'active' ? 'Pause' : 'Activate' }}
-                </button>
-                <Link :href="`/campaigns/${campaign.id}/edit`"
-                    class="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted transition-colors">
-                    <Pencil class="h-4 w-4" /> Edit
-                </Link>
-                <button @click="confirmDelete" :disabled="deleting"
-                    class="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50">
+                </AppToolbarButton>
+                <Button variant="violet" size="toolbar" as-child>
+                    <Link :href="`/campaigns/${campaign.id}/edit`">
+                        <Pencil class="h-4 w-4" /> Edit
+                    </Link>
+                </Button>
+                <AppToolbarButton variant="dangerGradient" :disabled="deleting" @click="confirmDelete">
                     <Trash2 class="h-4 w-4" />
-                </button>
+                </AppToolbarButton>
             </div>
         </div>
 

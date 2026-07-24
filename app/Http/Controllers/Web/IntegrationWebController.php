@@ -83,13 +83,18 @@ class IntegrationWebController extends Controller
             'channelConnectionError' => $request->boolean('error') && $channelKey !== '' ? $channelKey : null,
             'unipileConfigured' => $this->linkedin->isUnipileConfigured(),
             'unipileWebhookCallbackUrl' => $this->linkedin->webhookCallbackUrl(request()),
-            'defaultUserAgent' => (string) request()->userAgent(),
             'deliveryStats' => $deliveryStats,
             'connectedChannels' => $this->channels->summarizeForUser($user),
             'espProviders' => [
-                ['key' => 'mailchimp', 'label' => 'Mailchimp', 'fields' => ['api_key', 'audience_id']],
-                ['key' => 'sendgrid', 'label' => 'SendGrid', 'fields' => ['api_key', 'from_email', 'from_name']],
-                ['key' => 'hubspot', 'label' => 'HubSpot', 'fields' => ['api_key', 'portal_id']],
+                ['key' => 'mailchimp', 'label' => 'Mailchimp', 'fields' => ['api_key', 'audience_id'], 'wired' => true],
+                ['key' => 'sendgrid', 'label' => 'SendGrid', 'fields' => ['api_key', 'audience_id'], 'wired' => true],
+                ['key' => 'hubspot', 'label' => 'HubSpot', 'fields' => ['api_key'], 'wired' => true],
+                ['key' => 'klaviyo', 'label' => 'Klaviyo', 'fields' => ['api_key', 'audience_id'], 'wired' => true],
+                ['key' => 'brevo', 'label' => 'Brevo (Sendinblue)', 'fields' => ['api_key', 'audience_id'], 'wired' => true],
+                ['key' => 'activecampaign', 'label' => 'ActiveCampaign', 'fields' => ['api_key', 'api_base', 'audience_id'], 'wired' => true],
+                ['key' => 'mailerlite', 'label' => 'MailerLite', 'fields' => ['api_key', 'audience_id'], 'wired' => true],
+                ['key' => 'convertkit', 'label' => 'ConvertKit', 'fields' => ['api_key', 'audience_id'], 'wired' => true],
+                ['key' => 'getresponse', 'label' => 'GetResponse', 'fields' => ['api_key', 'audience_id'], 'wired' => true],
             ],
         ]);
     }
@@ -125,7 +130,7 @@ class IntegrationWebController extends Controller
     {
         $data = $request->validate([
             'li_at' => ['required', 'string', 'max:2048'],
-            'user_agent' => ['required', 'string', 'max:512'],
+            'user_agent' => ['nullable', 'string', 'max:512'],
         ]);
 
         /** @var \App\Models\User $user */
@@ -136,7 +141,7 @@ class IntegrationWebController extends Controller
             $this->linkedin->connectViaCookie(
                 $user,
                 $data['li_at'],
-                $data['user_agent'] ?? $request->userAgent() ?? '',
+                trim((string) ($data['user_agent'] ?? $request->userAgent() ?? '')) ?: 'LinkedEmpire/2.0',
                 $orgId
             );
         } catch (\Throwable $e) {
@@ -243,6 +248,7 @@ class IntegrationWebController extends Controller
         $data = $request->validate([
             'provider' => ['required', 'string', 'max:100'],
             'api_key' => ['nullable', 'string', 'max:500'],
+            'api_base' => ['nullable', 'string', 'max:500'],
             'audience_id' => ['nullable', 'string', 'max:191'],
             'from_email' => ['nullable', 'email', 'max:191'],
             'from_name' => ['nullable', 'string', 'max:120'],
@@ -252,6 +258,7 @@ class IntegrationWebController extends Controller
 
         $config = array_filter([
             'api_key' => $data['api_key'] ?? null,
+            'api_base' => $data['api_base'] ?? null,
             'audience_id' => $data['audience_id'] ?? null,
             'from_email' => $data['from_email'] ?? null,
             'from_name' => $data['from_name'] ?? null,

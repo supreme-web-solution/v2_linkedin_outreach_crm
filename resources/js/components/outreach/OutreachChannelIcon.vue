@@ -1,35 +1,31 @@
 <script setup lang="ts">
-import {
-    AtSign,
-    Camera,
-    Mail,
-    MessageCircle,
-    Network,
-    Send,
-} from '@lucide/vue';
-import { computed, type Component } from 'vue';
+import { computed } from 'vue';
+import { brandIconSrc } from '@/lib/brandIcons';
 import type { OutreachChannel } from '@/components/outreach/types';
+import { cn } from '@/lib/utils';
 
 const props = withDefaults(defineProps<{
     channel?: OutreachChannel | string;
     size?: number;
     class?: string;
+    rounded?: boolean;
 }>(), {
-    size: 16,
+    size: 20,
+    rounded: true,
 });
 
-const ICONS: Record<string, Component> = {
-    linkedin: Network,
-    email: Mail,
-    whatsapp: MessageCircle,
-    instagram: Camera,
-    telegram: Send,
-    twitter: AtSign,
-};
-
-const Icon = computed(() => ICONS[String(props.channel ?? 'linkedin')] ?? Mail);
+const src = computed(() => brandIconSrc(props.channel));
+const alt = computed(() => `${String(props.channel ?? 'channel')} icon`);
 </script>
 
 <template>
-    <component :is="Icon" :class="props.class" :size="size" stroke-width="2" />
+    <img
+        :src="src"
+        :alt="alt"
+        :width="size"
+        :height="size"
+        loading="lazy"
+        decoding="async"
+        :class="cn('shrink-0 object-contain', rounded ? 'rounded-[22%]' : '', props.class)"
+    />
 </template>

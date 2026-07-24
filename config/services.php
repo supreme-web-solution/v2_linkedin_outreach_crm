@@ -37,6 +37,14 @@ return [
 
     'openai' => [
         'key' => env('OPENAI_API_KEY', env('OPENAI_KEY')),
+        'image_model' => env('OPENAI_IMAGE_MODEL', 'gpt-image-2'),
+    ],
+
+    'cloudinary' => [
+        'url' => env('CLOUDINARY_URL'),
+        'cloud_name' => env('CLOUDINARY_CLOUD_NAME'),
+        'api_key' => env('CLOUDINARY_API_KEY'),
+        'api_secret' => env('CLOUDINARY_API_SECRET'),
     ],
 
     'chatgpt' => [

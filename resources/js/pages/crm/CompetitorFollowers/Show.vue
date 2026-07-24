@@ -2,6 +2,8 @@
 import { Head, Link, router } from '@inertiajs/vue3';
 import { ArrowLeft, Download, Loader2, Mail } from '@lucide/vue';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import { Button } from '@/components/ui/button';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
@@ -257,12 +259,11 @@ function fullName(r: FollowerRow): string {
                     <span class="font-semibold text-foreground">{{ dailyLimit.used }}/{{ dailyLimit.daily_limit }}</span>
                     used today
                 </div>
-                <a
-                    :href="`/competitor-followers/${audience.id}/export`"
-                    class="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted"
-                >
-                    <Download class="h-4 w-4" /> Export CSV
-                </a>
+                <Button variant="success" size="toolbar" as-child>
+                    <a :href="`/competitor-followers/${audience.id}/export`">
+                        <Download class="h-4 w-4" /> Export CSV
+                    </a>
+                </Button>
             </div>
         </div>
 

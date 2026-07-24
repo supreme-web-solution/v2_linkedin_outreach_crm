@@ -4,6 +4,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Users, Star, Eye, Settings2, CheckCircle2, Layers, Plus, Trash2, Rocket, ChevronRight, Search, ChevronLeft, ArrowLeft } from '@lucide/vue';
 import CampaignFlowCanvas from '@/components/campaign/CampaignFlowCanvas.vue';
 import CampaignStepPreviewChip from '@/components/campaign/CampaignStepPreviewChip.vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import { type CampaignStep } from '@/components/campaign/types';
 import { Checkbox } from '@/components/ui/checkbox';
 
@@ -455,14 +456,10 @@ onUnmounted(() => {
             style="z-index: 9999; width: 100vw; height: 100dvh;"
         >
             <header class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
-                <button
-                    type="button"
-                    class="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted"
-                    @click="phase = 'leads'"
-                >
+                <AppToolbarButton variant="slate" @click="phase = 'leads'">
                     <ArrowLeft class="h-4 w-4" />
                     Back
-                </button>
+                </AppToolbarButton>
                 <div class="min-w-0 text-center">
                     <p class="truncate text-sm font-semibold">{{ campaignName || 'Campaign sequence' }}</p>
                     <p class="text-[11px] capitalize text-muted-foreground">{{ selectedType.replace(/_/g, ' ') }}</p>

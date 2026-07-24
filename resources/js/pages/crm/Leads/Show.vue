@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import {
     ArrowLeft,
     Download,
@@ -274,15 +275,15 @@ function distanceLabel(d: string | null): string {
                 </div>
             </div>
             <div class="flex items-center gap-2">
-                <button type="button" :disabled="busy" class="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60" @click="exportCsv">
+                <AppToolbarButton variant="success" :disabled="busy" @click="exportCsv">
                     <Download class="h-4 w-4" /> Export CSV
-                </button>
-                <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30" @click="deleteList">
+                </AppToolbarButton>
+                <AppToolbarButton variant="dangerGradient" @click="deleteList">
                     <Trash2 class="h-4 w-4" /> Delete list
-                </button>
-                <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted" @click="router.reload({ only: ['leads', 'counts', 'dailyLimit', 'pendingCount'] })">
+                </AppToolbarButton>
+                <AppToolbarButton variant="info" @click="router.reload({ only: ['leads', 'counts', 'dailyLimit', 'pendingCount'] })">
                     <RefreshCw class="h-4 w-4" /> Refresh
-                </button>
+                </AppToolbarButton>
             </div>
         </div>
 
@@ -331,7 +332,7 @@ function distanceLabel(d: string | null): string {
             <button v-if="src === 'aud'" type="button" :disabled="busy" class="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 disabled:opacity-60" @click="fetchBatch">
                 <Loader2 v-if="busy" class="h-3.5 w-3.5 animate-spin" /><Mail v-else class="h-3.5 w-3.5" /> Fetch emails
             </button>
-            <button type="button" class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-muted" @click="deleteSelected">
+            <button type="button" class="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-b from-red-500 to-red-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm shadow-red-950/20 ring-1 ring-inset ring-white/15 hover:from-red-500 hover:to-red-700 disabled:opacity-60" @click="deleteSelected">
                 <Trash2 class="h-3.5 w-3.5" /> Delete
             </button>
             <button type="button" class="ml-auto text-xs text-muted-foreground hover:text-foreground" @click="selected = new Set()">Clear</button>

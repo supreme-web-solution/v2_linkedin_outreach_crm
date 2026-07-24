@@ -10,14 +10,18 @@ use App\Models\V2Message;
 use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
+use App\V2\Outreach\InboxAttachmentSupport;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Services\OpenAIContentService;
 use App\V2\Services\OutreachChannelInboxSettingsService;
 use App\V2\Services\UnifiedInboxService;
+use App\V2\Integrations\Unipile\UnipileProvider;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -25,6 +29,8 @@ class UnifiedInboxWebController extends Controller
 {
     /** @var array<int, string> */
     private const PLATFORMS = ['linkedin', 'whatsapp', 'instagram', 'telegram', 'twitter', 'email'];
+
+    private const CONVERSATIONS_PER_PAGE = 20;
 
     public function __construct(
         private readonly UnifiedInboxService $inbox,
@@ -79,28 +85,7 @@ class UnifiedInboxWebController extends Controller
         $campaignFilter = (int) $request->query('campaign', 0);
         $selectedId = (int) $request->query('id', 0);
 
-        $query = V2Conversation::query()
-            ->where('user_id', $user->id)
-            ->forInboxPlatform($platform)
-            ->withCount('messages');
-
-        if ($search !== '') {
-            $query->where(function ($q) use ($search) {
-                $q->where('provider_chat_id', 'like', '%'.$search.'%')
-                    ->orWhere('meta', 'like', '%'.$search.'%');
-            });
-        }
-
-        if ($campaignFilter > 0) {
-            $query->where('meta->outreach_campaign_id', $campaignFilter);
-        }
-
-        $conversations = $query
-            ->orderByDesc('last_message_at')
-            ->orderByDesc('id')
-            ->limit(100)
-            ->get()
-            ->map(fn (V2Conversation $conversation) => $this->serializeListItem($conversation));
+        $conversations = $this->paginateConversations($user, $platform, $request);
 
         $selected = null;
         $messages = [];
@@ -134,6 +119,7 @@ class UnifiedInboxWebController extends Controller
             'messages' => $messages,
             'outreachContext' => $outreachContext,
             'aiConfigured' => app(OpenAIContentService::class)->isConfigured(),
+            'supportsAttachments' => InboxAttachmentSupport::supportsAttachments($platform),
             'filters' => [
                 'search' => $search !== '' ? $search : null,
                 'campaign' => $campaignFilter > 0 ? $campaignFilter : null,
@@ -142,12 +128,13 @@ class UnifiedInboxWebController extends Controller
         ]);
     }
 
-    public function show(string $platform, int $id): Response
+    public function show(Request $request, string $platform, int $id): Response
     {
         $this->channelSettings->assertInboxChannel($platform);
 
         /** @var User $user */
         $user = auth()->user();
+        $search = trim((string) $request->query('search', ''));
 
         $thread = V2Conversation::query()
             ->where('user_id', $user->id)
@@ -160,31 +147,26 @@ class UnifiedInboxWebController extends Controller
 
         $config = OutreachChannelRegistry::channels()[$platform] ?? [];
 
-        $conversations = V2Conversation::query()
-            ->where('user_id', $user->id)
-            ->forInboxPlatform($platform)
-            ->withCount('messages')
-            ->orderByDesc('last_message_at')
-            ->orderByDesc('id')
-            ->limit(100)
-            ->get()
-            ->map(fn (V2Conversation $conversation) => $this->serializeListItem($conversation));
-
         return Inertia::render('crm/inbox/Platform', [
             'platform' => $platform,
             'platformLabel' => (string) ($config['label'] ?? ucfirst($platform)),
             'platformColor' => (string) ($config['color'] ?? '#64748b'),
             'connected' => (bool) V2IntegrationAccount::activeUnipileAccountIdForProvider($user->id, $platform),
-            'conversations' => $conversations,
+            'conversations' => $this->paginateConversations($user, $platform, $request),
             'selected' => $this->serializeThread($thread),
             'messages' => $this->serializeMessages($thread),
             'outreachContext' => $this->buildOutreachContext($thread, $user),
             'aiConfigured' => app(OpenAIContentService::class)->isConfigured(),
-            'filters' => ['search' => null, 'campaign' => null, 'id' => $id],
+            'supportsAttachments' => InboxAttachmentSupport::supportsAttachments($platform),
+            'filters' => [
+                'search' => $search !== '' ? $search : null,
+                'campaign' => null,
+                'id' => $id,
+            ],
         ]);
     }
 
-    public function poll(string $platform, int $id): JsonResponse
+    public function poll(Request $request, string $platform, int $id): JsonResponse
     {
         $this->channelSettings->assertInboxChannel($platform);
 
@@ -200,19 +182,11 @@ class UnifiedInboxWebController extends Controller
         $this->inbox->syncMessagesFromProvider($thread);
         $thread->refresh();
 
-        $conversations = V2Conversation::query()
-            ->where('user_id', $user->id)
-            ->forInboxPlatform($platform)
-            ->withCount('messages')
-            ->orderByDesc('last_message_at')
-            ->orderByDesc('id')
-            ->limit(100)
-            ->get()
-            ->map(fn (V2Conversation $conversation) => $this->serializeListItem($conversation));
-
         return response()->json([
             'messages' => $this->serializeMessages($thread),
-            'conversations' => $conversations,
+            'conversations' => $this->serializeConversationsPaginator(
+                $this->paginateConversations($user, $platform, $request)
+            ),
             'selected' => $this->serializeThread($thread),
             'outreachContext' => $this->buildOutreachContext($thread, $user),
         ]);
@@ -232,16 +206,77 @@ class UnifiedInboxWebController extends Controller
             ->firstOrFail();
 
         $data = $request->validate([
-            'body' => ['required', 'string', 'max:8000'],
+            'body' => ['nullable', 'string', 'max:8000'],
+            'attachment' => ['nullable', 'file', 'max:15360'],
         ]);
 
+        if (trim((string) ($data['body'] ?? '')) === '' && ! $request->hasFile('attachment')) {
+            return back()->withErrors(['body' => 'Enter a message or attach a file.']);
+        }
+
         try {
-            $this->inbox->sendMessage($user, $conversation, $data['body']);
+            $this->inbox->sendMessage(
+                $user,
+                $conversation,
+                trim((string) ($data['body'] ?? '')),
+                $request->file('attachment'),
+            );
         } catch (\Throwable $e) {
             return back()->with('error', $e->getMessage());
         }
 
-        return back()->with('success', 'Message queued via Unipile.');
+        return back()->with('success', 'Message sent via Unipile.');
+    }
+
+    public function attachment(
+        string $platform,
+        int $id,
+        string $messageId,
+        string $attachmentId,
+    ): StreamedResponse|RedirectResponse {
+        $this->channelSettings->assertInboxChannel($platform);
+
+        /** @var User $user */
+        $user = auth()->user();
+
+        $thread = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->forInboxPlatform($platform)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $message = V2Message::query()
+            ->where('conversation_id', $thread->id)
+            ->where('provider_message_id', $messageId)
+            ->firstOrFail();
+
+        $attachments = is_array($message->attachments) ? $message->attachments : [];
+        $allowed = collect($attachments)->first(fn ($item) => is_array($item) && (string) ($item['id'] ?? '') === $attachmentId);
+        if (! $allowed) {
+            abort(404);
+        }
+
+        $accountId = V2IntegrationAccount::activeUnipileAccountIdForProvider($user->id, $platform);
+        if (! $accountId) {
+            abort(404);
+        }
+
+        $response = app(UnipileProvider::class)->downloadMessageAttachment($messageId, $attachmentId, [
+            'account_id' => $accountId,
+        ]);
+
+        if (! $response->successful()) {
+            abort($response->status() ?: 502);
+        }
+
+        $filename = (string) ($allowed['filename'] ?? 'attachment');
+        $mime = (string) ($allowed['mimetype'] ?? $response->header('Content-Type') ?? 'application/octet-stream');
+
+        return response()->streamDownload(function () use ($response) {
+            echo $response->body();
+        }, $filename, [
+            'Content-Type' => $mime,
+        ]);
     }
 
     /**
@@ -308,6 +343,58 @@ class UnifiedInboxWebController extends Controller
         ];
     }
 
+    private function paginateConversations(User $user, string $platform, Request $request): LengthAwarePaginator
+    {
+        $search = trim((string) $request->query('search', ''));
+        $campaignFilter = (int) $request->query('campaign', 0);
+
+        $query = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->forInboxPlatform($platform)
+            ->withCount('messages');
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('provider_chat_id', 'like', '%'.$search.'%')
+                    ->orWhere('meta', 'like', '%'.$search.'%');
+            });
+        }
+
+        if ($campaignFilter > 0) {
+            $query->where('meta->outreach_campaign_id', $campaignFilter);
+        }
+
+        $paginator = $query
+            ->orderByDesc('last_message_at')
+            ->orderByDesc('id')
+            ->paginate(self::CONVERSATIONS_PER_PAGE)
+            ->withQueryString();
+
+        $paginator->getCollection()->transform(
+            fn (V2Conversation $conversation) => $this->serializeListItem($conversation)
+        );
+
+        return $paginator;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeConversationsPaginator(LengthAwarePaginator $paginator): array
+    {
+        return [
+            'data' => array_values($paginator->items()),
+            'current_page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'from' => $paginator->firstItem(),
+            'to' => $paginator->lastItem(),
+            'prev_page_url' => $paginator->previousPageUrl(),
+            'next_page_url' => $paginator->nextPageUrl(),
+        ];
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -368,17 +455,48 @@ class UnifiedInboxWebController extends Controller
      */
     private function serializeMessages(V2Conversation $conversation): array
     {
+        $normalizer = app(\App\V2\Services\UnipileMessageNormalizer::class);
+
         return V2Message::query()
             ->where('conversation_id', $conversation->id)
             ->orderBy('created_at')
             ->orderBy('id')
             ->get()
+            ->filter(fn (V2Message $message) => ! $normalizer->isReactionAnnouncementText((string) ($message->body ?? '')))
             ->map(fn (V2Message $message) => [
                 'id' => $message->id,
+                'provider_message_id' => $message->provider_message_id,
                 'direction' => $message->direction,
                 'body' => (string) ($message->body ?? ''),
                 'at' => ($message->received_at ?? $message->sent_at ?? $message->created_at)?->toIso8601String(),
                 'source' => Arr::get($message->meta ?? [], 'source'),
+                'attachments' => collect(is_array($message->attachments) ? $message->attachments : [])
+                    ->filter(fn ($item) => is_array($item) && ! empty($item['id']))
+                    ->map(fn (array $item) => [
+                        'id' => (string) $item['id'],
+                        'filename' => (string) ($item['filename'] ?? 'file'),
+                        'mimetype' => (string) ($item['mimetype'] ?? 'application/octet-stream'),
+                        'type' => (string) ($item['type'] ?? 'file'),
+                        'unavailable' => (bool) ($item['unavailable'] ?? false),
+                        'url' => $message->provider_message_id
+                            ? route('inbox.attachment', [
+                                'platform' => $conversation->provider,
+                                'id' => $conversation->id,
+                                'messageId' => $message->provider_message_id,
+                                'attachmentId' => $item['id'],
+                            ])
+                            : null,
+                    ])
+                    ->values()
+                    ->all(),
+                'reactions' => collect(is_array(Arr::get($message->meta, 'reactions')) ? Arr::get($message->meta, 'reactions') : [])
+                    ->filter(fn ($item) => is_array($item) && ! empty($item['value']))
+                    ->map(fn (array $item) => [
+                        'value' => (string) $item['value'],
+                        'is_sender' => (bool) ($item['is_sender'] ?? false),
+                    ])
+                    ->values()
+                    ->all(),
             ])
             ->all();
     }

@@ -6,7 +6,6 @@ use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 class OpenAIContentService
 {
@@ -16,10 +15,15 @@ class OpenAIContentService
     }
 
     /**
-     * @return array{content:string,hashtags:string}
+     * @return array{content:string,hashtags:string,image?:array{url:string,path:string},image_error?:string}
      */
-    public function generateLinkedInPost(string $topic, string $style = 'professional', string $length = 'medium'): array
-    {
+    public function generateLinkedInPost(
+        string $topic,
+        string $style = 'professional',
+        string $length = 'medium',
+        bool $withImage = false,
+        ?int $userId = null,
+    ): array {
         $wordGuide = match ($length) {
             'short' => '80-130 words',
             'long' => '230-320 words',
@@ -38,16 +42,34 @@ Rules:
 - Keep it natural and human, not robotic.
 - End with a CTA question.
 - Add 3-6 relevant hashtags at the end.
+- Plain text only: no markdown, no ** bold **, no bullet markdown syntax.
 - Return only the final post text.
 PROMPT;
 
-        $text = $this->chatCompletion($prompt, 900, 0.8);
+        $text = $this->sanitizeLinkedInText($this->chatCompletion($prompt, 900, 0.8));
         [$content, $hashtags] = $this->splitContentAndHashtags($text);
 
-        return [
+        $result = [
             'content' => $content,
             'hashtags' => $hashtags,
         ];
+
+        if ($withImage && $userId !== null) {
+            try {
+                $result['image'] = $this->generateImage(
+                    $this->buildPostImagePrompt($topic, $content),
+                    $userId,
+                );
+            } catch (\Throwable $e) {
+                Log::warning('[OpenAIContentService] Post image generation failed', [
+                    'user_id' => $userId,
+                    'error' => $e->getMessage(),
+                ]);
+                $result['image_error'] = 'Text was generated, but the image could not be created.';
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -78,9 +100,10 @@ Original post:
 {$content}
 
 Return only the improved final post text.
+Use plain text only — no markdown formatting.
 PROMPT;
 
-        return $this->chatCompletion($prompt, 900, 0.7);
+        return $this->sanitizeLinkedInText($this->chatCompletion($prompt, 900, 0.7));
     }
 
     /**
@@ -103,9 +126,10 @@ Original post:
 {$content}
 
 Return only the rewritten post.
+Use plain text only — no markdown formatting.
 PROMPT;
 
-        return $this->chatCompletion($prompt, 900, 0.75);
+        return $this->sanitizeLinkedInText($this->chatCompletion($prompt, 900, 0.75));
     }
 
     /**
@@ -115,11 +139,12 @@ PROMPT;
     public function generateImage(string $prompt, int $userId): array
     {
         $response = Http::withToken($this->apiKey())
-            ->timeout(90)
+            ->timeout(120)
             ->post('https://api.openai.com/v1/images/generations', [
-                'model' => 'gpt-image-1',
+                'model' => (string) config('services.openai.image_model', 'gpt-image-2'),
                 'prompt' => $prompt,
                 'size' => '1024x1024',
+                'quality' => 'medium',
             ]);
 
         if (!$response->ok()) {
@@ -137,11 +162,18 @@ PROMPT;
         }
 
         $relativePath = 'content-ai-images/u'.$userId.'_'.time().'_'.bin2hex(random_bytes(4)).'.png';
-        Storage::disk('public')->put($relativePath, $binary);
+        $cloudinary = app(CloudinaryMediaService::class);
+        if (! $cloudinary->isConfigured()) {
+            throw new \RuntimeException('Cloudinary is not configured. Set CLOUDINARY_URL in .env.');
+        }
+
+        $upload = $cloudinary->uploadBinary($binary, 'content-ai-images/u'.$userId, 'ai-post.png');
 
         return [
-            'url' => Storage::disk('public')->url($relativePath),
-            'path' => $relativePath,
+            'url' => $upload['secure_url'] ?: $upload['url'],
+            'path' => $upload['public_id'],
+            'cloudinary_public_id' => $upload['public_id'],
+            'resource_type' => $upload['resource_type'],
         ];
     }
 
@@ -416,20 +448,55 @@ PROMPT;
      */
     private function splitContentAndHashtags(string $text): array
     {
+        $text = trim($text);
+        if ($text === '') {
+            return ['', ''];
+        }
+
         $lines = preg_split('/\r\n|\r|\n/', $text) ?: [];
         $hashLines = [];
         $bodyLines = [];
 
         foreach ($lines as $line) {
             $trimmed = trim($line);
-            if ($trimmed !== '' && str_starts_with($trimmed, '#')) {
+            if ($trimmed !== '' && preg_match('/^#\w+/u', $trimmed) && ! preg_match('/[^\s#]/u', preg_replace('/#\w+/u', '', $trimmed))) {
                 $hashLines[] = $trimmed;
             } else {
                 $bodyLines[] = $line;
             }
         }
 
-        return [trim(implode("\n", $bodyLines)), trim(implode(' ', $hashLines))];
+        $body = trim(implode("\n", $bodyLines));
+        $hashtags = trim(implode(' ', $hashLines));
+
+        if ($hashtags === '' && preg_match('/(?:\s|^)((?:#\w+\s*){2,})\s*$/u', $body, $matches)) {
+            $hashtags = trim($matches[1]);
+            $body = trim(substr($body, 0, -strlen($matches[0])));
+        }
+
+        return [$body, $hashtags];
+    }
+
+    private function buildPostImagePrompt(string $topic, string $content): string
+    {
+        $snippet = mb_substr(trim(preg_replace('/\s+/u', ' ', strip_tags($content)) ?: $topic), 0, 280);
+
+        return "Professional LinkedIn post illustration. Topic: {$topic}. Visual concept inspired by: {$snippet}. Clean, modern, photorealistic or polished editorial style, no text overlay, suitable for social media feed.";
+    }
+
+    private function sanitizeLinkedInText(string $text): string
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return '';
+        }
+
+        $text = preg_replace('/\*\*(.+?)\*\*/s', '$1', $text) ?? $text;
+        $text = preg_replace('/__(.+?)__/s', '$1', $text) ?? $text;
+        $text = str_replace('**', '', $text);
+        $text = preg_replace('/^#{1,6}\s+/m', '', $text) ?? $text;
+
+        return trim($text);
     }
 }
 

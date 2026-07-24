@@ -134,22 +134,34 @@ class EspController extends Controller
 
         $created = [];
         foreach ($leads as $lead) {
-            $recipient = (string) ($lead->email ?: $lead->public_identifier ?: '');
-            $status = $recipient !== '' ? 'sent' : 'failed';
+            $recipient = trim((string) ($lead->email ?? ''));
+            $status = 'failed';
+            $providerDispatch = null;
+            $error = $recipient === '' ? 'Lead has no email address.' : null;
 
-            $providerDispatch = $this->adapterFactory
-                ->make((string) $data['provider'])
-                ->dispatch(
-                    is_array($integration->config) ? $integration->config : [],
-                    [
-                        'recipient' => $recipient,
-                        'subject' => $data['subject'] ?? null,
-                        'body' => $data['body'] ?? null,
-                        'first_name' => $lead->full_name ? explode(' ', (string) $lead->full_name)[0] : '',
-                        'last_name' => $lead->full_name ? trim(substr((string) $lead->full_name, strlen((string) explode(' ', (string) $lead->full_name)[0]))) : '',
-                        'lead_id' => $lead->id,
-                    ]
-                );
+            if ($recipient !== '') {
+                try {
+                    $providerDispatch = $this->adapterFactory
+                        ->make((string) $data['provider'])
+                        ->dispatch(
+                            is_array($integration->config) ? $integration->config : [],
+                            [
+                                'recipient' => $recipient,
+                                'subject' => $data['subject'] ?? null,
+                                'body' => $data['body'] ?? null,
+                                'first_name' => $lead->full_name ? explode(' ', (string) $lead->full_name)[0] : '',
+                                'last_name' => $lead->full_name ? trim(substr((string) $lead->full_name, strlen((string) explode(' ', (string) $lead->full_name)[0]))) : '',
+                                'lead_id' => $lead->id,
+                            ]
+                        );
+                    $status = 'sent';
+                } catch (\Throwable $exception) {
+                    $error = $exception->getMessage();
+                    $providerDispatch = [
+                        'error' => $error,
+                    ];
+                }
+            }
 
             $delivery = V2EspDelivery::query()->create([
                 'organization_id' => $organizationId,
@@ -157,19 +169,22 @@ class EspController extends Controller
                 'esp_integration_id' => $integration->id,
                 'lead_id' => $lead->id,
                 'provider' => $data['provider'],
-                'recipient' => $recipient,
+                'recipient' => $recipient !== '' ? $recipient : (string) ($lead->public_identifier ?: ''),
                 'status' => $status,
-                'external_message_id' => 'esp_'.Str::random(24),
+                'external_message_id' => $status === 'sent'
+                    ? (string) ($providerDispatch['provider_meta']['member_id'] ?? ('esp_'.Str::random(24)))
+                    : null,
                 'subject' => $data['subject'] ?? null,
                 'body_preview' => Str::limit((string) ($data['body'] ?? ''), 280),
                 'events' => [[
                     'status' => $status,
                     'at' => now()->toIso8601String(),
+                    'error' => $error,
                 ]],
                 'meta' => [
                     'integration_provider' => $integration->provider,
-                    'integration_config' => $integration->config ?? [],
                     'provider_dispatch' => $providerDispatch,
+                    'error' => $error,
                 ],
                 'sent_at' => $status === 'sent' ? now() : null,
                 'failed_at' => $status === 'failed' ? now() : null,
@@ -178,14 +193,34 @@ class EspController extends Controller
             $created[] = $delivery;
         }
 
-        return response()->json([
+        $sent = collect($created)->where('status', 'sent')->count();
+        $failed = collect($created)->where('status', 'failed')->count();
+        $errors = collect($created)
+            ->filter(fn ($d) => $d->status === 'failed')
+            ->map(fn ($d) => (string) (is_array($d->meta) ? ($d->meta['error'] ?? 'Failed') : 'Failed'))
+            ->unique()
+            ->values()
+            ->all();
+
+        $summary = $sent > 0 && $failed === 0
+            ? "Subscribed {$sent} contact(s) to {$data['provider']}."
+            : ($sent > 0
+                ? "Subscribed {$sent}, failed {$failed}."
+                : "Push failed for all {$failed} contact(s).");
+
+        $payload = [
+            'message' => $summary,
             'data' => [
                 'total' => count($created),
-                'sent' => collect($created)->where('status', 'sent')->count(),
-                'failed' => collect($created)->where('status', 'failed')->count(),
+                'sent' => $sent,
+                'failed' => $failed,
                 'deliveries' => $created,
+                'message' => $summary,
+                'errors' => $errors,
             ],
-        ], 201);
+        ];
+
+        return response()->json($payload, $sent > 0 ? 201 : 422);
     }
 
     public function ingestDeliveryFeedback(Request $request): JsonResponse

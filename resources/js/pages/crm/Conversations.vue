@@ -3,6 +3,8 @@ import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import { MessageSquare, Trash2 } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import { Button } from '@/components/ui/button';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 
@@ -153,13 +155,9 @@ const statusColor = (s: string) => {
 
         <div v-if="selected.size > 0" class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
             <span class="font-medium">{{ selected.size }} selected</span>
-            <button
-                type="button"
-                class="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-card px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-900/40 dark:hover:bg-red-900/20"
-                @click="deleteSelected"
-            >
+            <Button variant="dangerGradient" size="sm" @click="deleteSelected">
                 <Trash2 class="h-3.5 w-3.5" /> Delete selected
-            </button>
+            </Button>
             <button type="button" class="ml-auto text-xs text-muted-foreground hover:text-foreground" @click="selected = new Set()">Clear</button>
         </div>
 
@@ -169,12 +167,9 @@ const statusColor = (s: string) => {
             <p class="max-w-md text-sm text-muted-foreground">
                 Launch outreach from <Link href="/calls" class="underline">Call Manager</Link> — a thread appears here once you message a prospect.
             </p>
-            <Link
-                href="/calls"
-                class="mt-2 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-            >
-                Open Call Manager
-            </Link>
+            <Button size="toolbar" as-child>
+                <Link href="/calls">Open Call Manager</Link>
+            </Button>
         </div>
 
         <div v-else class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">

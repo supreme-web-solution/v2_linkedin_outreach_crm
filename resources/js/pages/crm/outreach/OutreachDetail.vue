@@ -4,6 +4,8 @@ import { AlertCircle, Inbox, Layers, Loader2, Pause, Play, Pencil, Rocket, Trash
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import OutreachLeadReadinessPanel from '@/components/outreach/OutreachLeadReadinessPanel.vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import { Button } from '@/components/ui/button';
 import type { ConnectedChannel, OutreachStep } from '@/components/outreach/types';
 
 defineOptions({
@@ -134,15 +136,17 @@ function confirmDelete() {
                 <span v-if="isRunning" class="mt-1 inline-flex items-center gap-1 text-xs text-green-600"><Loader2 class="h-3 w-3 animate-spin" /> Running</span>
             </div>
             <div class="flex flex-wrap gap-2">
-                <button v-if="campaign.status === 'draft'" type="button" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-2 text-sm text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 disabled:opacity-60" :disabled="launching" @click="launch">
+                <AppToolbarButton v-if="campaign.status === 'draft'" :disabled="launching" @click="launch">
                     <Rocket class="h-4 w-4" /> {{ launching ? 'Launching…' : 'Launch' }}
-                </button>
-                <button v-else type="button" class="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-muted" @click="toggleStatus">
+                </AppToolbarButton>
+                <AppToolbarButton v-else :variant="isRunning ? 'amber' : 'success'" @click="toggleStatus">
                     <Pause v-if="isRunning" class="h-4 w-4" /><Play v-else class="h-4 w-4" />
                     {{ isRunning ? 'Pause' : 'Resume' }}
-                </button>
-                <Link :href="`/outreach/${campaign.id}/edit`" class="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-muted"><Pencil class="h-4 w-4" /> Edit</Link>
-                <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 shadow-sm hover:bg-red-50" @click="confirmDelete"><Trash2 class="h-4 w-4" /></button>
+                </AppToolbarButton>
+                <Button variant="violet" size="toolbar" as-child>
+                    <Link :href="`/outreach/${campaign.id}/edit`"><Pencil class="h-4 w-4" /> Edit</Link>
+                </Button>
+                <AppToolbarButton variant="dangerGradient" @click="confirmDelete"><Trash2 class="h-4 w-4" /></AppToolbarButton>
             </div>
         </div>
 

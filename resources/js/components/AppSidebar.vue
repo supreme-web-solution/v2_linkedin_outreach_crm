@@ -62,15 +62,27 @@ const outreachItems: NavItem[] = [
             { title: 'Unified Inbox', href: '/inbox', icon: Inbox },
         ],
     },
-    { title: 'Call Manager', href: '/calls', icon: Phone },
-    { title: 'Conversations', href: '/conversations', icon: MessageSquare },
     { title: 'Auto-Responses', href: '/auto-responses', icon: Bot },
+    {
+        title: 'Call Inbox',
+        icon: Phone,
+        children: [
+            { title: 'Call Manager', href: '/calls', icon: Phone },
+            { title: 'Conversations', href: '/conversations', icon: MessageSquare },
+        ],
+    },
 ];
 
 const contentItems: NavItem[] = [
-    { title: 'AI Messages', href: '/ai-messages', icon: PenLine },
-    { title: 'AI Content Creation', href: '/content', icon: FileText },
-    { title: 'Inspiration', href: '/inspiration', icon: Lightbulb },
+    { title: 'Outreach Templates', href: '/ai-messages', icon: PenLine },
+    {
+        title: 'Content Studio',
+        icon: FileText,
+        children: [
+            { title: 'AI Content Creation', href: '/content', icon: FileText },
+            { title: 'Inspiration', href: '/inspiration', icon: Lightbulb },
+        ],
+    },
 ];
 
 const audienceItems: NavItem[] = [

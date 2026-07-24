@@ -156,6 +156,110 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     }
 
     /**
+     * Unipile POST /posts expects multipart/form-data (not JSON).
+     *
+     * @param  array<string, scalar|null>  $fields
+     * @param  list<array{field?: string, path: string, filename?: string, mime?: string}>  $files
+     */
+    private function requestMultipart(string $method, string $endpoint, array $fields = [], array $files = []): array
+    {
+        if ($this->isMock()) {
+            Log::info('[Unipile] MOCK multipart request', [
+                'method' => strtoupper($method),
+                'endpoint' => $endpoint,
+                'fields' => $fields,
+                'files' => array_map(fn (array $file) => $file['filename'] ?? basename($file['path']), $files),
+            ]);
+
+            return [
+                'mock' => true,
+                'method' => strtoupper($method),
+                'endpoint' => $endpoint,
+                'fields' => $fields,
+                'files' => $files,
+                'timestamp' => now()->toIso8601String(),
+            ];
+        }
+
+        if ($this->apiKey() === '') {
+            throw new UnipileException('Unipile API key is missing.', 500);
+        }
+
+        $normalizedMethod = strtoupper($method);
+        $logFields = $fields;
+
+        Log::info('[Unipile] → '.$normalizedMethod.' '.$endpoint.' (multipart)', [
+            'fields' => $logFields,
+            'files' => array_map(fn (array $file) => [
+                'field' => $file['field'] ?? 'attachments',
+                'filename' => $file['filename'] ?? basename($file['path']),
+            ], $files),
+            'base_url' => $this->baseUrl(),
+        ]);
+
+        try {
+            $pending = Http::baseUrl($this->baseUrl())
+                ->acceptJson()
+                ->connectTimeout(10)
+                ->timeout(max(30, 60 * max(1, count($files))))
+                ->retry(3, 250)
+                ->withHeaders([
+                    'X-API-KEY' => $this->apiKey(),
+                ])
+                ->asMultipart();
+
+            foreach ($files as $file) {
+                $pending = $pending->attach(
+                    $file['field'] ?? 'attachments',
+                    fopen($file['path'], 'r'),
+                    $file['filename'] ?? basename($file['path']),
+                    ['Content-Type' => $file['mime'] ?? 'application/octet-stream']
+                );
+            }
+
+            $response = $pending->post($endpoint, $fields)->throw();
+        } catch (RequestException $exception) {
+            $status = $exception->response?->status() ?? 502;
+            $responseBody = $exception->response?->json();
+            $responseText = $exception->response?->body() ?? $exception->getMessage();
+
+            Log::error('[Unipile] ✗ '.$normalizedMethod.' '.$endpoint.' (multipart) → HTTP '.$status, [
+                'fields' => $logFields,
+                'base_url' => $this->baseUrl(),
+                'response_body' => $responseBody,
+                'response_text' => substr($responseText, 0, 500),
+            ]);
+
+            $detail = '';
+            if (is_array($responseBody)) {
+                $detail = ': '.($responseBody['message'] ?? $responseBody['error'] ?? json_encode($responseBody));
+            } elseif ($responseText) {
+                $detail = ': '.substr($responseText, 0, 200);
+            }
+
+            throw new UnipileException(
+                'Unipile API error (HTTP '.$status.')'.$detail,
+                $status,
+                [
+                    'method' => $normalizedMethod,
+                    'endpoint' => $endpoint,
+                    'payload' => $fields,
+                    'response' => $responseBody,
+                    'hint' => $this->errorHint(is_array($responseBody) ? $responseBody : [], $status),
+                    'error_code' => is_array($responseBody) ? ($responseBody['type'] ?? null) : null,
+                ]
+            );
+        }
+
+        $responseData = $response->json() ?? [];
+        Log::info('[Unipile] ✓ '.$normalizedMethod.' '.$endpoint.' (multipart) → HTTP '.$response->status(), [
+            'response_keys' => array_keys($responseData),
+        ]);
+
+        return $responseData;
+    }
+
+    /**
      * Scoped Unipile routes require account_id as a query/path param on this API — not in JSON body.
      */
     private function accountScopedRequest(string $method, string $endpoint, string $accountId, array $payload = []): array
@@ -886,7 +990,90 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     public function sendMessage(string $chatId, array $payload, array $context = []): array
     {
         $endpoint = sprintf($this->endpoint('send_message'), $chatId);
+
+        $files = (array) Arr::pull($payload, '_files', []);
+        if ($files !== []) {
+            return $this->sendMessageMultipart($endpoint, $payload, $files);
+        }
+
         return $this->request('POST', $endpoint, array_merge($payload, $context));
+    }
+
+    /**
+     * @param  array<string, scalar|null>  $fields
+     * @param  list<array{path: string, filename?: string, mime?: string}>  $files
+     */
+    public function sendMessageMultipart(string $endpoint, array $fields = [], array $files = []): array
+    {
+        $fields = array_filter($fields, fn ($v) => $v !== null && $v !== '');
+
+        if ($this->isMock()) {
+            return [
+                'mock' => true,
+                'endpoint' => $endpoint,
+                'fields' => $fields,
+                'files' => array_map(fn (array $f) => $f['filename'] ?? basename($f['path']), $files),
+            ];
+        }
+
+        if ($this->apiKey() === '') {
+            throw new UnipileException('Unipile API key is missing.', 500);
+        }
+
+        Log::info('[Unipile] → POST '.$endpoint.' (multipart message)', [
+            'fields' => array_keys($fields),
+            'files' => array_map(fn (array $f) => $f['filename'] ?? basename($f['path']), $files),
+        ]);
+
+        try {
+            $pending = Http::baseUrl($this->baseUrl())
+                ->acceptJson()
+                ->connectTimeout(10)
+                ->timeout(max(60, 30 * max(1, count($files))))
+                ->retry(2, 250)
+                ->withHeaders(['X-API-KEY' => $this->apiKey()])
+                ->asMultipart();
+
+            foreach ($files as $file) {
+                $pending = $pending->attach(
+                    'attachments',
+                    fopen($file['path'], 'r'),
+                    $file['filename'] ?? basename($file['path']),
+                    ['Content-Type' => $file['mime'] ?? 'application/octet-stream']
+                );
+            }
+
+            $response = $pending->post($endpoint, $fields)->throw();
+        } catch (RequestException $exception) {
+            $status = $exception->response?->status() ?? 502;
+            throw new UnipileException(
+                'Unipile API error (HTTP '.$status.'): '.substr($exception->response?->body() ?? $exception->getMessage(), 0, 300),
+                $status
+            );
+        }
+
+        return $response->json() ?? [];
+    }
+
+    /**
+     * Stream attachment bytes from Unipile — nothing is stored locally.
+     */
+    public function downloadMessageAttachment(string $messageId, string $attachmentId, array $context = []): \Illuminate\Http\Client\Response
+    {
+        if ($this->apiKey() === '') {
+            throw new UnipileException('Unipile API key is missing.', 500);
+        }
+
+        $endpoint = '/messages/'.rawurlencode($messageId).'/attachments/'.rawurlencode($attachmentId);
+        $query = [];
+        if (! empty($context['account_id'])) {
+            $query['account_id'] = $context['account_id'];
+        }
+
+        return Http::baseUrl($this->baseUrl())
+            ->withHeaders(['X-API-KEY' => $this->apiKey()])
+            ->timeout(120)
+            ->get($endpoint, $query);
     }
 
     public function startChat(array $payload, array $context = []): array
@@ -947,18 +1134,60 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     }
 
     /**
-     * Publish a text post to LinkedIn via Unipile.
-     * Docs: POST /posts
+     * Publish a post to LinkedIn via Unipile.
+     * Docs: POST /posts (multipart/form-data)
+     *
+     * @param  array{
+     *     attachments?: list<array{path: string, filename?: string, mime?: string, field?: string}>,
+     *     video_thumbnail?: array{path: string, filename?: string, mime?: string},
+     *     repost?: string,
+     *     external_link?: string,
+     *     as_organization?: string,
+     * }  $options
      */
     public function createPost(string $accountId, string $content, array $options = []): array
     {
-        $payload = array_filter([
+        $fields = array_filter([
             'account_id' => $accountId,
-            'text'       => $content,
-            'visibility' => Arr::get($options, 'visibility', 'PUBLIC'),
+            'text' => $content,
+            'repost' => Arr::get($options, 'repost'),
+            'external_link' => Arr::get($options, 'external_link'),
+            'as_organization' => Arr::get($options, 'as_organization'),
         ], fn ($v) => $v !== null && $v !== '');
 
-        return $this->request('POST', '/posts', $payload);
+        $files = [];
+        foreach ((array) Arr::get($options, 'attachments', []) as $attachment) {
+            if (!is_array($attachment)) {
+                continue;
+            }
+
+            $path = (string) ($attachment['path'] ?? '');
+            if ($path === '' || !is_readable($path)) {
+                continue;
+            }
+
+            $files[] = [
+                'field' => (string) ($attachment['field'] ?? 'attachments'),
+                'path' => $path,
+                'filename' => (string) ($attachment['filename'] ?? basename($path)),
+                'mime' => (string) ($attachment['mime'] ?? (mime_content_type($path) ?: 'application/octet-stream')),
+            ];
+        }
+
+        $thumbnail = Arr::get($options, 'video_thumbnail');
+        if (is_array($thumbnail)) {
+            $thumbPath = (string) ($thumbnail['path'] ?? '');
+            if ($thumbPath !== '' && is_readable($thumbPath)) {
+                $files[] = [
+                    'field' => 'video_thumbnail',
+                    'path' => $thumbPath,
+                    'filename' => (string) ($thumbnail['filename'] ?? basename($thumbPath)),
+                    'mime' => (string) ($thumbnail['mime'] ?? (mime_content_type($thumbPath) ?: 'image/jpeg')),
+                ];
+            }
+        }
+
+        return $this->requestMultipart('POST', '/posts', $fields, $files);
     }
 
     public function listPosts(array $filters = [], array $context = []): array

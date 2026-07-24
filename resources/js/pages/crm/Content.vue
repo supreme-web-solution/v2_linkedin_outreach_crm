@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { Head, router, useForm } from '@inertiajs/vue3';
-import { computed, ref } from 'vue';
-import { AlertCircle, ChevronLeft, Clock, Edit2, FileText, Image as ImageIcon, Loader2, PenLine, RefreshCw, Send, Sparkles, Trash2 } from '@lucide/vue';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { AlertCircle, ChevronLeft, Clock, Edit2, FileText, Image as ImageIcon, Lightbulb, Loader2, PenLine, Rocket, Save, Send, Sparkles, Trash2, Type, Upload, Video, X } from '@lucide/vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import CheckboxField from '@/components/CheckboxField.vue';
+import { INSPIRATION_DRAFT_KEY } from '@/lib/contentDraft';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 
@@ -20,22 +23,6 @@ type Post = {
     meta?: Record<string, unknown>;
 };
 
-type Inspiration = {
-    id: number;
-    content: string;
-    created_at: string;
-    meta?: Record<string, unknown>;
-};
-
-type Template = {
-    id: number;
-    title: string;
-    category: string;
-    industry: string;
-    engagement_score: number;
-    content: string;
-};
-
 const props = defineProps<{
     posts: {
         data: Post[];
@@ -48,15 +35,13 @@ const props = defineProps<{
         to?: number | null;
     };
     filters: { search: string | null; status: string | null };
-    inspiration: Inspiration[];
-    templates?: Template[];
     contentStats: { total: number; published: number; scheduled: number; draft: number };
     hasOrg: boolean;
     hasLinkedIn: boolean;
     aiConfigured?: boolean;
-    rapidConfigured?: boolean;
 }>();
 
+const page = usePage();
 const postSearch = ref(props.filters?.search ?? '');
 const postStatusFilter = ref(props.filters?.status ?? 'all');
 
@@ -67,10 +52,17 @@ function applyPostFilters() {
     }, { preserveState: true, preserveScroll: true, replace: true, only: ['posts', 'filters', 'contentStats'] });
 }
 
-const tab = ref<'writer' | 'inspiration'>('writer');
 const panel = ref<'list' | 'compose'>('list');
 const editingId = ref<number | null>(null);
-const inspirationRows = ref<Inspiration[]>([...props.inspiration]);
+const fromInspiration = ref(false);
+const composeDraftHandled = ref(false);
+const contentTextareaRef = ref<HTMLTextAreaElement | null>(null);
+const imageInputRef = ref<HTMLInputElement | null>(null);
+const videoInputRef = ref<HTMLInputElement | null>(null);
+
+const hasActiveFilters = computed(
+    () => Boolean(postSearch.value.trim()) || postStatusFilter.value !== 'all',
+);
 
 const form = useForm({
     content: '',
@@ -81,34 +73,24 @@ const form = useForm({
     images: [] as File[],
     video: null as File | null,
     ai_image_url: '',
+    ai_image_path: '',
 });
 
 const aiTopic = ref('');
+const aiGenerateImage = ref(false);
 const aiStyle = ref<'professional' | 'casual' | 'motivational' | 'educational' | 'storytelling'>('professional');
 const aiLength = ref<'short' | 'medium' | 'long'>('medium');
 const aiTone = ref<'professional' | 'casual' | 'motivational' | 'educational' | 'storytelling'>('professional');
 const aiLoading = ref(false);
 const aiError = ref('');
 
-const inspireKeyword = ref('vibe coding');
-const inspireLoading = ref(false);
-const inspireError = ref('');
-const templateSearch = ref('');
-const templateCategory = ref('');
-
-const templates = computed(() => props.templates ?? []);
-const filteredTemplates = computed(() =>
-    templates.value.filter((t) => {
-        const searchOk = !templateSearch.value || `${t.title} ${t.content}`.toLowerCase().includes(templateSearch.value.toLowerCase());
-        const categoryOk = !templateCategory.value || t.category === templateCategory.value;
-        return searchOk && categoryOk;
-    }),
-);
-
 const charMax = 3000;
 const charCount = computed(() => form.content.length);
 
 const imagePreviews = computed(() => form.images.map((f) => URL.createObjectURL(f)));
+
+const selectedVideoName = computed(() => form.video?.name ?? null);
+const hasUploadedImages = computed(() => form.images.length > 0 || Boolean(form.ai_image_url));
 
 const statusMap: Record<string, string> = {
     draft: 'bg-slate-100 text-slate-600',
@@ -132,26 +114,101 @@ function preview(text: string, n = 120) {
 function openCreate() {
     panel.value = 'compose';
     editingId.value = null;
+    fromInspiration.value = false;
     form.reset();
     form.post_type = 'text';
 }
 
+function closeCompose() {
+    panel.value = 'list';
+    editingId.value = null;
+    fromInspiration.value = false;
+    composeDraftHandled.value = false;
+}
+
+function openComposeWithDraft(content: string, inspired = false) {
+    panel.value = 'compose';
+    editingId.value = null;
+    fromInspiration.value = inspired;
+    form.reset();
+    form.post_type = 'text';
+    form.action = 'draft';
+    applyContentAndHashtags(content);
+}
+
+function urlHasComposeFlag(): boolean {
+    if (typeof window === 'undefined') {
+        return String(page.url).includes('compose=1');
+    }
+
+    const fromPageUrl = new URLSearchParams(String(page.url).split('?')[1] ?? '').get('compose') === '1';
+    const fromLocation = new URLSearchParams(window.location.search).get('compose') === '1';
+
+    return fromPageUrl || fromLocation;
+}
+
+function cleanComposeQueryFromUrl() {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('compose')) {
+        return;
+    }
+
+    url.searchParams.delete('compose');
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(window.history.state, '', next);
+}
+
+async function applyInspirationDraftFromUrl() {
+    if (!urlHasComposeFlag()) {
+        return;
+    }
+
+    if (composeDraftHandled.value && panel.value === 'compose') {
+        cleanComposeQueryFromUrl();
+        return;
+    }
+
+    const draft = sessionStorage.getItem(INSPIRATION_DRAFT_KEY);
+    if (draft) {
+        openComposeWithDraft(draft, true);
+        sessionStorage.removeItem(INSPIRATION_DRAFT_KEY);
+    } else if (panel.value === 'list') {
+        openCreate();
+    }
+
+    composeDraftHandled.value = true;
+    cleanComposeQueryFromUrl();
+
+    await nextTick();
+    contentTextareaRef.value?.focus();
+    contentTextareaRef.value?.setSelectionRange(0, 0);
+}
+
+onMounted(() => {
+    void applyInspirationDraftFromUrl();
+});
+
+watch(() => page.url, () => {
+    void applyInspirationDraftFromUrl();
+});
+
 function openEdit(post: Post) {
     panel.value = 'compose';
     editingId.value = post.id;
-    form.content = post.content ?? '';
+    fromInspiration.value = false;
     form.hashtags = '';
     form.scheduled_at = post.scheduled_at ? post.scheduled_at.slice(0, 16) : '';
     form.post_type = (post.meta?.post_type as 'text' | 'image' | 'video') ?? 'text';
     form.images = [];
     form.video = null;
     form.ai_image_url = (post.meta?.ai_image_url as string) ?? '';
+    form.ai_image_path = (post.meta?.ai_image_path as string) ?? '';
     form.action = 'draft';
-}
-
-function closeCompose() {
-    panel.value = 'list';
-    editingId.value = null;
+    applyContentAndHashtags(post.content ?? '');
 }
 
 function onImageChange(e: Event) {
@@ -170,9 +227,138 @@ function onVideoChange(e: Event) {
     }
 }
 
+function openImagePicker() {
+    imageInputRef.value?.click();
+}
+
+function openVideoPicker() {
+    videoInputRef.value?.click();
+}
+
+function clearImages() {
+    form.images = [];
+    if (imageInputRef.value) {
+        imageInputRef.value.value = '';
+    }
+}
+
+function clearVideo() {
+    form.video = null;
+    if (videoInputRef.value) {
+        videoInputRef.value.value = '';
+    }
+}
+
+function formatFileSize(bytes: number): string {
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+        return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Split trailing hashtag lines from post body for the separate hashtags field. */
+function extractHashtagsFromText(text: string): { body: string; hashtags: string } {
+    const trimmed = text.trim();
+    if (!trimmed) {
+        return { body: '', hashtags: '' };
+    }
+
+    const lines = trimmed.split(/\r\n|\r|\n/);
+    const hashLines: string[] = [];
+    const bodyLines: string[] = [];
+
+    for (const line of lines) {
+        const lineTrimmed = line.trim();
+        const isHashtagOnlyLine = lineTrimmed !== ''
+            && /^#\w+/u.test(lineTrimmed)
+            && !lineTrimmed.replace(/#\w+/gu, '').trim();
+
+        if (isHashtagOnlyLine) {
+            hashLines.push(lineTrimmed);
+        } else {
+            bodyLines.push(line);
+        }
+    }
+
+    let body = bodyLines.join('\n').trim();
+    let hashtags = hashLines.join(' ').trim();
+
+    if (!hashtags) {
+        const trailing = body.match(/(?:\s|^)((?:#\w+\s*){2,})\s*$/u);
+        if (trailing) {
+            hashtags = trailing[1].trim();
+            body = body.slice(0, body.length - trailing[0].length).trim();
+        }
+    }
+
+    return { body, hashtags };
+}
+
+function stripMarkdownFormatting(text: string): string {
+    return text
+        .replace(/\*\*(.+?)\*\*/gs, '$1')
+        .replace(/__(.+?)__/gs, '$1')
+        .replace(/\*\*/g, '')
+        .replace(/^#{1,6}\s+/gm, '')
+        .trim();
+}
+
+function applyContentAndHashtags(content: string, hashtags = '') {
+    const cleaned = stripMarkdownFormatting(content);
+    if (hashtags.trim()) {
+        form.content = cleaned;
+        form.hashtags = stripMarkdownFormatting(hashtags);
+        return;
+    }
+
+    const split = extractHashtagsFromText(cleaned);
+    form.content = split.body;
+    form.hashtags = split.hashtags;
+}
+
 function setAction(action: 'draft' | 'publish' | 'schedule') {
     form.action = action;
 }
+
+const submitLabel = computed(() => {
+    if (form.processing) {
+        return 'Saving…';
+    }
+    if (editingId.value) {
+        return form.action === 'publish' ? 'Update & publish' : form.action === 'schedule' ? 'Update schedule' : 'Update draft';
+    }
+    if (form.action === 'publish') {
+        return 'Publish to LinkedIn';
+    }
+    if (form.action === 'schedule') {
+        return 'Schedule post';
+    }
+    return 'Save draft';
+});
+
+function actionCardClass(action: 'draft' | 'publish' | 'schedule'): string {
+    const active = form.action === action;
+    const base = 'flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition-all';
+    if (!active) {
+        return `${base} border-border bg-background hover:border-primary/40 hover:bg-muted/40`;
+    }
+    if (action === 'publish') {
+        return `${base} border-blue-500 bg-gradient-to-b from-blue-50 to-blue-100/80 ring-2 ring-blue-500/30 dark:from-blue-950/40 dark:to-blue-900/20`;
+    }
+    if (action === 'schedule') {
+        return `${base} border-violet-500 bg-gradient-to-b from-violet-50 to-violet-100/80 ring-2 ring-violet-500/30 dark:from-violet-950/40 dark:to-violet-900/20`;
+    }
+    return `${base} border-slate-400 bg-gradient-to-b from-slate-50 to-slate-100/80 ring-2 ring-slate-400/30 dark:from-slate-900/40 dark:to-slate-800/20`;
+}
+
+const aiChipClass = 'rounded-lg bg-gradient-to-b from-slate-600 to-slate-700 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm shadow-slate-950/15 ring-1 ring-inset ring-white/10 hover:from-slate-500 hover:to-slate-700 disabled:opacity-60';
+const postTypeClass = (type: string) =>
+    form.post_type === type
+        ? 'border-blue-500 bg-gradient-to-b from-blue-500 to-blue-600 text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15'
+        : 'border-border bg-card text-foreground hover:bg-muted/60';
 
 function submitCompose() {
     const opts = {
@@ -180,7 +366,6 @@ function submitCompose() {
         preserveScroll: true,
         onSuccess: () => {
             closeCompose();
-            tab.value = 'writer';
         },
     };
 
@@ -214,13 +399,6 @@ async function apiPost(url: string, body: Record<string, unknown>) {
     return data;
 }
 
-async function apiGet(url: string) {
-    const res = await fetch(url);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message ?? 'Request failed');
-    return data;
-}
-
 async function generateAi() {
     if (!aiTopic.value.trim()) return;
     aiLoading.value = true;
@@ -230,9 +408,22 @@ async function generateAi() {
             topic: aiTopic.value,
             style: aiStyle.value,
             length: aiLength.value,
+            generate_image: aiGenerateImage.value,
         });
-        form.content = data.content ?? '';
-        form.hashtags = data.hashtags ?? '';
+        applyContentAndHashtags(data.content ?? '', data.hashtags ?? '');
+
+        if (data.url && data.path) {
+            form.ai_image_url = data.url;
+            form.ai_image_path = data.path;
+            form.post_type = 'image';
+        } else if (aiGenerateImage.value) {
+            form.ai_image_url = '';
+            form.ai_image_path = '';
+        }
+
+        if (data.image_error) {
+            aiError.value = data.image_error;
+        }
     } catch (e) {
         aiError.value = e instanceof Error ? e.message : 'AI generation failed.';
     } finally {
@@ -246,7 +437,7 @@ async function improve(action: string) {
     aiError.value = '';
     try {
         const data = await apiPost('/content/ai/improve', { content: form.content, action });
-        form.content = data.content ?? form.content;
+        applyContentAndHashtags(data.content ?? form.content, data.hashtags ?? '');
     } catch (e) {
         aiError.value = e instanceof Error ? e.message : 'Improve failed.';
     } finally {
@@ -260,7 +451,7 @@ async function rewrite(mode: 'shorten' | 'expand') {
     aiError.value = '';
     try {
         const data = await apiPost('/content/ai/rewrite', { content: form.content, tone: aiTone.value, mode });
-        form.content = data.content ?? form.content;
+        applyContentAndHashtags(data.content ?? form.content, data.hashtags ?? '');
     } catch (e) {
         aiError.value = e instanceof Error ? e.message : 'Rewrite failed.';
     } finally {
@@ -268,60 +459,6 @@ async function rewrite(mode: 'shorten' | 'expand') {
     }
 }
 
-async function generateImage() {
-    if (!aiTopic.value.trim()) return;
-    aiLoading.value = true;
-    aiError.value = '';
-    try {
-        const data = await apiPost('/content/ai/generate-image', { prompt: `LinkedIn post illustration about ${aiTopic.value}` });
-        form.ai_image_url = data.url ?? '';
-        if (form.ai_image_url) form.post_type = 'image';
-    } catch (e) {
-        aiError.value = e instanceof Error ? e.message : 'Image generation failed.';
-    } finally {
-        aiLoading.value = false;
-    }
-}
-
-function applyTemplate(t: Template) {
-    const topic = aiTopic.value.trim() || 'your topic';
-    form.content = t.content.replaceAll('{topic}', topic);
-}
-
-async function fetchInspiration() {
-    if (!inspireKeyword.value.trim()) return;
-    inspireLoading.value = true;
-    inspireError.value = '';
-    try {
-        const data = await apiPost('/content/inspiration/fetch', { keyword: inspireKeyword.value, limit: 18 });
-        inspirationRows.value = data.data ?? inspirationRows.value;
-        tab.value = 'inspiration';
-    } catch (e) {
-        inspireError.value = e instanceof Error ? e.message : 'Fetch failed.';
-    } finally {
-        inspireLoading.value = false;
-    }
-}
-
-async function useInspiration(id: number) {
-    try {
-        const data = await apiGet(`/content/inspiration/${id}/use`);
-        openCreate();
-        form.content = data.content ?? '';
-    } catch (e) {
-        inspireError.value = e instanceof Error ? e.message : 'Use failed.';
-    }
-}
-
-async function remixInspiration(id: number) {
-    try {
-        const data = await apiPost(`/content/inspiration/${id}/remix`, { tone: aiTone.value });
-        openCreate();
-        form.content = data.content ?? '';
-    } catch (e) {
-        inspireError.value = e instanceof Error ? e.message : 'Remix failed.';
-    }
-}
 </script>
 
 <template>
@@ -331,14 +468,14 @@ async function remixInspiration(id: number) {
         <div class="flex items-center justify-between border-b border-border px-6 py-4">
             <div>
                 <h1 class="text-xl font-semibold text-foreground">Content Creator</h1>
-                <p class="text-sm text-muted-foreground">AI Content Creation + Inspiration feed (old CRM style, cleaner).</p>
+                <p class="text-sm text-muted-foreground">Create, schedule, and publish LinkedIn posts with AI.</p>
             </div>
-            <button v-if="panel === 'list'" @click="openCreate" class="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+            <AppToolbarButton v-if="panel === 'list'" @click="openCreate">
                 <PenLine class="h-4 w-4" /> Create New Post
-            </button>
-            <button v-else @click="closeCompose" class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm hover:bg-muted">
+            </AppToolbarButton>
+            <AppToolbarButton v-else variant="slate" @click="closeCompose">
                 <ChevronLeft class="h-4 w-4" /> Back to Posts
-            </button>
+            </AppToolbarButton>
         </div>
 
         <div v-if="!hasOrg" class="m-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-700">
@@ -346,17 +483,8 @@ async function remixInspiration(id: number) {
         </div>
 
         <template v-else-if="panel === 'list'">
-            <div class="flex gap-2 px-6 pt-4">
-                <button @click="tab = 'writer'" :class="tab === 'writer' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground border border-border'" class="rounded-lg px-3 py-1.5 text-sm font-medium">
-                    AI Content Creation
-                </button>
-                <button @click="tab = 'inspiration'" :class="tab === 'inspiration' ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground border border-border'" class="rounded-lg px-3 py-1.5 text-sm font-medium">
-                    Inspiration
-                </button>
-            </div>
-
-            <div v-if="tab === 'writer'" class="px-6 py-4">
-                <div class="grid grid-cols-4 gap-3">
+            <div class="px-6 py-4">
+                <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div v-for="(val, key) in { Total: contentStats.total, Published: contentStats.published, Scheduled: contentStats.scheduled, Draft: contentStats.draft }" :key="key" class="rounded-xl border border-border bg-card p-3 text-center">
                         <div class="text-2xl font-bold">{{ val }}</div>
                         <div class="text-xs text-muted-foreground">{{ key }}</div>
@@ -386,18 +514,44 @@ async function remixInspiration(id: number) {
                     </ListSearchBar>
                 </div>
 
-                <div class="mt-4 overflow-hidden rounded-xl border border-border bg-card">
+                <div v-if="posts.data.length === 0" class="mt-4 flex flex-col items-center gap-4 rounded-xl border border-dashed border-border p-14 text-center">
+                    <FileText class="h-10 w-10 text-muted-foreground/40" />
+                    <div>
+                        <p class="font-semibold">{{ hasActiveFilters ? 'No posts match this view' : 'No posts yet' }}</p>
+                        <p class="mt-1 max-w-md text-sm text-muted-foreground">
+                            <template v-if="hasActiveFilters">
+                                Try a different search term or status filter.
+                            </template>
+                            <template v-else>
+                                Write your first LinkedIn post with AI — save as draft, schedule it, or publish when ready.
+                            </template>
+                        </p>
+                    </div>
+                    <AppToolbarButton v-if="!hasActiveFilters" @click="openCreate">
+                        <PenLine class="h-4 w-4" /> Create your first post
+                    </AppToolbarButton>
+                    <p v-if="!hasActiveFilters" class="text-xs text-muted-foreground">
+                        Need ideas?
+                        <Link href="/inspiration" class="font-medium text-primary hover:underline">Browse Inspiration</Link>
+                    </p>
+                    <p v-else class="text-xs text-muted-foreground">
+                        Need ideas?
+                        <Link href="/inspiration" class="font-medium text-primary hover:underline">Browse Inspiration</Link>
+                    </p>
+                </div>
+
+                <div v-else class="mt-4 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                     <table class="w-full text-sm">
-                        <thead class="bg-muted/30">
+                        <thead class="border-b border-border bg-muted/40">
                             <tr>
-                                <th class="px-4 py-3 text-left">Content</th>
-                                <th class="px-4 py-3 text-left">Status</th>
-                                <th class="px-4 py-3 text-left">Date</th>
-                                <th class="px-4 py-3 text-right">Actions</th>
+                                <th class="px-4 py-3 text-left font-medium text-muted-foreground">Content</th>
+                                <th class="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
+                                <th class="px-4 py-3 text-left font-medium text-muted-foreground">Date</th>
+                                <th class="px-4 py-3 text-right font-medium text-muted-foreground">Actions</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
-                            <tr v-for="post in posts.data" :key="post.id">
+                            <tr v-for="post in posts.data" :key="post.id" class="transition hover:bg-muted/30">
                                 <td class="max-w-lg px-4 py-3">
                                     <div class="font-medium text-foreground">{{ preview(post.content, 90) }}</div>
                                 </td>
@@ -419,141 +573,239 @@ async function remixInspiration(id: number) {
 
                 <ListPagination v-if="posts.data.length" :paginator="posts" label="posts" />
             </div>
-
-            <div v-else class="px-6 py-4">
-                <div class="rounded-xl border border-border bg-card p-4">
-                    <div class="mb-3 flex items-center gap-2">
-                        <input v-model="inspireKeyword" class="w-80 rounded border border-border px-3 py-2 text-sm" placeholder="Search topic (e.g. vibe coding, founder branding)" />
-                        <button @click="fetchInspiration" :disabled="inspireLoading" class="inline-flex items-center gap-2 rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
-                            <Loader2 v-if="inspireLoading" class="h-4 w-4 animate-spin" />
-                            <RefreshCw v-else class="h-4 w-4" />
-                            Fetch via RapidAPI
-                        </button>
-                        <span v-if="!rapidConfigured" class="text-xs text-orange-600">RAPIDAPI_KEY missing</span>
-                    </div>
-                    <p v-if="inspireError" class="text-xs text-red-500">{{ inspireError }}</p>
-                </div>
-
-                <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    <div v-for="row in inspirationRows" :key="row.id" class="rounded-xl border border-border bg-card p-4">
-                        <p class="mb-2 line-clamp-5 text-sm text-foreground">{{ row.content }}</p>
-                        <div class="mb-2 text-xs text-muted-foreground">{{ fmtDate(row.created_at) }}</div>
-                        <div class="flex gap-2">
-                            <button @click="useInspiration(row.id)" class="rounded bg-primary px-2.5 py-1 text-xs text-primary-foreground hover:bg-primary/90">Use</button>
-                            <button @click="remixInspiration(row.id)" class="rounded border border-border px-2.5 py-1 text-xs hover:bg-muted">Remix</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </template>
 
         <template v-else>
             <div class="grid grid-cols-1 gap-4 p-6 lg:grid-cols-3">
                 <div class="space-y-4 lg:col-span-1">
-                    <div class="rounded-xl border border-border bg-card p-4">
-                        <div class="mb-3 flex items-center gap-2 text-sm font-semibold text-blue-700">
+                    <div class="rounded-xl border border-blue-200/60 bg-gradient-to-br from-blue-50/80 to-card p-4 shadow-sm dark:border-blue-900/40 dark:from-blue-950/20">
+                        <div class="mb-3 flex items-center gap-2 text-sm font-semibold text-blue-700 dark:text-blue-300">
                             <Sparkles class="h-4 w-4" /> AI Assistant
                         </div>
                         <div class="space-y-2">
-                            <input v-model="aiTopic" class="w-full rounded border border-border px-3 py-2 text-sm" placeholder="Topic or idea" />
+                            <input v-model="aiTopic" class="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20" placeholder="Topic or idea" />
                             <div class="grid grid-cols-2 gap-2">
-                                <select v-model="aiStyle" class="rounded border border-border px-2 py-2 text-sm">
+                                <select v-model="aiStyle" class="rounded-lg border border-border bg-background px-2 py-2 text-sm">
                                     <option value="professional">Professional</option>
                                     <option value="casual">Casual</option>
                                     <option value="motivational">Motivational</option>
                                     <option value="educational">Educational</option>
                                     <option value="storytelling">Storytelling</option>
                                 </select>
-                                <select v-model="aiLength" class="rounded border border-border px-2 py-2 text-sm">
+                                <select v-model="aiLength" class="rounded-lg border border-border bg-background px-2 py-2 text-sm">
                                     <option value="short">Short</option>
                                     <option value="medium">Medium</option>
                                     <option value="long">Long</option>
                                 </select>
                             </div>
-                            <button @click="generateAi" :disabled="aiLoading || !aiConfigured" class="w-full rounded bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
-                                <Loader2 v-if="aiLoading" class="mr-1 inline h-4 w-4 animate-spin" />
-                                Generate with OpenAI
-                            </button>
-                            <button @click="generateImage" :disabled="aiLoading || !aiConfigured || !aiTopic.trim()" class="w-full rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50">
-                                <ImageIcon class="mr-1 inline h-4 w-4" /> Generate AI Image
-                            </button>
+                            <CheckboxField v-model="aiGenerateImage" :disabled="aiLoading || !aiConfigured" class="rounded-lg border border-border/70 bg-background/80 px-3 py-2.5">
+                                Also generate a related image (GPT Image 2)
+                            </CheckboxField>
+                            <AppToolbarButton class="w-full" :disabled="aiLoading || !aiConfigured || !aiTopic.trim()" @click="generateAi">
+                                <Loader2 v-if="aiLoading" class="h-4 w-4 animate-spin" />
+                                <Sparkles v-else class="h-4 w-4" />
+                                Generate AI Content
+                            </AppToolbarButton>
                             <div class="grid grid-cols-2 gap-2">
-                                <button @click="improve('make_viral')" class="rounded border border-border px-2 py-1.5 text-xs hover:bg-muted">Make Viral</button>
-                                <button @click="improve('add_hook')" class="rounded border border-border px-2 py-1.5 text-xs hover:bg-muted">Add Hook</button>
-                                <button @click="improve('add_cta')" class="rounded border border-border px-2 py-1.5 text-xs hover:bg-muted">Add CTA</button>
-                                <button @click="improve('bullet_points')" class="rounded border border-border px-2 py-1.5 text-xs hover:bg-muted">Bullets</button>
-                                <button @click="rewrite('shorten')" class="rounded border border-border px-2 py-1.5 text-xs hover:bg-muted">Shorten</button>
-                                <button @click="rewrite('expand')" class="rounded border border-border px-2 py-1.5 text-xs hover:bg-muted">Expand</button>
+                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="improve('make_viral')">Make Viral</button>
+                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="improve('add_hook')">Add Hook</button>
+                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="improve('add_cta')">Add CTA</button>
+                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="improve('bullet_points')">Bullets</button>
+                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="rewrite('shorten')">Shorten</button>
+                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="rewrite('expand')">Expand</button>
                             </div>
                             <p v-if="aiError" class="text-xs text-red-500">{{ aiError }}</p>
                             <p v-if="!aiConfigured" class="text-xs text-orange-600">OPENAI_API_KEY missing in .env</p>
-                        </div>
-                    </div>
-
-                    <div class="rounded-xl border border-border bg-card p-4">
-                        <div class="mb-2 text-sm font-semibold">Templates</div>
-                        <input v-model="templateSearch" class="mb-2 w-full rounded border border-border px-3 py-2 text-sm" placeholder="Search templates..." />
-                        <select v-model="templateCategory" class="mb-2 w-full rounded border border-border px-3 py-2 text-sm">
-                            <option value="">All categories</option>
-                            <option value="engagement">Engagement</option>
-                            <option value="storytelling">Storytelling</option>
-                            <option value="educational">Educational</option>
-                            <option value="sales">Sales</option>
-                        </select>
-                        <div class="max-h-64 space-y-2 overflow-auto">
-                            <button v-for="t in filteredTemplates" :key="t.id" @click="applyTemplate(t)" class="w-full rounded border border-border px-3 py-2 text-left text-xs hover:bg-muted">
-                                <div class="font-semibold">{{ t.title }} <span class="text-[10px] text-blue-600">{{ t.engagement_score }}%</span></div>
-                                <div class="mt-0.5 line-clamp-2 text-muted-foreground">{{ t.content }}</div>
-                            </button>
+                            <p class="pt-1 text-xs text-muted-foreground">
+                                Need a starting point?
+                                <Link href="/inspiration" class="font-medium text-primary hover:underline">Browse Inspiration</Link>
+                            </p>
                         </div>
                     </div>
                 </div>
 
                 <div class="space-y-4 lg:col-span-2">
-                    <div class="rounded-xl border border-border bg-card p-4">
-                        <div class="mb-3 text-sm font-semibold">Post Type</div>
+                    <div v-if="fromInspiration" class="flex items-center gap-2 rounded-xl border border-amber-300/50 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800/40 dark:from-amber-950/30 dark:text-amber-200">
+                        <Lightbulb class="h-4 w-4 shrink-0" />
+                        <span>Loaded from <strong>Inspiration</strong> — edit below, then choose how to publish.</span>
+                    </div>
+
+                    <div class="rounded-xl border border-border bg-card p-4 shadow-sm">
+                        <div class="mb-3 text-sm font-semibold">Post type</div>
                         <div class="grid grid-cols-3 gap-2">
-                            <button @click="form.post_type = 'text'" :class="form.post_type === 'text' ? 'border-blue-500 bg-blue-50' : 'border-border'" class="rounded border px-3 py-2 text-sm">Text</button>
-                            <button @click="form.post_type = 'image'" :class="form.post_type === 'image' ? 'border-blue-500 bg-blue-50' : 'border-border'" class="rounded border px-3 py-2 text-sm">Image</button>
-                            <button @click="form.post_type = 'video'" :class="form.post_type === 'video' ? 'border-blue-500 bg-blue-50' : 'border-border'" class="rounded border px-3 py-2 text-sm">Video</button>
+                            <button type="button" :class="postTypeClass('text')" class="inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition" @click="form.post_type = 'text'">
+                                <Type class="h-4 w-4" /> Text
+                            </button>
+                            <button type="button" :class="postTypeClass('image')" class="inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition" @click="form.post_type = 'image'">
+                                <ImageIcon class="h-4 w-4" /> Image
+                            </button>
+                            <button type="button" :class="postTypeClass('video')" class="inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition" @click="form.post_type = 'video'">
+                                <Video class="h-4 w-4" /> Video
+                            </button>
                         </div>
 
-                        <div v-if="form.post_type === 'image'" class="mt-3 space-y-2">
-                            <input type="file" multiple accept=".jpg,.jpeg,.png,.webp" @change="onImageChange" />
-                            <div class="grid grid-cols-2 gap-2 md:grid-cols-4">
-                                <img v-for="(src, idx) in imagePreviews" :key="idx" :src="src" class="h-24 w-full rounded border object-cover" />
-                                <img v-if="form.ai_image_url" :src="form.ai_image_url" class="h-24 w-full rounded border object-cover" />
+                        <div v-if="form.post_type === 'image'" class="mt-4 space-y-3">
+                            <input
+                                ref="imageInputRef"
+                                type="file"
+                                multiple
+                                accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                                class="hidden"
+                                @change="onImageChange"
+                            />
+
+                            <button
+                                type="button"
+                                class="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-blue-300/70 bg-gradient-to-b from-blue-50/80 to-background px-4 py-8 text-center transition hover:border-blue-400 hover:bg-blue-50 dark:border-blue-800/60 dark:from-blue-950/30 dark:hover:bg-blue-950/40"
+                                @click="openImagePicker"
+                            >
+                                <span class="flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/10 text-blue-600">
+                                    <Upload class="h-6 w-6" />
+                                </span>
+                                <span class="text-sm font-semibold text-foreground">Click to upload images</span>
+                                <span class="text-xs text-muted-foreground">JPG, PNG, or WebP · up to 10 files</span>
+                            </button>
+
+                            <div v-if="hasUploadedImages" class="rounded-lg border border-border bg-muted/20 p-3">
+                                <div class="mb-2 flex items-center justify-between gap-2">
+                                    <p class="text-xs font-medium text-foreground">
+                                        {{ form.images.length ? `${form.images.length} file(s) selected` : 'AI-generated image attached' }}
+                                    </p>
+                                    <button
+                                        v-if="form.images.length"
+                                        type="button"
+                                        class="inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:underline"
+                                        @click="clearImages"
+                                    >
+                                        <X class="h-3 w-3" /> Clear
+                                    </button>
+                                </div>
+                                <ul v-if="form.images.length" class="mb-3 space-y-1">
+                                    <li
+                                        v-for="(file, idx) in form.images"
+                                        :key="`${file.name}-${idx}`"
+                                        class="flex items-center justify-between gap-2 rounded-md bg-background px-2 py-1.5 text-xs"
+                                    >
+                                        <span class="flex min-w-0 items-center gap-1.5 truncate">
+                                            <ImageIcon class="h-3.5 w-3.5 shrink-0 text-blue-500" />
+                                            <span class="truncate">{{ file.name }}</span>
+                                        </span>
+                                        <span class="shrink-0 text-muted-foreground">{{ formatFileSize(file.size) }}</span>
+                                    </li>
+                                </ul>
+                                <div class="grid grid-cols-2 gap-2 md:grid-cols-4">
+                                    <img v-for="(src, idx) in imagePreviews" :key="idx" :src="src" alt="" class="h-24 w-full rounded-lg border object-cover shadow-sm" />
+                                    <img v-if="form.ai_image_url" :src="form.ai_image_url" alt="AI generated" class="h-24 w-full rounded-lg border object-cover shadow-sm" />
+                                </div>
                             </div>
                         </div>
-                        <div v-if="form.post_type === 'video'" class="mt-3">
-                            <input type="file" accept=".mp4,.mov,.avi,.wmv" @change="onVideoChange" />
+
+                        <div v-if="form.post_type === 'video'" class="mt-4 space-y-3">
+                            <input
+                                ref="videoInputRef"
+                                type="file"
+                                accept=".mp4,.mov,.avi,.wmv,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv"
+                                class="hidden"
+                                @change="onVideoChange"
+                            />
+
+                            <button
+                                type="button"
+                                class="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-violet-300/70 bg-gradient-to-b from-violet-50/80 to-background px-4 py-8 text-center transition hover:border-violet-400 hover:bg-violet-50 dark:border-violet-800/60 dark:from-violet-950/30 dark:hover:bg-violet-950/40"
+                                @click="openVideoPicker"
+                            >
+                                <span class="flex h-12 w-12 items-center justify-center rounded-full bg-violet-500/10 text-violet-600">
+                                    <Video class="h-6 w-6" />
+                                </span>
+                                <span class="text-sm font-semibold text-foreground">Click to upload a video</span>
+                                <span class="text-xs text-muted-foreground">MP4, MOV, AVI, or WMV</span>
+                            </button>
+
+                            <div v-if="form.video" class="flex items-center justify-between gap-3 rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-3 dark:border-violet-900/40 dark:bg-violet-950/20">
+                                <div class="flex min-w-0 items-center gap-2">
+                                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-500/15 text-violet-600">
+                                        <Video class="h-4 w-4" />
+                                    </span>
+                                    <div class="min-w-0">
+                                        <p class="truncate text-sm font-medium">{{ selectedVideoName }}</p>
+                                        <p class="text-xs text-muted-foreground">{{ formatFileSize(form.video.size) }}</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:bg-background"
+                                    @click="clearVideo"
+                                >
+                                    <X class="h-3 w-3" /> Remove
+                                </button>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="rounded-xl border border-border bg-card p-4">
-                        <label class="mb-2 block text-sm font-semibold">Post Content</label>
-                        <textarea v-model="form.content" rows="10" class="w-full rounded border border-border px-3 py-3 text-sm focus:border-blue-400 focus:outline-none"></textarea>
-                        <div class="mt-1 text-right text-xs text-muted-foreground">{{ charCount }}/{{ charMax }}</div>
-
-                        <label class="mb-2 mt-3 block text-sm font-semibold">Hashtags</label>
-                        <input v-model="form.hashtags" class="w-full rounded border border-border px-3 py-2 text-sm" placeholder="#linkedin #b2b #growth" />
-
-                        <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-                            <button @click="setAction('draft')" :class="form.action === 'draft' ? 'ring-2 ring-blue-400' : ''" class="rounded border border-border px-3 py-2 text-sm">Save Draft</button>
-                            <button @click="setAction('publish')" :class="form.action === 'publish' ? 'ring-2 ring-blue-400' : ''" class="rounded border border-border px-3 py-2 text-sm">Publish Now</button>
+                    <div class="rounded-xl border border-border bg-card p-4 shadow-sm">
+                        <label class="mb-2 block text-sm font-semibold">Post content</label>
+                        <textarea
+                            ref="contentTextareaRef"
+                            v-model="form.content"
+                            rows="12"
+                            class="w-full rounded-xl border border-border bg-muted/20 px-5 py-5 text-sm leading-relaxed focus:border-blue-400 focus:bg-background focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                            placeholder="Write your LinkedIn post here…"
+                        />
+                        <div class="mt-2 flex items-center justify-between gap-2 text-xs">
+                            <span class="text-muted-foreground">Main post text — hashtags go in the field below.</span>
+                            <span :class="charCount > charMax ? 'text-red-500 font-medium' : 'text-muted-foreground'">{{ charCount }}/{{ charMax }}</span>
                         </div>
 
-                        <div class="mt-2 rounded border border-border p-2">
-                            <button @click="setAction('schedule')" :class="form.action === 'schedule' ? 'text-blue-600' : ''" class="mb-2 inline-flex items-center gap-1 text-sm"><Clock class="h-4 w-4" /> Schedule</button>
-                            <input v-if="form.action === 'schedule'" v-model="form.scheduled_at" type="datetime-local" class="w-full rounded border border-border px-3 py-2 text-sm" />
+                        <label class="mb-2 mt-5 block text-sm font-semibold">Hashtags</label>
+                        <input
+                            v-model="form.hashtags"
+                            class="w-full rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm focus:border-blue-400 focus:bg-background focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                            :placeholder="form.hashtags ? '' : 'Auto-filled when you generate with AI — e.g. #linkedin #b2b #growth'"
+                        />
+                        <p class="mt-1.5 text-xs text-muted-foreground">Appended to your post when you publish. Leave empty if you included tags in the body.</p>
+
+                        <div class="mt-5 rounded-xl border border-border bg-muted/20 p-4">
+                            <p class="mb-1 text-sm font-semibold">Choose what happens next</p>
+                            <p class="mb-3 text-xs text-muted-foreground">Pick one option — the button below will match your choice.</p>
+                            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                <button type="button" :class="actionCardClass('draft')" @click="setAction('draft')">
+                                    <span class="inline-flex items-center gap-1.5 text-sm font-semibold"><Save class="h-4 w-4" /> Save draft</span>
+                                    <span class="text-xs text-muted-foreground">Keep in CRM to edit later</span>
+                                </button>
+                                <button type="button" :class="actionCardClass('publish')" @click="setAction('publish')">
+                                    <span class="inline-flex items-center gap-1.5 text-sm font-semibold"><Rocket class="h-4 w-4" /> Publish now</span>
+                                    <span class="text-xs text-muted-foreground">Post to LinkedIn immediately</span>
+                                </button>
+                                <button type="button" :class="actionCardClass('schedule')" @click="setAction('schedule')">
+                                    <span class="inline-flex items-center gap-1.5 text-sm font-semibold"><Clock class="h-4 w-4" /> Schedule</span>
+                                    <span class="text-xs text-muted-foreground">Pick a date & time</span>
+                                </button>
+                            </div>
+
+                            <div v-if="form.action === 'schedule'" class="mt-3 rounded-lg border border-violet-200 bg-violet-50/50 p-3 dark:border-violet-900/40 dark:bg-violet-950/20">
+                                <label class="mb-1.5 block text-xs font-medium text-violet-800 dark:text-violet-200">Publish date & time</label>
+                                <input v-model="form.scheduled_at" type="datetime-local" class="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+                            </div>
                         </div>
 
-                        <div class="mt-4 flex items-center justify-between">
-                            <div v-if="!hasLinkedIn" class="text-xs text-orange-600"><AlertCircle class="mr-1 inline h-4 w-4" /> LinkedIn not connected yet.</div>
-                            <button @click="submitCompose" :disabled="form.processing || !form.content.trim()" class="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
-                                <Loader2 v-if="form.processing" class="mr-1 inline h-4 w-4 animate-spin" />
-                                {{ editingId ? 'Update Post' : 'Save Post' }}
-                            </button>
+                        <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+                            <div v-if="!hasLinkedIn" class="flex items-center gap-1.5 text-xs text-orange-600">
+                                <AlertCircle class="h-4 w-4 shrink-0" /> LinkedIn not connected — publish will fail until you connect.
+                            </div>
+                            <div v-else class="text-xs text-muted-foreground">
+                                {{ form.action === 'publish' ? 'Will publish via Unipile when you confirm.' : form.action === 'schedule' ? 'Post will queue for the selected time.' : 'Saved as draft — publish anytime from your posts list.' }}
+                            </div>
+                            <AppToolbarButton
+                                :variant="form.action === 'publish' ? 'default' : form.action === 'schedule' ? 'violet' : 'slate'"
+                                :disabled="form.processing || !form.content.trim() || (form.action === 'schedule' && !form.scheduled_at)"
+                                @click="submitCompose"
+                            >
+                                <Loader2 v-if="form.processing" class="h-4 w-4 animate-spin" />
+                                <Send v-else-if="form.action === 'publish'" class="h-4 w-4" />
+                                <Clock v-else-if="form.action === 'schedule'" class="h-4 w-4" />
+                                <Save v-else class="h-4 w-4" />
+                                {{ submitLabel }}
+                            </AppToolbarButton>
                         </div>
                     </div>
                 </div>

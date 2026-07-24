@@ -88,7 +88,7 @@ class UnifiedInboxTest extends TestCase
         $response->assertInertia(fn ($page) => $page
             ->component('crm/inbox/Platform')
             ->where('platform', 'linkedin')
-            ->has('conversations', 1)
+            ->has('conversations.data', 1)
         );
     }
 
@@ -118,7 +118,7 @@ class UnifiedInboxTest extends TestCase
         $response->assertInertia(fn ($page) => $page
             ->component('crm/inbox/Platform')
             ->where('platform', 'whatsapp')
-            ->has('conversations', 1)
+            ->has('conversations.data', 1)
         );
     }
 
@@ -283,7 +283,7 @@ class UnifiedInboxTest extends TestCase
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
-            ->has('conversations', 0)
+            ->has('conversations.data', 0)
         );
     }
 
@@ -599,6 +599,103 @@ class UnifiedInboxTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('messages.0.body', 'Hello there');
         $response->assertJsonFragment(['body' => 'New reply!', 'direction' => 'inbound']);
+    }
+
+    public function test_reaction_ghost_messages_are_merged_and_hidden(): void
+    {
+        $user = $this->userWithOrg();
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'whatsapp',
+            'provider_account_id' => 'wa_reaction_acc',
+            'status' => 'active',
+            'meta' => ['unipile_account_id' => 'wa_reaction_acc'],
+        ]);
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'whatsapp',
+            'provider_chat_id' => 'wa_reaction_chat',
+            'status' => 'active',
+            'meta' => [
+                'source' => 'unified_inbox',
+                'outreach_campaign_id' => 1,
+            ],
+        ]);
+
+        $target = V2Message::query()->create([
+            'conversation_id' => $conversation->id,
+            'provider_message_id' => 'msg_target_1',
+            'direction' => 'outbound',
+            'body' => 'alrigtht',
+            'sent_at' => now()->subMinute(),
+            'meta' => ['reactions' => [['value' => '🙏', 'sender_id' => 'u1', 'is_sender' => true]]],
+        ]);
+
+        $wrongMessage = V2Message::query()->create([
+            'conversation_id' => $conversation->id,
+            'provider_message_id' => 'msg_wrong_1',
+            'direction' => 'outbound',
+            'body' => 'Hello',
+            'sent_at' => now(),
+            'meta' => ['reactions' => [['value' => '🙏', 'sender_id' => 'u1', 'is_sender' => true]]],
+        ]);
+
+        $ghost = V2Message::query()->create([
+            'conversation_id' => $conversation->id,
+            'direction' => 'outbound',
+            'body' => '{{2349036802727@s.whatsapp.net}} reacted 🙏',
+            'sent_at' => now(),
+        ]);
+
+        $this->mock(\App\V2\Integrations\Unipile\UnipileProvider::class)
+            ->shouldReceive('listMessages')
+            ->once()
+            ->andReturn([
+                'items' => [
+                    [
+                        'id' => 'msg_target_1',
+                        'text' => 'alrigtht',
+                        'is_sender' => 1,
+                        'timestamp' => now()->subMinute()->toIso8601String(),
+                        'reactions' => [
+                            ['value' => '🙏', 'sender_id' => 'u1', 'is_sender' => true],
+                        ],
+                    ],
+                    [
+                        'id' => 'msg_wrong_1',
+                        'text' => 'Hello',
+                        'is_sender' => 1,
+                        'timestamp' => now()->toIso8601String(),
+                        'reactions' => [],
+                    ],
+                    [
+                        'id' => 'ghost_1',
+                        'text' => '{{2349036802727@s.whatsapp.net}} reacted 🙏',
+                        'hidden' => 1,
+                        'is_event' => 1,
+                        'event_type' => 2,
+                        'timestamp' => now()->toIso8601String(),
+                        'reactions' => [],
+                    ],
+                ],
+            ]);
+
+        $response = $this->actingAs($user)->get(route('inbox.show', ['whatsapp', $conversation->id]));
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->has('messages', 2)
+            ->where('messages.0.body', 'alrigtht')
+            ->where('messages.0.reactions.0.value', '🙏')
+            ->where('messages.1.body', 'Hello')
+            ->where('messages.1.reactions', [])
+        );
+
+        $this->assertDatabaseMissing('v2_messages', ['id' => $ghost->id]);
+        $wrongMessage->refresh();
+        $this->assertNull($wrongMessage->meta['reactions'] ?? null);
     }
 
     private function userWithOrg(): User

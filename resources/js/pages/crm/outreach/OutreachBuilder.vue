@@ -6,6 +6,8 @@ import OutreachFlowCanvas from '@/components/outreach/OutreachFlowCanvas.vue';
 import OutreachImportListPanel, { type ImportedListOption } from '@/components/outreach/OutreachImportListPanel.vue';
 import OutreachLeadReadinessPanel from '@/components/outreach/OutreachLeadReadinessPanel.vue';
 import OutreachStepPreviewChip from '@/components/outreach/OutreachStepPreviewChip.vue';
+import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import { stepChipLabel, type ConnectedChannel, type OutreachStep } from '@/components/outreach/types';
 
 defineOptions({
@@ -377,14 +379,10 @@ onUnmounted(() => {
             style="z-index: 9999; width: 100vw; height: 100dvh;"
         >
             <header class="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
-                <button
-                    type="button"
-                    class="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted"
-                    @click="phase = 'leads'"
-                >
+                <AppToolbarButton variant="slate" @click="phase = 'leads'">
                     <ArrowLeft class="h-4 w-4" />
                     Back
-                </button>
+                </AppToolbarButton>
                 <div class="min-w-0 text-center">
                     <input
                         v-model="campaignName"
@@ -448,9 +446,10 @@ onUnmounted(() => {
                     <span
                         v-for="ch in connectedChannels.filter(c => c.connected)"
                         :key="ch.channel"
-                        class="inline-flex items-center gap-1 rounded-lg border bg-white px-2.5 py-1 text-xs shadow-sm"
+                        class="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1 text-xs shadow-sm"
                         :class="requiredChannels.includes(ch.channel) ? 'border-primary/40 text-foreground' : 'border-border text-muted-foreground'"
                     >
+                        <OutreachChannelIcon :channel="ch.channel" :size="16" class="h-4 w-4" />
                         {{ ch.label }}
                         <span v-if="requiredChannels.includes(ch.channel)" class="text-[10px] font-medium text-primary">required</span>
                     </span>

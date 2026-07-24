@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Head, Link } from '@inertiajs/vue3';
 import { Inbox } from '@lucide/vue';
+import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 
 defineOptions({
     layout: {
@@ -43,11 +44,8 @@ defineProps<{
                 :href="platform.href"
                 class="group flex items-start gap-4 rounded-xl border border-border bg-card p-4 shadow-sm transition-colors hover:border-primary/30 hover:bg-muted/20"
             >
-                <div
-                    class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-lg font-bold text-white"
-                    :style="{ backgroundColor: platform.color }"
-                >
-                    {{ platform.label.slice(0, 1) }}
+                <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted/30 p-2">
+                    <OutreachChannelIcon :channel="platform.key" :size="32" class="h-8 w-8" />
                 </div>
                 <div class="min-w-0 flex-1">
                     <div class="flex items-center justify-between gap-2">

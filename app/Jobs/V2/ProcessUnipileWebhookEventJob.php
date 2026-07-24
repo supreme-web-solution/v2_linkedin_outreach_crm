@@ -17,6 +17,7 @@ use App\V2\Services\CallOrchestrationService;
 use App\V2\Services\OutreachPersistenceService;
 use App\V2\Services\UnifiedInboxReplyService;
 use App\V2\Services\UnifiedInboxService;
+use App\V2\Services\UnipileMessageNormalizer;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -52,6 +53,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             'new_message',
             'message.sent',
             'outbound_message',
+            'message.reaction',
             'invitation.accepted',
             'connection.accepted',
             'invitation.received',
@@ -83,9 +85,38 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             $chatId = (string) (Arr::get($payload, 'data.chat_id') ?? Arr::get($payload, 'chat_id') ?? '');
             $body = $this->extractMessageBody($payload);
             $providerMessageId = (string) (Arr::get($payload, 'data.message_id') ?? Arr::get($payload, 'message_id') ?? '');
+            $normalizer = app(UnipileMessageNormalizer::class);
+            $inner = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
+            $attachments = $normalizer->extractAttachments($inner);
+            $reactions = $normalizer->extractReactions($inner);
 
-            if ($chatId !== '' && $event->user_id && trim($body) !== '') {
-                if (app(UnipileProvider::class)->isFromAccountOwner($payload)) {
+            if ($chatId !== '' && $event->user_id && ($body !== '' || $attachments !== [])) {
+                $reactionEvent = $normalizer->resolveReactionEvent(array_merge($inner, ['text' => $body]));
+                if ($reactionEvent !== null) {
+                    $conversation = $persistence->resolveConversationForWebhook(
+                        (int) $event->user_id,
+                        $chatId,
+                        $payload
+                    ) ?? $unifiedInbox->resolveConversationForWebhook(
+                        (int) $event->user_id,
+                        $chatId,
+                        $payload
+                    );
+
+                    if ($conversation && empty($reactionEvent['skip_only'])) {
+                        $targetId = trim((string) ($reactionEvent['target_provider_message_id'] ?? ''));
+                        if ($targetId !== '') {
+                            $unifiedInbox->applyParsedReaction($conversation, $reactionEvent);
+                        }
+                    }
+
+                    $this->recordWebhookActivity(
+                        (int) $event->user_id,
+                        'webhook.message.received',
+                        1,
+                        ['event_id' => $event->event_id, 'chat_id' => $chatId, 'reaction' => true]
+                    );
+                } elseif (app(UnipileProvider::class)->isFromAccountOwner($payload)) {
                     $this->persistOutboundMessage($event, $payload, $chatId, $body, $providerMessageId, $persistence, $unifiedInbox);
                     $this->recordWebhookActivity(
                         (int) $event->user_id,
@@ -116,12 +147,14 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                         ],
                         [
                             'direction' => 'inbound',
-                            'body' => $body,
+                            'body' => $body !== '' ? $body : '[Attachment]',
+                            'attachments' => $attachments !== [] ? $attachments : null,
                             'received_at' => now(),
-                            'meta' => [
+                            'meta' => array_filter([
                                 'source' => 'unipile_webhook',
                                 'event_id' => $event->event_id,
-                            ],
+                                'reactions' => $reactions !== [] ? $reactions : null,
+                            ], fn ($v) => $v !== null),
                         ]
                     );
 
@@ -171,6 +204,24 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                         'chat_id' => $chatId,
                     ]
                 );
+                }
+            }
+        }
+
+        if ($eventType === 'message.reaction' && $event->user_id) {
+            $chatId = (string) (Arr::get($payload, 'data.chat_id') ?? Arr::get($payload, 'chat_id') ?? '');
+            $reaction = app(UnipileMessageNormalizer::class)->extractReactionEvent($payload);
+
+            if ($chatId !== '' && $reaction) {
+                $conversation = $unifiedInbox->resolveConversationForWebhook((int) $event->user_id, $chatId, $payload)
+                    ?? $persistence->resolveConversationForWebhook((int) $event->user_id, $chatId, $payload);
+
+                if ($conversation) {
+                    $unifiedInbox->applyReactionToMessage($conversation, $reaction['message_id'], [
+                        'value' => $reaction['value'],
+                        'sender_id' => $reaction['sender_id'],
+                        'is_sender' => $reaction['is_sender'],
+                    ]);
                 }
             }
         }

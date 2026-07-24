@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Web;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\V2AutoResponse;
+use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -28,6 +30,7 @@ class AutoResponsesWebController extends Controller
                     'message_type' => $r->message_type,
                     'message_keywords' => $r->message_keywords,
                     'message_body' => $r->message_body,
+                    'platforms' => $r->platformKeys(),
                     'enabled' => (bool) $r->enabled,
                     'created_at' => $r->created_at?->toIso8601String(),
                 ])
@@ -43,6 +46,14 @@ class AutoResponsesWebController extends Controller
                 ['value' => 'regex', 'label' => 'Regex pattern'],
                 ['value' => 'any', 'label' => 'Any message'],
             ],
+            'platformOptions' => collect(OutreachChannelRegistry::channels())
+                ->map(fn (array $meta, string $key) => [
+                    'key' => $key,
+                    'label' => (string) ($meta['label'] ?? $key),
+                    'color' => (string) ($meta['color'] ?? '#64748b'),
+                ])
+                ->values()
+                ->all(),
         ]);
     }
 
@@ -60,6 +71,8 @@ class AutoResponsesWebController extends Controller
             'message_type' => ['required', 'string', 'max:50'],
             'message_keywords' => ['nullable', 'string', 'max:255'],
             'message_body' => ['required', 'string'],
+            'platforms' => ['nullable', 'array'],
+            'platforms.*' => ['string', Rule::in(array_keys(OutreachChannelRegistry::channels()))],
             'enabled' => ['nullable', 'boolean'],
         ]);
 
@@ -69,6 +82,7 @@ class AutoResponsesWebController extends Controller
             'message_type' => $data['message_type'],
             'message_keywords' => $data['message_keywords'] ?? null,
             'message_body' => $data['message_body'],
+            'platforms' => $this->normalizePlatforms($data['platforms'] ?? null),
             'attachments' => [],
             'enabled' => $data['enabled'] ?? true,
         ]);
@@ -91,6 +105,8 @@ class AutoResponsesWebController extends Controller
             'message_type' => ['nullable', 'string', 'max:50'],
             'message_keywords' => ['nullable', 'string', 'max:255'],
             'message_body' => ['nullable', 'string'],
+            'platforms' => ['nullable', 'array'],
+            'platforms.*' => ['string', Rule::in(array_keys(OutreachChannelRegistry::channels()))],
             'enabled' => ['nullable', 'boolean'],
         ]);
 
@@ -98,6 +114,7 @@ class AutoResponsesWebController extends Controller
             'message_type' => $data['message_type'] ?? null,
             'message_keywords' => array_key_exists('message_keywords', $data) ? $data['message_keywords'] : null,
             'message_body' => $data['message_body'] ?? null,
+            'platforms' => array_key_exists('platforms', $data) ? $this->normalizePlatforms($data['platforms']) : null,
             'enabled' => array_key_exists('enabled', $data) ? (bool) $data['enabled'] : null,
         ], fn ($v) => $v !== null))->save();
 
@@ -133,5 +150,23 @@ class AutoResponsesWebController extends Controller
         $rule->forceFill(['enabled' => ! $rule->enabled])->save();
 
         return back()->with('success', $rule->enabled ? 'Rule enabled.' : 'Rule disabled.');
+    }
+
+    /**
+     * @param  array<int, string>|null  $platforms
+     * @return array<int, string>
+     */
+    private function normalizePlatforms(?array $platforms): array
+    {
+        if (! is_array($platforms) || $platforms === []) {
+            return [];
+        }
+
+        $allowed = array_keys(OutreachChannelRegistry::channels());
+
+        return array_values(array_unique(array_filter(array_map(
+            fn ($platform) => strtolower(trim((string) $platform)),
+            $platforms
+        ), fn ($platform) => in_array($platform, $allowed, true))));
     }
 }

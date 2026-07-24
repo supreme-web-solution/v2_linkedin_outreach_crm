@@ -9,7 +9,7 @@ defineOptions({
     layout: {
         breadcrumbs: [
             { title: 'Dashboard', href: '/dashboard' },
-            { title: 'AI Messages', href: '/ai-messages' },
+            { title: 'Outreach Templates', href: '/ai-messages' },
         ],
     },
 });
@@ -58,13 +58,13 @@ const typeLabels: Record<string, string> = {
 </script>
 
 <template>
-    <Head title="AI Messages" />
+    <Head title="Outreach Templates" />
 
     <div class="flex flex-col gap-5 p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-                <h1 class="text-xl font-semibold text-foreground">AI Messages</h1>
-                <p class="text-sm text-muted-foreground">{{ aicontents.total.toLocaleString() }} saved messages.</p>
+                <h1 class="text-xl font-semibold text-foreground">Outreach Templates</h1>
+                <p class="text-sm text-muted-foreground">{{ aicontents.total.toLocaleString() }} saved — cold emails, connection notes, and ice-breakers.</p>
             </div>
             <Link href="/ai-messages/new" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700">
                 <Plus class="h-4 w-4" /> New message

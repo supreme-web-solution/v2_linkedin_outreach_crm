@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { Search } from '@lucide/vue';
 
-defineProps<{
+withDefaults(defineProps<{
     placeholder?: string;
     modelValue: string;
-}>();
+    hideButton?: boolean;
+}>(), {
+    hideButton: false,
+});
 
 const emit = defineEmits<{
     'update:modelValue': [value: string];
@@ -35,6 +38,7 @@ function onKeydown(e: KeyboardEvent) {
         </div>
         <slot name="filters" />
         <button
+            v-if="!hideButton"
             type="button"
             class="rounded-lg border border-border bg-card px-3 py-2 text-sm hover:bg-muted"
             @click="emit('search')"

@@ -2,6 +2,8 @@
 import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 import { Bell, Calendar, Clock, Loader2, Phone, Plus, Search, Send, Settings, Sparkles, Users } from '@lucide/vue';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import { Button } from '@/components/ui/button';
 import CheckboxField from '@/components/CheckboxField.vue';
 import {
     Dialog,
@@ -309,42 +311,31 @@ function formatReminderTime(at: string | null) {
                 <p class="text-sm text-muted-foreground">Track call booking from LinkedIn — AI suggests replies, you approve in the pipeline.</p>
             </div>
             <div v-if="hasOrg" class="flex flex-wrap gap-2">
-                <button
-                    type="button"
-                    class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700"
-                    @click="openCampaignModal"
-                >
+                <AppToolbarButton @click="openCampaignModal">
                     <Send class="h-4 w-4" /> Create &amp; start chats
-                </button>
-                <button
-                    type="button"
-                    class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted/50"
-                    @click="openCreateModal"
-                >
+                </AppToolbarButton>
+                <AppToolbarButton variant="violet" @click="openCreateModal">
                     <Plus class="h-4 w-4" /> Track one prospect
-                </button>
-                <button
-                    type="button"
-                    class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted/50"
-                    @click="showSettingsModal = true"
-                >
+                </AppToolbarButton>
+                <AppToolbarButton variant="slate" @click="showSettingsModal = true">
                     <Settings class="h-4 w-4" /> Settings
-                </button>
-                <button
-                    type="button"
-                    class="relative inline-flex items-center justify-center rounded-lg border border-border bg-card p-2 text-sm font-medium hover:bg-muted/50"
-                    :class="dueReminders.length ? 'border-orange-500/40 text-orange-600' : 'text-muted-foreground'"
+                </AppToolbarButton>
+                <Button
+                    variant="amber"
+                    size="toolbar"
+                    class="relative"
+                    :class="dueReminders.length ? '' : 'opacity-90'"
                     title="Upcoming reminders"
                     @click="showRemindersModal = true"
                 >
                     <Bell class="h-4 w-4" />
                     <span
                         v-if="dueReminders.length"
-                        class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-semibold text-white"
+                        class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-white px-1 text-[10px] font-semibold text-amber-600"
                     >
                         {{ dueReminders.length > 9 ? '9+' : dueReminders.length }}
                     </span>
-                </button>
+                </Button>
             </div>
         </div>
 

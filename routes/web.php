@@ -118,6 +118,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::get('inbox/{platform}/{id}', [UnifiedInboxWebController::class, 'show'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.show');
     Route::get('inbox/{platform}/{id}/poll', [UnifiedInboxWebController::class, 'poll'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.poll');
     Route::post('inbox/{platform}/{id}/send', [UnifiedInboxWebController::class, 'send'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.send');
+    Route::get('inbox/{platform}/{id}/messages/{messageId}/attachments/{attachmentId}', [UnifiedInboxWebController::class, 'attachment'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.attachment');
 
     Route::get('conversations', [ConversationsWebController::class, 'index'])->name('conversations');
     Route::post('conversations/sync', fn () => redirect()
@@ -152,10 +153,6 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::post('content/ai/improve', [ContentWebController::class, 'improveAi'])->name('content.ai.improve');
     Route::post('content/ai/rewrite', [ContentWebController::class, 'rewriteAi'])->name('content.ai.rewrite');
     Route::post('content/ai/generate-image', [ContentWebController::class, 'generateImageAi'])->name('content.ai.generate-image');
-    Route::get('content/templates', [ContentWebController::class, 'templates'])->name('content.templates');
-    Route::post('content/inspiration/fetch', [ContentWebController::class, 'fetchInspiration'])->name('content.inspiration.fetch');
-    Route::get('content/inspiration/{id}/use', [ContentWebController::class, 'useInspiration'])->name('content.inspiration.use');
-    Route::post('content/inspiration/{id}/remix', [ContentWebController::class, 'remixInspiration'])->name('content.inspiration.remix');
     Route::put('content/{id}', [ContentWebController::class, 'update'])->name('content.update');
     Route::delete('content/{id}', [ContentWebController::class, 'destroy'])->name('content.destroy');
     Route::post('content/{id}/publish', [ContentWebController::class, 'publish'])->name('content.publish');

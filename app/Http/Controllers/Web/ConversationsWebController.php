@@ -161,6 +161,7 @@ class ConversationsWebController extends Controller
 
         $conversation = V2Conversation::query()
             ->where('user_id', $user->id)
+            ->managedByCallManager()
             ->where('id', $id)
             ->firstOrFail();
 
@@ -181,6 +182,7 @@ class ConversationsWebController extends Controller
 
         $deleted = V2Conversation::query()
             ->where('user_id', $user->id)
+            ->managedByCallManager()
             ->whereIn('id', $data['ids'])
             ->delete();
 

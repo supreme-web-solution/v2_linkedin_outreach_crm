@@ -15,6 +15,8 @@ import {
 } from '@/components/ui/sidebar';
 import { useCurrentUrl } from '@/composables/useCurrentUrl';
 import { cn } from '@/lib/utils';
+import NavTruncatedLabel from '@/components/NavTruncatedLabel.vue';
+import NavSketchIcon from '@/components/NavSketchIcon.vue';
 import type { NavGroup, NavItem } from '@/types';
 
 const props = defineProps<{
@@ -120,12 +122,12 @@ function iconWrapClass(active: boolean, size = 'size-8'): string {
                             <SidebarMenuButton
                                 :is-active="isItemActive(item)"
                                 :tooltip="item.title"
-                                :class="rowClass(isItemActive(item))"
+                                :class="cn(rowClass(isItemActive(item)), 'group/nav-row')"
                             >
                                 <span :class="iconWrapClass(isItemActive(item))">
-                                    <component :is="item.icon" class="size-[18px] stroke-[2]" />
+                                    <NavSketchIcon :icon="item.icon" class="size-[18px] [&_svg]:size-[18px] [&_svg]:stroke-[2]" />
                                 </span>
-                                <span>{{ item.title }}</span>
+                                <NavTruncatedLabel :text="item.title" label-class="flex-1" />
                                 <ChevronRight
                                     class="ml-auto size-4 shrink-0 text-sidebar-foreground/50 transition-transform group-data-[state=open]/collapsible:rotate-90"
                                 />
@@ -142,15 +144,15 @@ function iconWrapClass(active: boolean, size = 'size-8'): string {
                                         :is-active="isChildActive(child)"
                                         :class="subRowClass(isChildActive(child))"
                                     >
-                                        <Link :href="child.href!" class="flex w-full items-center gap-2.5">
+                                        <Link :href="child.href!" class="group/nav-sub-row flex w-full min-w-0 items-center gap-2.5">
                                             <span :class="iconWrapClass(isChildActive(child), 'size-7')">
-                                                <component
+                                                <NavSketchIcon
                                                     v-if="child.icon"
-                                                    :is="child.icon"
-                                                    class="size-4 stroke-[2]"
+                                                    :icon="child.icon"
+                                                    class="size-4 [&_svg]:size-4 [&_svg]:stroke-[2]"
                                                 />
                                             </span>
-                                            <span class="truncate">{{ child.title }}</span>
+                                            <NavTruncatedLabel :text="child.title" label-class="flex-1" />
                                         </Link>
                                     </SidebarMenuSubButton>
                                 </SidebarMenuSubItem>
@@ -164,13 +166,13 @@ function iconWrapClass(active: boolean, size = 'size-8'): string {
                         as-child
                         :is-active="isItemActive(item)"
                         :tooltip="item.title"
-                        :class="rowClass(isItemActive(item))"
+                        :class="cn(rowClass(isItemActive(item)), 'group/nav-row')"
                     >
-                        <Link :href="item.href" class="flex w-full items-center gap-2.5">
+                        <Link :href="item.href" class="flex w-full min-w-0 items-center gap-2.5">
                             <span :class="iconWrapClass(isItemActive(item))">
-                                <component :is="item.icon" class="size-[18px] stroke-[2]" />
+                                <NavSketchIcon :icon="item.icon" class="size-[18px] [&_svg]:size-[18px] [&_svg]:stroke-[2]" />
                             </span>
-                            <span class="truncate">{{ item.title }}</span>
+                            <NavTruncatedLabel :text="item.title" label-class="flex-1" />
                         </Link>
                     </SidebarMenuButton>
                 </SidebarMenuItem>

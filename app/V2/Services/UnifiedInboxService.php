@@ -2,14 +2,15 @@
 
 namespace App\V2\Services;
 
-use App\Jobs\V2\ProcessOutboundOutreachJob;
 use App\Models\User;
 use App\Models\V2Conversation;
 use App\Models\V2IntegrationAccount;
 use App\Models\V2Message;
 use App\Models\V2OutreachLead;
 use App\V2\Integrations\Unipile\UnipileProvider;
+use App\V2\Outreach\InboxAttachmentSupport;
 use App\V2\Outreach\OutreachChannelRegistry;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 
@@ -156,6 +157,8 @@ class UnifiedInboxService
             return;
         }
 
+        $this->cleanupReactionGhostMessages($conversation);
+
         $provider = (string) $conversation->provider;
         if ($provider === '') {
             return;
@@ -188,16 +191,25 @@ class UnifiedInboxService
         $latestAt = $conversation->last_message_at;
         $newInboundBodies = [];
         $since = ($conversation->created_at ?? now())->copy()->subMinute();
+        $normalizer = app(UnipileMessageNormalizer::class);
 
         foreach ($items as $item) {
             if (! is_array($item)) {
                 continue;
             }
 
-            $text = trim((string) ($item['text'] ?? ''));
-            if ($text === '') {
+            $reactionEvent = $normalizer->resolveReactionEvent($item);
+            if ($reactionEvent !== null) {
                 continue;
             }
+
+            if (! $normalizer->hasDisplayableContent($item)) {
+                continue;
+            }
+
+            $text = trim((string) ($item['text'] ?? ''));
+            $attachments = $normalizer->extractAttachments($item);
+            $reactions = $normalizer->extractReactions($item);
 
             $at = ! empty($item['timestamp'])
                 ? Carbon::parse((string) $item['timestamp'])
@@ -208,9 +220,8 @@ class UnifiedInboxService
             }
 
             $providerMessageId = trim((string) ($item['id'] ?? $item['message_id'] ?? ''));
-            $isOutbound = ($item['is_sender'] ?? 0) === 1
-                || ($item['is_sender'] ?? false) === true
-                || ($item['from_me'] ?? false) === true;
+            $isOutbound = $this->isTruthy($item['is_sender'] ?? false)
+                || $this->isTruthy($item['from_me'] ?? false);
             $direction = $isOutbound ? 'outbound' : 'inbound';
 
             if ($providerMessageId !== '') {
@@ -220,6 +231,8 @@ class UnifiedInboxService
                     ->first();
 
                 if ($existing) {
+                    $this->updateMessageMedia($existing, $attachments, $reactions, $text);
+
                     if (! $latestAt || $at->gt($latestAt)) {
                         $latestAt = $at;
                     }
@@ -240,7 +253,9 @@ class UnifiedInboxService
                     $orphan->forceFill([
                         'provider_message_id' => $providerMessageId,
                         'sent_at' => $orphan->sent_at ?? $at,
+                        'attachments' => $attachments !== [] ? $attachments : $orphan->attachments,
                     ])->save();
+                    $this->updateMessageMedia($orphan, $attachments, $reactions, $text);
 
                     if (! $latestAt || $at->gt($latestAt)) {
                         $latestAt = $at;
@@ -254,15 +269,17 @@ class UnifiedInboxService
                 'conversation_id' => $conversation->id,
                 'provider_message_id' => $providerMessageId !== '' ? $providerMessageId : null,
                 'direction' => $direction,
-                'body' => $text,
+                'body' => $text !== '' ? $text : ($attachments !== [] ? '[Attachment]' : ''),
+                'attachments' => $attachments !== [] ? $attachments : null,
                 'sent_at' => $direction === 'outbound' ? $at : null,
                 'received_at' => $direction === 'inbound' ? $at : null,
-                'meta' => [
+                'meta' => array_filter([
                     'source' => 'unipile_sync',
-                ],
+                    'reactions' => $reactions !== [] ? $reactions : null,
+                ], fn ($v) => $v !== null),
             ]);
 
-            if ($direction === 'inbound') {
+            if ($direction === 'inbound' && $text !== '') {
                 $newInboundBodies[] = $text;
             }
 
@@ -270,6 +287,8 @@ class UnifiedInboxService
                 $latestAt = $at;
             }
         }
+
+        $this->reconcileReactionsFromProviderItems($conversation, $items, $normalizer);
 
         if ($latestAt) {
             $conversation->forceFill([
@@ -290,20 +309,24 @@ class UnifiedInboxService
         }
     }
 
-    public function sendMessage(User $user, V2Conversation $conversation, string $text): V2Message
+    public function sendMessage(User $user, V2Conversation $conversation, string $text, ?UploadedFile $attachment = null): V2Message
     {
         $text = trim($text);
-        if ($text === '') {
+        if ($text === '' && ! $attachment) {
             throw new \InvalidArgumentException('Message cannot be empty.');
         }
 
-        if (!$conversation->provider_chat_id) {
+        if (! $conversation->provider_chat_id) {
             throw new \RuntimeException('Conversation is not linked to a Unipile chat.');
         }
 
         $provider = (string) $conversation->provider;
+        if ($attachment && ! InboxAttachmentSupport::supportsAttachments($provider)) {
+            throw new \RuntimeException('File attachments are not supported on '.OutreachChannelRegistry::channelLabel($provider).'.');
+        }
+
         $accountId = V2IntegrationAccount::activeUnipileAccountIdForProvider($user->id, $provider);
-        if (!$accountId) {
+        if (! $accountId) {
             throw new \RuntimeException(
                 'Connect '.OutreachChannelRegistry::channelLabel($provider).' via Integrations first.'
             );
@@ -314,35 +337,253 @@ class UnifiedInboxService
             throw new \RuntimeException('No workspace selected.');
         }
 
+        $attachmentMeta = null;
+        if ($attachment) {
+            $attachmentMeta = [[
+                'id' => null,
+                'type' => str_starts_with((string) $attachment->getMimeType(), 'video/') ? 'video' : (str_starts_with((string) $attachment->getMimeType(), 'image/') ? 'img' : 'file'),
+                'mimetype' => $attachment->getMimeType(),
+                'filename' => $attachment->getClientOriginalName(),
+                'unavailable' => false,
+                'outbound' => true,
+            ]];
+        }
+
         $message = app(OutreachPersistenceService::class)->createOutboundMessage(
             $conversation->id,
-            $text,
+            $text !== '' ? $text : '[Attachment]',
             'message',
-            [
+            array_filter([
                 'chat_id' => $conversation->provider_chat_id,
                 'source' => 'unified_inbox',
                 '_unipile_account_id' => $accountId,
                 'channel' => $provider,
-            ]
+            ])
         );
 
-        ProcessOutboundOutreachJob::dispatch(
-            'message',
-            $user->id,
-            $organizationId,
-            $conversation->id,
-            $message->id,
-            [
-                'chat_id' => $conversation->provider_chat_id,
-                'text' => $text,
-                '_unipile_account_id' => $accountId,
-                'account_id' => $accountId,
-            ]
-        );
+        if ($attachmentMeta) {
+            $message->forceFill(['attachments' => $attachmentMeta])->save();
+        }
+
+        if ($attachment) {
+            $this->sendAttachmentNow(
+                $conversation->provider_chat_id,
+                $accountId,
+                $text,
+                $attachment,
+                $message
+            );
+        } else {
+            $this->sendTextNow(
+                $conversation->provider_chat_id,
+                $accountId,
+                $text,
+                $message
+            );
+        }
 
         $conversation->forceFill(['last_message_at' => now(), 'status' => 'active'])->save();
 
         return $message;
+    }
+
+    public function applyReactionToMessage(V2Conversation $conversation, string $providerMessageId, array $reaction): void
+    {
+        $message = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('provider_message_id', $providerMessageId)
+            ->first();
+
+        if ($message) {
+            $this->applyReactionToMessageRecord($message, $reaction);
+        }
+    }
+
+    /**
+     * @param  array{value: string, sender_id?: string|null, target_provider_message_id?: string|null, is_sender?: bool}  $reaction
+     */
+    public function applyParsedReaction(V2Conversation $conversation, array $reaction): void
+    {
+        if (trim((string) ($reaction['value'] ?? '')) === '') {
+            return;
+        }
+
+        $targetId = trim((string) ($reaction['target_provider_message_id'] ?? ''));
+        if ($targetId === '') {
+            return;
+        }
+
+        $target = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('provider_message_id', $targetId)
+            ->first();
+
+        if ($target) {
+            $this->applyReactionToMessageRecord($target, [
+                'value' => (string) $reaction['value'],
+                'sender_id' => $reaction['sender_id'] ?? null,
+                'is_sender' => (bool) ($reaction['is_sender'] ?? false),
+            ]);
+        }
+    }
+
+    /**
+     * @param  array{value: string, sender_id?: string|null, is_sender?: bool}  $reaction
+     */
+    private function applyReactionToMessageRecord(V2Message $message, array $reaction): void
+    {
+        $meta = is_array($message->meta) ? $message->meta : [];
+        $existing = is_array($meta['reactions'] ?? null) ? $meta['reactions'] : [];
+        $meta['reactions'] = app(UnipileMessageNormalizer::class)->mergeReactions($existing, [[
+            'value' => (string) ($reaction['value'] ?? ''),
+            'sender_id' => isset($reaction['sender_id']) ? (string) $reaction['sender_id'] : null,
+            'is_sender' => (bool) ($reaction['is_sender'] ?? false),
+        ]]);
+        $message->forceFill(['meta' => $meta])->save();
+    }
+
+    public function cleanupReactionGhostMessages(V2Conversation $conversation, ?UnipileMessageNormalizer $normalizer = null): void
+    {
+        $normalizer ??= app(UnipileMessageNormalizer::class);
+
+        $messages = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get();
+
+        $previous = null;
+        foreach ($messages as $message) {
+            $parsed = $normalizer->parseReactionAnnouncementText(trim((string) ($message->body ?? '')));
+            if ($parsed === null) {
+                continue;
+            }
+
+            $message->delete();
+        }
+    }
+
+    /**
+     * @param  list<mixed>  $items
+     */
+    private function reconcileReactionsFromProviderItems(
+        V2Conversation $conversation,
+        array $items,
+        UnipileMessageNormalizer $normalizer,
+    ): void {
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            if ($normalizer->resolveReactionEvent($item) !== null) {
+                continue;
+            }
+
+            if (! array_key_exists('reactions', $item)) {
+                continue;
+            }
+
+            $providerMessageId = trim((string) ($item['id'] ?? $item['message_id'] ?? ''));
+            if ($providerMessageId === '') {
+                continue;
+            }
+
+            $message = V2Message::query()
+                ->where('conversation_id', $conversation->id)
+                ->where('provider_message_id', $providerMessageId)
+                ->first();
+
+            if (! $message) {
+                continue;
+            }
+
+            $reactions = $normalizer->extractReactions($item);
+            $meta = is_array($message->meta) ? $message->meta : [];
+
+            if ($reactions === []) {
+                unset($meta['reactions']);
+            } else {
+                $meta['reactions'] = $reactions;
+            }
+
+            $message->forceFill(['meta' => $meta])->save();
+        }
+    }
+
+    private function isTruthy(mixed $value): bool
+    {
+        return $value === true || $value === 1 || $value === '1';
+    }
+
+    private function sendTextNow(
+        string $chatId,
+        string $accountId,
+        string $text,
+        V2Message $message,
+    ): void {
+        $result = app(UnipileProvider::class)->sendMessage($chatId, [
+            'text' => $text,
+            'account_id' => $accountId,
+        ], ['account_id' => $accountId]);
+
+        app(OutreachPersistenceService::class)->markMessageResult($message, $result, 'sent');
+
+        $providerMessageId = trim((string) ($result['id'] ?? $result['message_id'] ?? ''));
+        if ($providerMessageId !== '') {
+            $message->forceFill(['provider_message_id' => $providerMessageId, 'sent_at' => now()])->save();
+        }
+    }
+
+    private function sendAttachmentNow(
+        string $chatId,
+        string $accountId,
+        string $text,
+        UploadedFile $attachment,
+        V2Message $message,
+    ): void {
+        $result = app(UnipileProvider::class)->sendMessage($chatId, [
+            'text' => $text,
+            'account_id' => $accountId,
+            '_files' => [[
+                'path' => $attachment->getRealPath(),
+                'filename' => $attachment->getClientOriginalName(),
+                'mime' => $attachment->getMimeType() ?: 'application/octet-stream',
+            ]],
+        ], ['account_id' => $accountId]);
+
+        app(OutreachPersistenceService::class)->markMessageResult($message, $result, 'sent');
+
+        $providerMessageId = trim((string) ($result['id'] ?? $result['message_id'] ?? ''));
+        if ($providerMessageId !== '') {
+            $message->forceFill(['provider_message_id' => $providerMessageId, 'sent_at' => now()])->save();
+        }
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $attachments
+     * @param  list<array<string, mixed>>  $reactions
+     */
+    private function updateMessageMedia(V2Message $message, array $attachments, array $reactions, string $text): void
+    {
+        $updates = [];
+        if ($attachments !== []) {
+            $updates['attachments'] = $attachments;
+        }
+        if ($text !== '' && trim((string) $message->body) === '') {
+            $updates['body'] = $text;
+        }
+
+        $meta = is_array($message->meta) ? $message->meta : [];
+        if ($reactions !== []) {
+            $existing = is_array($meta['reactions'] ?? null) ? $meta['reactions'] : [];
+            $meta['reactions'] = app(UnipileMessageNormalizer::class)->mergeReactions($existing, $reactions);
+            $updates['meta'] = $meta;
+        }
+
+        if ($updates !== []) {
+            $message->forceFill($updates)->save();
+        }
     }
 
     /**

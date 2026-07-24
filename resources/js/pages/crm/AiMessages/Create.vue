@@ -7,7 +7,7 @@ defineOptions({
     layout: {
         breadcrumbs: [
             { title: 'Dashboard', href: '/dashboard' },
-            { title: 'AI Messages', href: '/ai-messages' },
+            { title: 'Outreach Templates', href: '/ai-messages' },
             { title: 'New', href: '/ai-messages/new' },
         ],
     },

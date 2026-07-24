@@ -11,12 +11,14 @@ use Illuminate\Support\Arr;
 
 class AutoResponseService
 {
-    public function matchRule(int $userId, int $organizationId, string $inboundBody): ?V2AutoResponse
+    public function matchRule(int $userId, int $organizationId, string $inboundBody, string $provider = ''): ?V2AutoResponse
     {
         $normalized = strtolower(trim($inboundBody));
         if ($normalized === '') {
             return null;
         }
+
+        $provider = strtolower(trim($provider));
 
         $rules = V2AutoResponse::query()
             ->where('user_id', $userId)
@@ -26,6 +28,10 @@ class AutoResponseService
             ->get();
 
         foreach ($rules as $rule) {
+            if ($provider !== '' && ! $rule->appliesToProvider($provider)) {
+                continue;
+            }
+
             if ($this->matches($rule, $normalized, $inboundBody)) {
                 return $rule;
             }
@@ -54,7 +60,7 @@ class AutoResponseService
             return false;
         }
 
-        $rule = $this->matchRule($userId, $organizationId, $inboundBody);
+        $rule = $this->matchRule($userId, $organizationId, $inboundBody, (string) $conversation->provider);
         if (!$rule) {
             return false;
         }

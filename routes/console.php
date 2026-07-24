@@ -15,3 +15,8 @@ Artisan::command('calls:dispatch-due', function (CallOrchestrationService $orche
 })->purpose('Send due call messages and pre-call reminders via Unipile');
 
 Schedule::command('calls:dispatch-due')->everyMinute();
+
+Schedule::command('queue:recover --release-stale')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();

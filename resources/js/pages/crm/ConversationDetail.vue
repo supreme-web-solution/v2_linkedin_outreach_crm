@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { AlertCircle, Calendar, Send } from '@lucide/vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import { computed } from 'vue';
 
 defineOptions({
@@ -68,13 +69,9 @@ function trackCall() {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-            <button
-                type="button"
-                class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted/50"
-                @click="trackCall"
-            >
+            <AppToolbarButton variant="violet" @click="trackCall">
                 <Calendar class="h-4 w-4" /> Track in Call Manager
-            </button>
+            </AppToolbarButton>
         </div>
 
         <div class="rounded-xl border border-border bg-card p-3 text-xs text-muted-foreground">

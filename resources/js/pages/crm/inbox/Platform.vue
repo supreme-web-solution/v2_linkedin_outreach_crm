@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
-import { ArrowLeft, Bot, Loader2, Megaphone, Send } from '@lucide/vue';
+import { ArrowLeft, Bot, Loader2, Megaphone, MessageCircle, MessagesSquare, Paperclip, Search, Send, X } from '@lucide/vue';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
+import ListPagination from '@/components/crm/ListPagination.vue';
+import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 
 defineOptions({
     layout: {
@@ -32,16 +34,29 @@ type OutreachContext = {
     settings_update_url: string;
 };
 
+type ConversationsPaginator = {
+    data: ConversationItem[];
+    current_page: number;
+    last_page: number;
+    per_page: number;
+    total: number;
+    from: number | null;
+    to: number | null;
+    prev_page_url: string | null;
+    next_page_url: string | null;
+};
+
 const props = defineProps<{
     platform: string;
     platformLabel: string;
     platformColor: string;
     connected: boolean;
-    conversations: ConversationItem[];
+    conversations: ConversationsPaginator;
     selected: { id: number; prospect_name: string | null; has_channel: boolean } | null;
-    messages: Array<{ id: number; direction: string; body: string; at: string | null; source: string | null }>;
+    messages: MessageItem[];
     outreachContext: OutreachContext | null;
     aiConfigured: boolean;
+    supportsAttachments: boolean;
     filters: { search: string | null; campaign: number | null; id: number | null };
 }>();
 
@@ -54,13 +69,38 @@ const messageScroll = ref<HTMLElement | null>(null);
 const sending = ref(false);
 const polling = ref(false);
 
-type MessageItem = { id: number; direction: string; body: string; at: string | null; source: string | null };
+type MessageAttachment = {
+    id: string;
+    filename: string;
+    mimetype: string;
+    type: string;
+    unavailable: boolean;
+    url: string | null;
+};
+
+type MessageReaction = {
+    value: string;
+    is_sender: boolean;
+};
+
+type MessageItem = {
+    id: number;
+    provider_message_id?: string | null;
+    direction: string;
+    body: string;
+    at: string | null;
+    source: string | null;
+    attachments?: MessageAttachment[];
+    reactions?: MessageReaction[];
+};
 
 const localMessages = ref<MessageItem[]>([...props.messages]);
-const localConversations = ref<ConversationItem[]>([...props.conversations]);
+const localConversations = ref<ConversationsPaginator>({ ...props.conversations, data: [...props.conversations.data] });
 const localOutreachContext = ref<OutreachContext | null>(props.outreachContext);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
+let searchReady = false;
 
 watch(
     () => props.messages,
@@ -72,7 +112,18 @@ watch(
 watch(
     () => props.conversations,
     (conversations) => {
-        localConversations.value = [...conversations];
+        localConversations.value = { ...conversations, data: [...conversations.data] };
+    },
+    { deep: true },
+);
+
+watch(
+    () => props.filters?.search,
+    (value) => {
+        const next = value ?? '';
+        if (next !== search.value) {
+            search.value = next;
+        }
     },
 );
 
@@ -83,7 +134,9 @@ watch(
     },
 );
 
-const sendForm = useForm({ body: '' });
+const sendForm = useForm<{ body: string; attachment: File | null }>({ body: '', attachment: null });
+const attachmentInputRef = ref<HTMLInputElement | null>(null);
+const selectedAttachmentName = ref<string | null>(null);
 const settingsForm = useForm({
     ai_context: props.outreachContext?.channel_settings?.ai_context ?? '',
     auto_reply_enabled: props.outreachContext?.channel_settings?.auto_reply_enabled ?? false,
@@ -101,8 +154,35 @@ watch(
 );
 
 const canSend = computed(
-    () => Boolean(sendForm.body.trim()) && props.selected?.has_channel && !sending.value,
+    () => (Boolean(sendForm.body.trim()) || Boolean(sendForm.attachment)) && props.selected?.has_channel && !sending.value,
 );
+
+function isImageAttachment(att: MessageAttachment) {
+    return att.type === 'img' || att.mimetype.startsWith('image/');
+}
+
+function isVideoAttachment(att: MessageAttachment) {
+    return att.type === 'video' || att.mimetype.startsWith('video/');
+}
+
+function openAttachmentPicker() {
+    attachmentInputRef.value?.click();
+}
+
+function onAttachmentSelected(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    sendForm.attachment = file;
+    selectedAttachmentName.value = file?.name ?? null;
+}
+
+function clearAttachment() {
+    sendForm.attachment = null;
+    selectedAttachmentName.value = null;
+    if (attachmentInputRef.value) {
+        attachmentInputRef.value.value = '';
+    }
+}
 
 function formatTime(at: string | null) {
     if (!at) return '';
@@ -113,16 +193,59 @@ function formatTime(at: string | null) {
     }
 }
 
-function applyFilters() {
-    router.get(`/inbox/${props.platform}`, {
-        search: search.value || undefined,
+const avatarPalettes = [
+    { bg: '#dcfce7', text: '#15803d', ring: '#bbf7d0' },
+    { bg: '#dbeafe', text: '#1d4ed8', ring: '#bfdbfe' },
+    { bg: '#fce7f3', text: '#be185d', ring: '#fbcfe8' },
+    { bg: '#ffedd5', text: '#c2410c', ring: '#fed7aa' },
+    { bg: '#ede9fe', text: '#6d28d9', ring: '#ddd6fe' },
+    { bg: '#ccfbf1', text: '#0f766e', ring: '#99f6e4' },
+    { bg: '#fef9c3', text: '#a16207', ring: '#fef08a' },
+    { bg: '#e0e7ff', text: '#4338ca', ring: '#c7d2fe' },
+] as const;
+
+function contactInitials(name: string | null | undefined): string {
+    const parts = (name ?? 'Unknown').trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) {
+        return '?';
+    }
+    if (parts.length === 1) {
+        return parts[0].slice(0, 2).toUpperCase();
+    }
+
+    return `${parts[0][0] ?? ''}${parts[parts.length - 1][0] ?? ''}`.toUpperCase();
+}
+
+function avatarPalette(name: string | null | undefined) {
+    const hash = [...(name ?? '?')].reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+    return avatarPalettes[hash % avatarPalettes.length];
+}
+
+const hasSearchQuery = computed(() => search.value.trim().length > 0);
+const isListEmpty = computed(() => localConversations.value.data.length === 0);
+
+function applyFilters(page = 1) {
+    const params: Record<string, string | number | undefined> = {
+        search: search.value.trim() || undefined,
         campaign: props.filters?.campaign ?? undefined,
-        id: props.selected?.id ?? undefined,
-    }, { preserveState: true, replace: true });
+        page: page > 1 ? page : undefined,
+    };
+
+    const opts = { preserveState: true, replace: true, preserveScroll: true };
+
+    if (props.selected?.id) {
+        router.get(`/inbox/${props.platform}/${props.selected.id}`, params, opts);
+    } else {
+        router.get(`/inbox/${props.platform}`, params, opts);
+    }
 }
 
 function openThread(id: number) {
-    router.get(`/inbox/${props.platform}/${id}`, {}, { preserveState: false });
+    router.get(`/inbox/${props.platform}/${id}`, {
+        search: search.value.trim() || undefined,
+        page: props.conversations.current_page > 1 ? props.conversations.current_page : undefined,
+    }, { preserveState: false });
 }
 
 function scrollToBottom() {
@@ -135,10 +258,24 @@ function scrollToBottom() {
 onMounted(() => {
     scrollToBottom();
     startPolling();
+    searchReady = true;
+});
+
+watch(search, () => {
+    if (!searchReady) {
+        return;
+    }
+    if (searchTimer) {
+        clearTimeout(searchTimer);
+    }
+    searchTimer = setTimeout(() => applyFilters(1), 300);
 });
 
 onUnmounted(() => {
     stopPolling();
+    if (searchTimer) {
+        clearTimeout(searchTimer);
+    }
 });
 
 watch(() => props.selected?.id, () => {
@@ -164,7 +301,17 @@ async function pollThread() {
     polling.value = true;
 
     try {
-        const response = await fetch(`/inbox/${props.platform}/${props.selected.id}/poll`, {
+        const params = new URLSearchParams();
+        if (search.value.trim()) {
+            params.set('search', search.value.trim());
+        }
+        if (props.conversations.current_page > 1) {
+            params.set('page', String(props.conversations.current_page));
+        }
+        const query = params.toString();
+        const url = `/inbox/${props.platform}/${props.selected.id}/poll${query ? `?${query}` : ''}`;
+
+        const response = await fetch(url, {
             credentials: 'same-origin',
             headers: {
                 Accept: 'application/json',
@@ -178,12 +325,14 @@ async function pollThread() {
 
         const data = await response.json() as {
             messages: MessageItem[];
-            conversations: ConversationItem[];
+            conversations: ConversationsPaginator;
             outreachContext: OutreachContext | null;
         };
 
         localMessages.value = data.messages ?? localMessages.value;
-        localConversations.value = data.conversations ?? localConversations.value;
+        if (data.conversations) {
+            localConversations.value = data.conversations;
+        }
         localOutreachContext.value = data.outreachContext ?? localOutreachContext.value;
     } catch {
         // ignore transient network errors
@@ -216,8 +365,10 @@ function sendMessage() {
     sending.value = true;
     sendForm.post(`/inbox/${props.platform}/${props.selected.id}/send`, {
         preserveScroll: true,
+        forceFormData: true,
         onSuccess: () => {
             sendForm.reset('body');
+            clearAttachment();
             void pollThread();
         },
         onFinish: () => { sending.value = false; },
@@ -247,7 +398,7 @@ function onComposerKeydown(e: KeyboardEvent) {
                     <ArrowLeft class="h-4 w-4" /> All platforms
                 </Link>
                 <div class="mt-1 flex items-center gap-2">
-                    <span class="inline-block h-3 w-3 rounded-full" :style="{ backgroundColor: platformColor }" />
+                    <OutreachChannelIcon :channel="platform" :size="24" class="h-6 w-6" />
                     <h1 class="text-xl font-semibold">{{ platformLabel }}</h1>
                 </div>
             </div>
@@ -262,27 +413,77 @@ function onComposerKeydown(e: KeyboardEvent) {
         <div class="grid min-h-0 flex-1 gap-4 lg:grid-cols-5">
             <!-- Threads list -->
             <div class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:col-span-2">
-                <div class="shrink-0 border-b border-border p-3">
-                    <ListSearchBar v-model="search" placeholder="Search…" @search="applyFilters" />
+                <div class="shrink-0 border-b border-border bg-muted/20 px-3 py-3">
+                    <ListSearchBar v-model="search" placeholder="Search conversations…" hide-button />
+                    <p class="mt-2 text-[11px] text-muted-foreground">
+                        {{ localConversations.total }} conversation{{ localConversations.total === 1 ? '' : 's' }}
+                    </p>
                 </div>
-                <div class="min-h-0 flex-1 overflow-y-auto">
+                <div class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-muted/10 to-background">
                     <button
-                        v-for="conv in localConversations"
+                        v-for="conv in localConversations.data"
                         :key="conv.id"
                         type="button"
-                        class="flex w-full flex-col gap-0.5 border-b border-border/60 px-3 py-3 text-left hover:bg-muted/40"
-                        :class="selected?.id === conv.id ? 'bg-primary/5' : ''"
+                        class="group flex w-full items-start gap-3 border-b border-border/50 px-3 py-3 text-left transition-colors hover:bg-muted/40"
+                        :class="selected?.id === conv.id ? 'bg-primary/5 ring-1 ring-inset ring-primary/10' : ''"
+                        :style="selected?.id === conv.id ? { borderLeft: `3px solid ${platformColor}` } : { borderLeft: '3px solid transparent' }"
                         @click="openThread(conv.id)"
                     >
-                        <div class="flex items-center justify-between gap-2">
-                            <p class="truncate font-medium">{{ conv.prospect_name ?? 'Unknown' }}</p>
-                            <span class="shrink-0 text-[10px] text-muted-foreground">{{ formatTime(conv.last_message_at) }}</span>
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold ring-2 ring-background shadow-sm"
+                            :style="{
+                                backgroundColor: avatarPalette(conv.prospect_name).bg,
+                                color: avatarPalette(conv.prospect_name).text,
+                                boxShadow: `0 0 0 2px ${avatarPalette(conv.prospect_name).ring}`,
+                            }"
+                        >
+                            {{ contactInitials(conv.prospect_name) }}
                         </div>
-                        <p v-if="conv.outreach_campaign_name" class="truncate text-[10px] text-primary">{{ conv.outreach_campaign_name }}</p>
-                        <p v-if="conv.last_message_preview" class="truncate text-xs text-muted-foreground">{{ conv.last_message_preview }}</p>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-start justify-between gap-2">
+                                <p class="truncate font-semibold text-foreground">{{ conv.prospect_name ?? 'Unknown contact' }}</p>
+                                <span class="shrink-0 text-[10px] text-muted-foreground">{{ formatTime(conv.last_message_at) }}</span>
+                            </div>
+                            <p v-if="conv.outreach_campaign_name" class="mt-0.5 truncate text-[10px] font-medium" :style="{ color: platformColor }">
+                                {{ conv.outreach_campaign_name }}
+                            </p>
+                            <p v-if="conv.last_message_preview" class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                                {{ conv.last_message_preview }}
+                            </p>
+                            <p v-else class="mt-1 text-xs italic text-muted-foreground/70">No messages yet</p>
+                        </div>
                     </button>
-                    <p v-if="localConversations.length === 0" class="p-6 text-center text-sm text-muted-foreground">No {{ platformLabel }} conversations yet.</p>
+
+                    <div v-if="isListEmpty" class="flex h-full min-h-[16rem] flex-col items-center justify-center px-6 py-10 text-center">
+                        <div
+                            class="mb-4 flex h-16 w-16 items-center justify-center rounded-full"
+                            :style="{ backgroundColor: `${platformColor}18`, color: platformColor }"
+                        >
+                            <Search v-if="hasSearchQuery" class="h-7 w-7" />
+                            <MessagesSquare v-else class="h-7 w-7" />
+                        </div>
+                        <p class="text-sm font-semibold text-foreground">
+                            {{ hasSearchQuery ? 'No matches found' : `No ${platformLabel} conversations yet` }}
+                        </p>
+                        <p class="mt-2 max-w-[16rem] text-xs leading-relaxed text-muted-foreground">
+                            <template v-if="hasSearchQuery">
+                                Try a different name or clear the search to see all threads.
+                            </template>
+                            <template v-else-if="!connected">
+                                Connect {{ platformLabel }} in Integrations, then replies from your outreach will appear here.
+                            </template>
+                            <template v-else>
+                                When leads reply on {{ platformLabel }}, their conversations will show up in this list.
+                            </template>
+                        </p>
+                    </div>
                 </div>
+                <ListPagination
+                    v-if="localConversations.last_page > 1"
+                    :paginator="localConversations"
+                    label="conversations"
+                    class="shrink-0 text-xs"
+                />
             </div>
 
             <!-- Chat + outreach sidebar -->
@@ -290,9 +491,23 @@ function onComposerKeydown(e: KeyboardEvent) {
                 <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                     <template v-if="selected">
                         <div class="shrink-0 border-b border-border px-4 py-3">
-                            <h2 class="font-semibold">{{ selected.prospect_name ?? 'Unknown contact' }}</h2>
+                            <div class="flex items-center gap-3">
+                                <div
+                                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold shadow-sm"
+                                    :style="{
+                                        backgroundColor: avatarPalette(selected.prospect_name).bg,
+                                        color: avatarPalette(selected.prospect_name).text,
+                                    }"
+                                >
+                                    {{ contactInitials(selected.prospect_name) }}
+                                </div>
+                                <div class="min-w-0">
+                                    <h2 class="truncate font-semibold">{{ selected.prospect_name ?? 'Unknown contact' }}</h2>
+                                    <p class="text-xs text-muted-foreground">{{ platformLabel }} conversation</p>
+                                </div>
+                            </div>
                         </div>
-                        <div ref="messageScroll" class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+                        <div ref="messageScroll" class="min-h-0 flex-1 space-y-3 overflow-y-auto bg-gradient-to-b from-muted/10 to-background p-4">
                             <div
                                 v-for="msg in localMessages"
                                 :key="msg.id"
@@ -304,13 +519,71 @@ function onComposerKeydown(e: KeyboardEvent) {
                                     :class="msg.direction === 'outbound' ? 'rounded-br-md bg-primary text-primary-foreground' : 'rounded-bl-md border border-border bg-muted/30'"
                                 >
                                     <p v-if="msg.source === 'outreach_campaign'" class="mb-1 text-[10px] uppercase opacity-70">Outreach sent</p>
-                                    <p class="whitespace-pre-wrap break-words">{{ msg.body }}</p>
+                                    <p v-if="msg.body && msg.body !== '[Attachment]'" class="whitespace-pre-wrap break-words">{{ msg.body }}</p>
+                                    <div v-if="msg.attachments?.length" class="mt-2 space-y-2">
+                                        <template v-for="att in msg.attachments" :key="att.id">
+                                            <a
+                                                v-if="att.url && !att.unavailable"
+                                                :href="att.url"
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                class="block rounded-lg border border-white/20 bg-black/10 px-2 py-2 text-xs underline-offset-2 hover:underline"
+                                            >
+                                                <img
+                                                    v-if="isImageAttachment(att)"
+                                                    :src="att.url"
+                                                    :alt="att.filename"
+                                                    class="mb-1 max-h-48 w-full rounded-md object-cover"
+                                                />
+                                                <video
+                                                    v-else-if="isVideoAttachment(att)"
+                                                    :src="att.url"
+                                                    controls
+                                                    class="mb-1 max-h-48 w-full rounded-md"
+                                                />
+                                                <span>{{ att.filename }}</span>
+                                                <span class="block text-[10px] opacity-70">Tap to open / download</span>
+                                            </a>
+                                            <p v-else class="text-xs opacity-70">{{ att.filename }} (unavailable)</p>
+                                        </template>
+                                    </div>
+                                    <div v-if="msg.reactions?.length" class="mt-2 flex flex-wrap gap-1">
+                                        <span
+                                            v-for="(reaction, idx) in msg.reactions"
+                                            :key="`${reaction.value}-${idx}`"
+                                            class="rounded-full bg-black/10 px-2 py-0.5 text-sm"
+                                            :title="reaction.is_sender ? 'You reacted' : 'Reaction'"
+                                        >{{ reaction.value }}</span>
+                                    </div>
                                     <p class="mt-1 text-[10px] opacity-70">{{ formatTime(msg.at) }}</p>
                                 </div>
                             </div>
                         </div>
                         <div class="shrink-0 border-t border-border p-3">
+                            <div v-if="selectedAttachmentName" class="mb-2 flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
+                                <span class="truncate">{{ selectedAttachmentName }}</span>
+                                <button type="button" class="text-muted-foreground hover:text-foreground" @click="clearAttachment">
+                                    <X class="h-4 w-4" />
+                                </button>
+                            </div>
                             <form class="flex items-end gap-2" @submit.prevent="sendMessage">
+                                <input
+                                    v-if="supportsAttachments"
+                                    ref="attachmentInputRef"
+                                    type="file"
+                                    class="hidden"
+                                    accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"
+                                    @change="onAttachmentSelected"
+                                />
+                                <button
+                                    v-if="supportsAttachments"
+                                    type="button"
+                                    class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-muted-foreground hover:bg-muted/50"
+                                    :disabled="!selected.has_channel || sending"
+                                    @click="openAttachmentPicker"
+                                >
+                                    <Paperclip class="h-4 w-4" />
+                                </button>
                                 <textarea
                                     v-model="sendForm.body"
                                     rows="2"
@@ -326,7 +599,18 @@ function onComposerKeydown(e: KeyboardEvent) {
                             </form>
                         </div>
                     </template>
-                    <div v-else class="flex flex-1 items-center justify-center text-sm text-muted-foreground">Select a conversation</div>
+                    <div v-else class="flex flex-1 flex-col items-center justify-center bg-gradient-to-b from-muted/10 to-background px-6 py-12 text-center">
+                        <div
+                            class="mb-4 flex h-16 w-16 items-center justify-center rounded-full"
+                            :style="{ backgroundColor: `${platformColor}18`, color: platformColor }"
+                        >
+                            <MessageCircle class="h-8 w-8" />
+                        </div>
+                        <p class="text-sm font-semibold text-foreground">Select a conversation</p>
+                        <p class="mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
+                            Choose a contact from the list to read and reply on {{ platformLabel }}.
+                        </p>
+                    </div>
                 </div>
 
                 <!-- AI + compact outreach sidebar -->
