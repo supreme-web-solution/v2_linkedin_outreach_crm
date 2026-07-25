@@ -125,10 +125,21 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                     'response_text' => substr($responseText, 0, 500),
                 ]);
             }
-            // Build a human-readable error that includes the Unipile response detail
+            // Build a human-readable error — never embed full API schema dumps in the message
             $detail = '';
             if (is_array($responseBody)) {
-                $detail = ': '.($responseBody['message'] ?? $responseBody['error'] ?? json_encode($responseBody));
+                $title = trim((string) ($responseBody['title'] ?? ''));
+                $bodyDetail = trim((string) ($responseBody['detail'] ?? $responseBody['message'] ?? $responseBody['error'] ?? ''));
+                if ($bodyDetail !== '' && (str_contains($bodyDetail, '"schema"') || strlen($bodyDetail) > 200)) {
+                    $bodyDetail = $title !== '' ? $title : 'Invalid request parameters';
+                }
+                if ($bodyDetail !== '') {
+                    $detail = ': '.$bodyDetail;
+                } elseif ($title !== '') {
+                    $detail = ': '.$title;
+                } elseif (isset($responseBody['type'])) {
+                    $detail = ': '.(string) $responseBody['type'];
+                }
             } elseif ($responseText) {
                 $detail = ': '.substr($responseText, 0, 200);
             }
@@ -1539,5 +1550,72 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     public function eventId(array $payload): string
     {
         return (string) Arr::get($payload, 'id', Arr::get($payload, 'event_id', uniqid('event_', true)));
+    }
+
+    /**
+     * Calendar routes expect account_id as a query/body param (see Unipile v1 docs).
+     * Pass all GET params through the HTTP query option — not embedded in the path string.
+     *
+     * @return array<string, mixed>
+     */
+    public function listCalendars(string $accountId, int $limit = 20): array
+    {
+        return $this->request('GET', $this->endpoint('list_calendars'), [
+            'account_id' => $accountId,
+            'limit' => max(1, min($limit, 100)),
+        ]);
+    }
+
+    public function updateCalendarEvent(string $accountId, string $calendarId, string $eventId, array $body): array
+    {
+        $endpoint = sprintf(
+            $this->endpoint('calendar_event'),
+            rawurlencode($calendarId),
+            rawurlencode($eventId),
+        );
+        unset($body['account_id']);
+
+        return $this->accountScopedRequest('PATCH', $endpoint, $accountId, $body);
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     * @return array<string, mixed>
+     */
+    public function createCalendarEvent(string $accountId, string $calendarId, array $body): array
+    {
+        $endpoint = sprintf($this->endpoint('calendar_events'), rawurlencode($calendarId));
+        unset($body['account_id']);
+
+        // POST /calendars/{id}/events — account_id is a query param, event fields go in JSON body.
+        return $this->accountScopedRequest('POST', $endpoint, $accountId, $body);
+    }
+
+    /**
+     * @param  array<string, mixed>  $query
+     * @return array<string, mixed>
+     */
+    public function listCalendarEvents(string $accountId, string $calendarId, array $query = []): array
+    {
+        $endpoint = sprintf($this->endpoint('calendar_events'), rawurlencode($calendarId));
+        $query['account_id'] = $accountId;
+
+        return $this->request('GET', $endpoint, $query);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getCalendarEvent(string $accountId, string $calendarId, string $eventId): array
+    {
+        $endpoint = sprintf(
+            $this->endpoint('calendar_event'),
+            rawurlencode($calendarId),
+            rawurlencode($eventId),
+        );
+
+        return $this->request('GET', $endpoint, [
+            'account_id' => $accountId,
+        ]);
     }
 }

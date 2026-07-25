@@ -2,7 +2,6 @@
 
 use App\Http\Controllers\Settings\ProfileController;
 use App\Http\Controllers\Settings\SecurityController;
-use App\Http\Controllers\Web\SocialAccountWebController;
 use Illuminate\Auth\Middleware\RequirePassword;
 use Illuminate\Support\Facades\Route;
 
@@ -12,11 +11,10 @@ Route::middleware(['auth'])->group(function () {
     Route::get('settings/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('settings/profile', [ProfileController::class, 'update'])->name('profile.update');
 
-    Route::get('settings/social-accounts', [SocialAccountWebController::class, 'index'])->name('social-accounts.index');
-    Route::delete('settings/social-accounts/unipile/{id}', [SocialAccountWebController::class, 'disconnectUnipile'])->whereNumber('id')->name('social-accounts.unipile.disconnect');
 });
 
-Route::redirect('social-accounts', '/settings/social-accounts');
+Route::redirect('social-accounts', '/integrations');
+Route::redirect('settings/social-accounts', '/integrations');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::delete('settings/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');

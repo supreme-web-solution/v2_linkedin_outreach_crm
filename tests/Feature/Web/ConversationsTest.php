@@ -35,6 +35,14 @@ class ConversationsTest extends TestCase
             ],
         ]);
 
+        V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'conversation_id' => $callManagerThread->id,
+            'prospect_name' => 'Call Manager Prospect',
+            'status' => 'engaged',
+        ]);
+
         V2Conversation::query()->create([
             'user_id' => $user->id,
             'provider' => 'linkedin',
@@ -61,14 +69,107 @@ class ConversationsTest extends TestCase
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
-            ->component('crm/Conversations')
-            ->has('conversations.data', 1)
-            ->where('conversations.data.0.id', $callManagerThread->id)
-            ->where('conversations.data.0.prospect_name', 'Call Manager Prospect')
+            ->component('crm/Conversations/Index')
+            ->has('flows', 1)
+            ->where('flows.0.batch_name', 'Individual prospects')
+            ->where('flows.0.count', 1)
         );
     }
 
-    public function test_conversation_linked_to_call_appears_without_call_manager_meta(): void
+    public function test_conversation_flow_page_lists_prospects_in_group(): void
+    {
+        $user = $this->userWithOrg();
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_chat_id' => 'li_from_call',
+            'status' => 'active',
+            'meta' => ['prospect_name' => 'Linked Via Call'],
+        ]);
+
+        V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'conversation_id' => $conversation->id,
+            'prospect_name' => 'Linked Via Call',
+            'status' => 'pending',
+        ]);
+
+        $response = $this->actingAs($user)->get(route('conversations.flow', ['flowKey' => 'individual']));
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('crm/Conversations/Flow')
+            ->has('prospects.data', 1)
+            ->where('prospects.data.0.call_id', fn ($id) => $id > 0)
+            ->where('prospects.data.0.chat_started', true)
+            ->where('flow.batch_name', 'Individual prospects')
+        );
+    }
+
+    public function test_flow_page_lists_unlinked_pipeline_prospects(): void
+    {
+        $user = $this->userWithOrg();
+        $batchId = 'batch-unlinked-test';
+
+        V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'prospect_name' => 'Not Started Yet',
+            'connection_id' => 'linkedin-profile-123',
+            'status' => 'engaged',
+            'pending_message' => 'Would you be open to a quick call?',
+            'meta' => [
+                'batch_id' => $batchId,
+                'batch_name' => 'Q2 outreach',
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->get(route('conversations.flow', ['flowKey' => $batchId]));
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('crm/Conversations/Flow')
+            ->has('prospects.data', 1)
+            ->where('prospects.data.0.prospect_name', 'Not Started Yet')
+            ->where('prospects.data.0.chat_started', false)
+            ->where('flow.count', 1)
+            ->where('flow.chats_started', 0)
+        );
+    }
+
+    public function test_legacy_flow_query_redirects_to_flow_page(): void
+    {
+        $user = $this->userWithOrg();
+        $batchId = 'batch-test-uuid';
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_chat_id' => 'li_batch',
+            'status' => 'active',
+            'meta' => ['prospect_name' => 'Batch Prospect'],
+        ]);
+
+        V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'conversation_id' => $conversation->id,
+            'prospect_name' => 'Batch Prospect',
+            'status' => 'engaged',
+            'meta' => [
+                'batch_id' => $batchId,
+                'batch_name' => 'Q2 calls',
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->get('/conversations?flow='.$batchId);
+
+        $response->assertRedirect(route('conversations.flow', ['flowKey' => $batchId]));
+    }
+
+    public function test_conversation_linked_to_call_appears_on_flow_index(): void
     {
         $user = $this->userWithOrg();
 
@@ -92,9 +193,7 @@ class ConversationsTest extends TestCase
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
-            ->has('conversations.data', 1)
-            ->where('conversations.data.0.id', $conversation->id)
-            ->where('conversations.data.0.call_id', fn ($id) => $id > 0)
+            ->where('stats.prospect_count', 1)
         );
     }
 
@@ -116,7 +215,7 @@ class ConversationsTest extends TestCase
         $response = $this->actingAs($user)->get(route('conversations'));
 
         $response->assertOk();
-        $response->assertInertia(fn ($page) => $page->has('conversations.data', 0));
+        $response->assertInertia(fn ($page) => $page->where('stats.prospect_count', 0));
     }
 
     public function test_conversations_sync_is_disabled(): void
@@ -210,6 +309,14 @@ class ConversationsTest extends TestCase
             'meta' => ['source' => 'call_manager'],
         ]);
 
+        V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'conversation_id' => $callManagerThread->id,
+            'prospect_name' => 'Bulk Delete Prospect',
+            'status' => 'engaged',
+        ]);
+
         $outreachThread = V2Conversation::query()->create([
             'user_id' => $user->id,
             'provider' => 'linkedin',
@@ -229,6 +336,79 @@ class ConversationsTest extends TestCase
         $response->assertSessionHas('success', '1 conversation(s) removed from CRM.');
         $this->assertDatabaseMissing('v2_conversations', ['id' => $callManagerThread->id]);
         $this->assertDatabaseHas('v2_conversations', ['id' => $outreachThread->id]);
+    }
+
+    public function test_destroy_prospect_removes_call_and_conversation(): void
+    {
+        $user = $this->userWithOrg();
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_chat_id' => 'li_delete_prospect',
+            'status' => 'active',
+            'meta' => ['source' => 'call_manager'],
+        ]);
+
+        $call = V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'conversation_id' => $conversation->id,
+            'prospect_name' => 'Delete Me',
+            'status' => 'engaged',
+        ]);
+
+        $response = $this->actingAs($user)->delete(route('conversations.prospect.destroy', $call->id));
+
+        $response->assertRedirect();
+        $response->assertSessionHas('success', 'Prospect and chat removed.');
+        $this->assertDatabaseMissing('v2_calls', ['id' => $call->id]);
+        $this->assertDatabaseMissing('v2_conversations', ['id' => $conversation->id]);
+    }
+
+    public function test_destroy_flow_removes_all_prospects_in_batch(): void
+    {
+        $user = $this->userWithOrg();
+        $batchId = 'batch-delete-flow';
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_chat_id' => 'li_delete_flow',
+            'status' => 'active',
+            'meta' => ['source' => 'call_manager'],
+        ]);
+
+        $call = V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'conversation_id' => $conversation->id,
+            'prospect_name' => 'Flow Prospect',
+            'status' => 'engaged',
+            'meta' => [
+                'batch_id' => $batchId,
+                'batch_name' => 'Delete this flow',
+            ],
+        ]);
+
+        V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'prospect_name' => 'Another Prospect',
+            'status' => 'engaged',
+            'meta' => [
+                'batch_id' => $batchId,
+                'batch_name' => 'Delete this flow',
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->delete(route('conversations.flow.destroy', ['flowKey' => $batchId]));
+
+        $response->assertRedirect(route('conversations'));
+        $response->assertSessionHas('success', '2 prospect(s) and their chats removed.');
+        $this->assertDatabaseMissing('v2_calls', ['id' => $call->id]);
+        $this->assertDatabaseMissing('v2_conversations', ['id' => $conversation->id]);
+        $this->assertDatabaseCount('v2_calls', 0);
     }
 
     private function userWithOrg(): User

@@ -53,14 +53,6 @@ class LaunchCallFromLeadJob implements ShouldQueue
 
     public function failed(Throwable $exception): void
     {
-        $call = V2Call::query()->find($this->callId);
-        if (!$call) {
-            return;
-        }
-
-        $meta = is_array($call->meta) ? $call->meta : [];
-        $meta['launch_error'] = $exception->getMessage();
-
-        $call->forceFill(['meta' => $meta])->save();
+        app(CallOrchestrationService::class)->rollbackFailedLaunch($this->callId, $exception);
     }
 }

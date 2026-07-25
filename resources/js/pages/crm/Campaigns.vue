@@ -5,6 +5,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 import LinkedInDisconnectBanner from '@/components/campaign/LinkedInDisconnectBanner.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 
 defineOptions({
     layout: { breadcrumbs: [{ title: 'Dashboard', href: '/dashboard' }, { title: 'Campaigns', href: '/campaigns' }] },
@@ -137,8 +138,11 @@ function deleteCampaign(c: { id: number; name: string }) {
 
         <div class="flex items-center justify-between">
             <div>
-                <h1 class="text-xl font-semibold">Campaigns</h1>
-                <p class="text-sm text-muted-foreground">{{ campaigns.total }} total campaign{{ campaigns.total !== 1 ? 's' : '' }}.</p>
+                <LinkedInPageHeading title="Campaigns" show-badge>
+                    <template #subtitle>
+                        {{ campaigns.total }} total campaign{{ campaigns.total !== 1 ? 's' : '' }}.
+                    </template>
+                </LinkedInPageHeading>
             </div>
             <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 shadow-sm">
                 <Plus class="h-4 w-4" /> New Campaign

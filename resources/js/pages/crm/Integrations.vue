@@ -191,6 +191,25 @@ function channelStatusLabel(ch: ChannelRow) {
     return 'Not connected';
 }
 
+const friendlyFlashError = computed(() => {
+    const raw = String((page.props.flash as { error?: string })?.error ?? '').trim();
+    if (!raw) return '';
+
+    if (raw.length > 280
+        || raw.includes('Unipile API error')
+        || raw.includes('"schema"')
+        || raw.includes('errors/')
+        || raw.includes('HTTP 4')
+        || raw.includes('HTTP 5')) {
+        if (/subscription|payment|402|403/i.test(raw)) {
+            return 'This integration requires an active subscription. Please contact your administrator.';
+        }
+        return 'Connection could not be completed. Please try again or contact your administrator.';
+    }
+
+    return raw;
+});
+
 function saveEsp() {
     espForm.post('/integrations/esp', {
         preserveScroll: true,
@@ -239,9 +258,9 @@ function removeEsp(id: number, provider: string) {
             <CheckCircle2 class="h-4 w-4 shrink-0" />
             {{ page.props.flash.success }}
         </div>
-        <div v-if="page.props.flash?.error" class="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div v-if="friendlyFlashError" class="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             <AlertCircle class="h-4 w-4 shrink-0" />
-            {{ page.props.flash.error }}
+            {{ friendlyFlashError }}
         </div>
         <div v-if="connected" class="flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
             <CheckCircle2 class="h-4 w-4 shrink-0" />
@@ -268,7 +287,7 @@ function removeEsp(id: number, provider: string) {
         <section v-if="connectedChannels?.length" class="rounded-xl border border-border bg-card shadow-sm">
             <div class="border-b border-border px-4 py-3">
                 <h2 class="text-sm font-semibold">Connected channels</h2>
-                <p class="text-xs text-muted-foreground">Connect LinkedIn and other platforms for <Link href="/outreach" class="text-primary hover:underline">Multi-Channel Outreach</Link> and the unified inbox.</p>
+                <p class="text-xs text-muted-foreground">Connect LinkedIn and other platforms for <Link href="/outreach" class="text-primary hover:underline">Multi-Channel Outreach</Link>, the unified inbox, and <Link href="/calls" class="text-primary hover:underline">Call Manager</Link> calendar sync.</p>
             </div>
             <div class="grid gap-3 p-4 sm:grid-cols-2">
                 <div
@@ -281,6 +300,7 @@ function removeEsp(id: number, provider: string) {
                         <div>
                             <p class="text-sm font-medium">{{ ch.label }}</p>
                             <p class="text-xs text-muted-foreground">{{ channelStatusLabel(ch) }}</p>
+                            <p v-if="ch.channel === 'google_calendar' || ch.channel === 'outlook_calendar'" class="text-[11px] text-muted-foreground">Used by Call Manager to create events when you book calls.</p>
                         </div>
                     </div>
                     <div class="flex items-center gap-2">

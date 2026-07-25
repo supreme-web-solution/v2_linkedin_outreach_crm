@@ -4,6 +4,7 @@ import { FileText, Pencil, Plus, Trash2 } from '@lucide/vue';
 import { ref } from 'vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 
 defineOptions({
     layout: {
@@ -63,8 +64,11 @@ const typeLabels: Record<string, string> = {
     <div class="flex flex-col gap-5 p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-                <h1 class="text-xl font-semibold text-foreground">Outreach Templates</h1>
-                <p class="text-sm text-muted-foreground">{{ aicontents.total.toLocaleString() }} saved — cold emails, connection notes, and ice-breakers.</p>
+                <LinkedInPageHeading title="Outreach Templates" show-badge>
+                    <template #subtitle>
+                        {{ aicontents.total.toLocaleString() }} saved — cold emails, connection notes, and ice-breakers.
+                    </template>
+                </LinkedInPageHeading>
             </div>
             <Link href="/ai-messages/new" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700">
                 <Plus class="h-4 w-4" /> New message

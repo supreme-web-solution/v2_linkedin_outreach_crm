@@ -28,6 +28,9 @@ require __DIR__.'/billing.php';
 
 Route::get('team/accept/{token}', [TeamWebController::class, 'showAcceptInvite'])->name('team.accept.show');
 
+Route::get('book/{token}', [\App\Http\Controllers\Web\CallBookingWebController::class, 'show'])->name('book.show');
+Route::post('book/{token}', [\App\Http\Controllers\Web\CallBookingWebController::class, 'store'])->name('book.store');
+
 Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
@@ -121,15 +124,19 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::get('inbox/{platform}/{id}/messages/{messageId}/attachments/{attachmentId}', [UnifiedInboxWebController::class, 'attachment'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.attachment');
 
     Route::get('conversations', [ConversationsWebController::class, 'index'])->name('conversations');
+    Route::get('conversations/flows/{flowKey}', [ConversationsWebController::class, 'flow'])->name('conversations.flow');
     Route::post('conversations/sync', fn () => redirect()
         ->route('conversations')
         ->with('success', 'Inbox sync is disabled. Launch outreach from Call Manager to start a conversation.'))
         ->name('conversations.sync');
     Route::delete('conversations/bulk', [ConversationsWebController::class, 'bulkDestroy'])->name('conversations.bulk-destroy');
+    Route::delete('conversations/flows/{flowKey}', [ConversationsWebController::class, 'destroyFlow'])->name('conversations.flow.destroy');
+    Route::delete('conversations/prospects/{callId}', [ConversationsWebController::class, 'destroyProspect'])->whereNumber('callId')->name('conversations.prospect.destroy');
     Route::get('conversations/{id}', [ConversationsWebController::class, 'show'])->name('conversations.show');
     Route::delete('conversations/{id}', [ConversationsWebController::class, 'destroy'])->whereNumber('id')->name('conversations.destroy');
     Route::post('conversations/{id}/send', [ConversationsWebController::class, 'send'])->whereNumber('id')->name('conversations.send');
     Route::post('conversations/{id}/track-call', [ConversationsWebController::class, 'trackCall'])->whereNumber('id')->name('conversations.track-call');
+    Route::get('calls/upcoming', [CallsWebController::class, 'upcomingBooked'])->name('calls.upcoming');
     Route::get('calls', [CallsWebController::class, 'index'])->name('calls');
     Route::post('calls', [CallsWebController::class, 'store'])->name('calls.store');
     Route::post('calls/from-leads', [CallsWebController::class, 'storeFromLeads'])->name('calls.from-leads');
@@ -138,6 +145,8 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::get('calls/{id}', [CallsWebController::class, 'show'])->whereNumber('id')->name('calls.show');
     Route::put('calls/{id}', [CallsWebController::class, 'update'])->whereNumber('id')->name('calls.update');
     Route::post('calls/{id}/link-conversation', [CallsWebController::class, 'linkConversation'])->whereNumber('id')->name('calls.link-conversation');
+    Route::post('calls/{id}/launch-chat', [CallsWebController::class, 'launchChat'])->whereNumber('id')->name('calls.launch-chat');
+    Route::post('calls/flows/{flowKey}/launch-chats', [CallsWebController::class, 'launchFlowChats'])->name('calls.launch-flow-chats');
     Route::post('calls/{id}/send', [CallsWebController::class, 'send'])->whereNumber('id')->name('calls.send');
     Route::post('calls/{id}/analyze', [CallsWebController::class, 'analyze'])->whereNumber('id')->name('calls.analyze');
     Route::post('calls/{id}/dismiss', [CallsWebController::class, 'dismiss'])->whereNumber('id')->name('calls.dismiss');

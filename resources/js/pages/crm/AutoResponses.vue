@@ -3,7 +3,7 @@ import { Head, router, useForm, usePage } from '@inertiajs/vue3';
 import { Bot, Loader2, MessageSquare, Pencil, Plus, Power, Search, Sparkles, Trash2, Zap } from '@lucide/vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
-import CheckboxField from '@/components/CheckboxField.vue';
+import ToggleField from '@/components/ToggleField.vue';
 import ClientPagination from '@/components/crm/ClientPagination.vue';
 import {
     Dialog,
@@ -445,7 +445,9 @@ const platformLabel = (key: string) => props.platformOptions.find((p) => p.key =
                     />
                 </label>
 
-                <CheckboxField v-model="form.enabled">Enabled — start replying when this rule matches</CheckboxField>
+                <ToggleField v-model="form.enabled" description="When enabled, matching inbound messages get an automatic reply from this rule.">
+                    Enabled — start replying when this rule matches
+                </ToggleField>
 
                 <DialogFooter class="gap-2 pt-1 sm:gap-0">
                     <button

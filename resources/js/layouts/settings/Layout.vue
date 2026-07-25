@@ -16,10 +16,6 @@ const sidebarNavItems: NavItem[] = [
         href: editProfile(),
     },
     {
-        title: 'Social Accounts',
-        href: '/settings/social-accounts',
-    },
-    {
         title: 'Security',
         href: editSecurity(),
     },

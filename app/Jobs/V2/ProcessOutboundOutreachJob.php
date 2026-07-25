@@ -9,6 +9,7 @@ use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Integrations\ProviderManager;
 use App\V2\Services\CallOrchestrationService;
 use App\V2\Services\OutreachPersistenceService;
+use App\V2\Services\OutreachUserErrorMapper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -62,6 +63,12 @@ class ProcessOutboundOutreachJob implements ShouldQueue
                     $exception->getMessage(),
                 );
                 $this->markMessageDisconnected($message, $exception->getMessage());
+
+                return;
+            }
+
+            if (OutreachUserErrorMapper::isNonRetryable($exception)) {
+                $this->fail($exception);
 
                 return;
             }
@@ -142,6 +149,13 @@ class ProcessOutboundOutreachJob implements ShouldQueue
         $meta['error'] = $exception->getMessage();
 
         $message->forceFill(['meta' => $meta])->save();
+
+        if ($this->action === 'start_chat') {
+            app(CallOrchestrationService::class)->rollbackFailedLaunch(
+                (int) Arr::get($message->meta ?? [], 'call_id', 0),
+                $exception,
+            );
+        }
     }
 
     /**
@@ -175,7 +189,7 @@ class ProcessOutboundOutreachJob implements ShouldQueue
         }
 
         $callMeta = is_array($call->meta) ? $call->meta : [];
-        unset($callMeta['launch_error']);
+        unset($callMeta['launch_error'], $callMeta['launch_error_user'], $callMeta['launch_pending_at'], $callMeta['launch_conversation_id']);
 
         $call->forceFill([
             'conversation_id' => $this->conversationId,

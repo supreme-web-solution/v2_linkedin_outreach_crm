@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { ArrowLeft, Bell, Calendar, Loader2, Send, Sparkles, X } from '@lucide/vue';
+import { ArrowLeft, Bell, Calendar, CheckCircle2, Copy, Info, Loader2, MessageSquare, Send, Sparkles, Video, X, XCircle } from '@lucide/vue';
+import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 defineOptions({
@@ -26,20 +29,44 @@ const props = defineProps<{
         scheduled_send_at: string | null;
         scheduled_call_at: string | null;
         has_conversation: boolean;
+        launch_pending?: boolean;
+        launch_error_user?: string | null;
+        calendar_html_link?: string | null;
+        meeting_url?: string | null;
+        calendar_sync_error?: string | null;
         ready_to_send: boolean;
         reminders: Array<{ id: number; message: string; send_at: string; status: string }>;
     };
     messages: Array<{ id: number; direction: string; body: string; at: string | null }>;
     latestAnalysis: Record<string, unknown> | null;
     settings: { calendar_url: string };
+    bookingUrl?: string | null;
     hasUnipile: boolean;
+    hasCalendarIntegration?: boolean;
     aiConfigured: boolean;
-    conversations: Array<{ id: number; provider_chat_id: string; last_message_at: string | null }>;
+    suggestedConversations: Array<{
+        id: number;
+        prospect_name: string | null;
+        prospect_headline: string | null;
+        provider_chat_id: string | null;
+        last_message_at: string | null;
+    }>;
 }>();
+
+function conversationLabel(c: (typeof props.suggestedConversations)[0]) {
+    const name = c.prospect_name?.trim() || 'Unknown contact';
+    const headline = c.prospect_headline?.trim();
+    const date = c.last_message_at?.slice(0, 10);
+    if (headline) return `${name} · ${headline}`;
+    if (date) return `${name} · ${date}`;
+    return name;
+}
 
 const linkForm = useForm({
     conversation_id: props.call.conversation_id ? String(props.call.conversation_id) : '',
 });
+
+const showLinkExisting = ref(false);
 
 function linkConversation() {
     if (!linkForm.conversation_id) return;
@@ -56,9 +83,40 @@ const editForm = useForm({
     prospect_name: props.call.prospect_name ?? '',
 });
 
-const canSend = computed(
-    () => Boolean(editForm.pending_message?.trim()) && props.call.has_conversation && props.hasUnipile && !sending.value,
+const canSend = computed(() => {
+    if (!editForm.pending_message?.trim() || !props.hasUnipile || sending.value || props.call.launch_pending) {
+        return false;
+    }
+    if (props.call.has_conversation) {
+        return true;
+    }
+    return Boolean(props.call.connection_id);
+});
+
+const sendButtonTitle = computed(() =>
+    props.call.has_conversation ? 'Send via Unipile' : 'Start chat & send opening message',
 );
+
+const messageMissingBookingLink = computed(() => {
+    if (!props.bookingUrl || !editForm.pending_message) return false;
+    return !editForm.pending_message.includes(props.bookingUrl);
+});
+
+function insertBookingLink() {
+    if (!props.bookingUrl) return;
+    const text = editForm.pending_message?.trim() ?? '';
+    if (text.includes(props.bookingUrl)) return;
+    editForm.pending_message = text ? `${text.replace(/[:\s]+$/, '')}: ${props.bookingUrl}` : props.bookingUrl;
+}
+
+async function copyBookingLink() {
+    if (!props.bookingUrl) return;
+    try {
+        await navigator.clipboard.writeText(props.bookingUrl);
+    } catch {
+        // ignore
+    }
+}
 
 const aiSource = computed(() => (props.latestAnalysis?.source as string | undefined) ?? null);
 
@@ -158,28 +216,38 @@ const stageLabel: Record<string, string> = {
     <Head :title="call.prospect_name ?? 'Call detail'" />
 
     <div class="flex h-[calc(100dvh-7rem)] min-h-[32rem] flex-col gap-3 overflow-hidden p-4">
+        <p v-if="call.launch_error_user" class="shrink-0 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+            {{ call.launch_error_user }}
+        </p>
+
         <div class="flex shrink-0 flex-wrap items-start justify-between gap-3">
             <div class="flex min-w-0 flex-col gap-1">
                 <Link href="/calls" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
                     <ArrowLeft class="h-4 w-4" /> Back to pipeline
                 </Link>
                 <div class="flex flex-wrap items-center gap-2">
-                    <h1 class="truncate text-xl font-semibold">
-                        {{ call.prospect_name || call.connection_id || `Call #${call.id}` }}
-                    </h1>
-                    <span class="rounded-full border px-2 py-0.5 text-xs font-medium capitalize">
-                        {{ stageLabel[call.pipeline_stage] ?? call.status }}
-                    </span>
+                    <LinkedInPageHeading
+                        inline
+                        :icon-size="24"
+                        heading-class="truncate text-xl font-semibold"
+                        :title="call.prospect_name || call.connection_id || `Call #${call.id}`"
+                    >
+                        <template #trailing>
+                            <span class="rounded-full border px-2 py-0.5 text-xs font-medium capitalize">
+                                {{ stageLabel[call.pipeline_stage] ?? call.status }}
+                            </span>
+                        </template>
+                    </LinkedInPageHeading>
                 </div>
                 <p v-if="call.prospect_headline" class="truncate text-sm text-muted-foreground">{{ call.prospect_headline }}</p>
             </div>
             <div class="flex shrink-0 flex-wrap gap-2">
-                <button type="button" class="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted/50" @click="setStatus('completed')">
-                    Mark completed
-                </button>
-                <button type="button" class="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" @click="setStatus('lost')">
-                    Mark lost
-                </button>
+                <AppToolbarButton variant="success" @click="setStatus('completed')">
+                    <CheckCircle2 class="h-4 w-4" /> Mark completed
+                </AppToolbarButton>
+                <AppToolbarButton variant="dangerGradient" @click="setStatus('lost')">
+                    <XCircle class="h-4 w-4" /> Mark lost
+                </AppToolbarButton>
             </div>
         </div>
 
@@ -188,36 +256,60 @@ const stageLabel: Record<string, string> = {
             <div class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:col-span-3">
                 <div class="shrink-0 border-b border-border px-4 py-2.5">
                     <h2 class="text-sm font-semibold">LinkedIn conversation</h2>
-                    <p v-if="!call.has_conversation" class="mt-0.5 text-xs text-yellow-600">
-                        Link a conversation to send and receive messages.
+                    <p v-if="!call.has_conversation" class="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
+                        Edit your opening message below, then send to start the chat.
                     </p>
                 </div>
 
-                <div v-if="!call.has_conversation" class="shrink-0 border-b border-border px-4 py-3">
-                    <form class="flex flex-wrap items-end gap-2" @submit.prevent="linkConversation">
-                        <label class="grid min-w-[200px] flex-1 gap-1 text-sm">
-                            <span class="font-medium">Link conversation</span>
-                            <select v-model="linkForm.conversation_id" class="rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                                <option value="">Select a thread…</option>
-                                <option v-for="c in conversations" :key="c.id" :value="String(c.id)">
-                                    Chat {{ c.provider_chat_id?.slice(0, 20) }}…
-                                </option>
-                            </select>
-                        </label>
-                        <button
-                            type="submit"
-                            class="rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-2 text-sm font-medium text-primary-foreground"
-                            :disabled="!linkForm.conversation_id || linkForm.processing"
-                        >
-                            Link
-                        </button>
-                    </form>
-                </div>
-
                 <!-- Scrollable messages -->
-                <div ref="messageScroll" class="min-h-0 flex-1 overflow-y-auto bg-muted/20 px-4 py-3">
-                    <div v-if="!messages.length" class="flex h-full min-h-[12rem] items-center justify-center text-sm text-muted-foreground">
-                        No messages yet — launch outreach or wait for a reply.
+                <div ref="messageScroll" class="min-h-0 flex-1 overflow-y-auto bg-muted/20 px-4 py-6">
+                    <div v-if="!messages.length" class="flex h-full min-h-[14rem] items-center justify-center p-4">
+                        <div
+                            v-if="!call.has_conversation"
+                            class="flex max-w-sm flex-col items-center gap-3 rounded-2xl border border-dashed border-primary/25 bg-card/80 px-6 py-8 text-center shadow-sm"
+                        >
+                            <div class="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                                <Loader2 v-if="call.launch_pending" class="h-7 w-7 animate-spin" />
+                                <MessageSquare v-else class="h-7 w-7" />
+                            </div>
+                            <div class="space-y-1">
+                                <p class="text-base font-semibold text-foreground">
+                                    {{ call.launch_pending ? 'Sending your message…' : 'No messages yet' }}
+                                </p>
+                                <p class="text-sm text-muted-foreground">
+                                    <template v-if="call.launch_pending">
+                                        Hang tight — your opening message is being sent via LinkedIn.
+                                    </template>
+                                    <template v-else>
+                                        Edit your opening message below, then tap send to start this LinkedIn chat.
+                                    </template>
+                                </p>
+                            </div>
+                            <ol v-if="!call.launch_pending" class="mt-1 space-y-1.5 text-left text-xs text-muted-foreground">
+                                <li class="flex items-start gap-2">
+                                    <span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">1</span>
+                                    <span>Review or edit the message in the box below</span>
+                                </li>
+                                <li class="flex items-start gap-2">
+                                    <span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">2</span>
+                                    <span>Click the send button to start the chat</span>
+                                </li>
+                            </ol>
+                        </div>
+                        <div
+                            v-else
+                            class="flex max-w-sm flex-col items-center gap-3 rounded-2xl border border-dashed border-border bg-card/80 px-6 py-8 text-center shadow-sm"
+                        >
+                            <div class="flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                                <MessageSquare class="h-7 w-7" />
+                            </div>
+                            <div class="space-y-1">
+                                <p class="text-base font-semibold text-foreground">No messages yet</p>
+                                <p class="text-sm text-muted-foreground">
+                                    Chat is live — send a follow-up below or wait for a reply.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                     <div v-else class="flex flex-col gap-2">
                         <div
@@ -282,16 +374,15 @@ const stageLabel: Record<string, string> = {
 
                         <textarea
                             v-model="editForm.pending_message"
-                            rows="1"
-                            class="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-2xl border border-border bg-background px-4 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30"
-                            placeholder="Type a message or tap ✨ for an AI suggestion…"
-                            :disabled="!call.has_conversation"
+                            rows="3"
+                            class="composer-input max-h-36 min-h-[4.5rem] flex-1 resize-none overflow-y-auto rounded-2xl border-2 border-primary/20 bg-muted/40 px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm placeholder:text-muted-foreground focus:border-primary/40 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/25"
+                            :placeholder="call.has_conversation ? 'Type a message or tap ✨ for an AI suggestion…' : 'Edit your opening message…'"
                             @keydown="onComposerKeydown"
                         />
 
                         <button
                             type="button"
-                            title="Send via Unipile"
+                            :title="sendButtonTitle"
                             class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-blue-500 to-blue-600 text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 disabled:opacity-40"
                             :disabled="!canSend"
                             @click="sendNow"
@@ -302,43 +393,135 @@ const stageLabel: Record<string, string> = {
                     </div>
 
                     <p v-if="!hasUnipile" class="mt-2 text-xs text-yellow-600">
-                        Connect LinkedIn under Integrations to send messages.
+                        Connect LinkedIn under <Link href="/integrations" class="underline">Integrations</Link> to send messages.
                     </p>
                     <p v-else-if="!call.has_conversation" class="mt-2 text-xs text-muted-foreground">
-                        Link a conversation above before sending.
+                        Send starts the LinkedIn chat with your edited opening message — include the booking link so they can pick a time.
+                    </p>
+                    <p v-if="messageMissingBookingLink && bookingUrl" class="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                        Booking link not in message yet.
+                        <button type="button" class="font-medium underline" @click="insertBookingLink">Insert link</button>
                     </p>
                     <p v-else class="mt-1 text-[10px] text-muted-foreground">
                         Enter to send · Shift+Enter for new line
                     </p>
+
+                    <div v-if="!call.has_conversation && suggestedConversations.length" class="mt-3 border-t border-border pt-3">
+                        <button
+                            type="button"
+                            class="text-xs font-medium text-muted-foreground hover:text-foreground"
+                            @click="showLinkExisting = !showLinkExisting"
+                        >
+                            {{ showLinkExisting ? 'Hide' : 'Already chatted on LinkedIn?' }} — link existing thread
+                        </button>
+                        <form v-if="showLinkExisting" class="mt-2 flex flex-wrap items-end gap-2" @submit.prevent="linkConversation">
+                            <label class="grid min-w-[200px] flex-1 gap-1 text-sm">
+                                <span class="text-xs text-muted-foreground">Matching threads for this prospect</span>
+                                <select v-model="linkForm.conversation_id" class="rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                                    <option value="">Select a thread…</option>
+                                    <option v-for="c in suggestedConversations" :key="c.id" :value="String(c.id)">
+                                        {{ conversationLabel(c) }}
+                                    </option>
+                                </select>
+                            </label>
+                            <button
+                                type="submit"
+                                class="rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted/50"
+                                :disabled="!linkForm.conversation_id || linkForm.processing"
+                            >
+                                Link thread
+                            </button>
+                        </form>
+                    </div>
                 </div>
             </div>
 
             <!-- Sidebar: booking + reminders -->
-            <div class="flex min-h-0 flex-col gap-4 overflow-hidden lg:col-span-2">
+            <div class="flex min-h-0 flex-col gap-3 overflow-hidden lg:col-span-2">
                 <div class="shrink-0 rounded-xl border border-border bg-card shadow-sm">
-                    <div class="flex items-center gap-2 border-b border-border px-4 py-3">
-                        <Calendar class="h-4 w-4" />
-                        <h2 class="text-sm font-semibold">Book call</h2>
+                    <div class="flex items-center justify-between border-b border-border px-3 py-2.5">
+                        <div class="flex items-center gap-2">
+                            <Calendar class="h-4 w-4" />
+                            <h2 class="text-sm font-semibold">Book call</h2>
+                        </div>
+                        <Tooltip :delay-duration="200">
+                            <TooltipTrigger as-child>
+                                <button
+                                    type="button"
+                                    class="rounded-md p-1 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                                    aria-label="How booking works"
+                                >
+                                    <Info class="h-4 w-4" />
+                                </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="left" align="start" class="max-w-[16rem] text-xs leading-relaxed">
+                                When a prospect agrees to a call — from your calendar link or in chat — pick the date here.
+                                We’ll move them to <strong class="text-foreground">Booked</strong> and queue reminder messages before the call.
+                                <template v-if="hasCalendarIntegration">
+                                    A Google Calendar or Outlook event is created automatically when you save.
+                                </template>
+                            </TooltipContent>
+                        </Tooltip>
                     </div>
-                    <form class="space-y-3 p-4" @submit.prevent="saveEdits">
+                    <form class="space-y-2.5 p-3" @submit.prevent="saveEdits">
+                        <div v-if="call.meeting_url" class="rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2">
+                            <a
+                                :href="call.meeting_url"
+                                target="_blank"
+                                rel="noopener"
+                                class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                            >
+                                <Video class="h-4 w-4" />
+                                Join meeting
+                            </a>
+                            <a
+                                v-if="call.calendar_html_link"
+                                :href="call.calendar_html_link"
+                                target="_blank"
+                                rel="noopener"
+                                class="mt-1.5 block truncate text-center text-xs text-primary underline"
+                            >
+                                Open in Google / Outlook
+                            </a>
+                        </div>
+                        <div v-else-if="call.calendar_html_link" class="rounded-lg border border-green-200 bg-green-50 px-2.5 py-2 text-xs dark:border-green-900/40 dark:bg-green-950/30">
+                            <a :href="call.calendar_html_link" target="_blank" rel="noopener" class="block truncate font-medium text-green-700 underline dark:text-green-300">Open in Google / Outlook</a>
+                        </div>
+                        <p v-else-if="call.calendar_sync_error" class="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                            Calendar sync failed — call is still booked. Reconnect your calendar under Integrations.
+                        </p>
                         <label class="grid gap-1 text-sm">
-                            <span class="font-medium">Prospect name</span>
-                            <input v-model="editForm.prospect_name" type="text" class="rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+                            <span class="text-xs font-medium">Prospect name</span>
+                            <input v-model="editForm.prospect_name" type="text" class="rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm" />
                         </label>
                         <label class="grid gap-1 text-sm">
-                            <span class="font-medium">Call date & time</span>
-                            <input v-model="editForm.scheduled_call_at" type="datetime-local" class="rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+                            <span class="text-xs font-medium">Call date &amp; time</span>
+                            <input v-model="editForm.scheduled_call_at" type="datetime-local" class="rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm" />
                         </label>
-                        <p v-if="settings.calendar_url" class="text-xs text-muted-foreground">
-                            Calendar:
-                            <a :href="settings.calendar_url" target="_blank" class="text-primary underline">{{ settings.calendar_url }}</a>
+                        <div v-if="bookingUrl" class="rounded-lg border border-dashed border-primary/25 bg-primary/5 px-2.5 py-2 text-xs">
+                            <p class="font-medium text-primary">Prospect booking link</p>
+                            <div class="mt-1 flex items-center gap-2">
+                                <a :href="bookingUrl" target="_blank" rel="noopener" class="min-w-0 flex-1 truncate text-primary underline">{{ bookingUrl }}</a>
+                                <button type="button" class="shrink-0 rounded p-1 hover:bg-primary/10" title="Copy link" @click="copyBookingLink">
+                                    <Copy class="h-3.5 w-3.5 text-primary" />
+                                </button>
+                            </div>
+                        </div>
+                        <div v-else-if="settings.calendar_url" class="rounded-lg border border-dashed border-primary/25 bg-primary/5 px-2.5 py-2 text-xs">
+                            <p class="font-medium text-primary">Manual booking link</p>
+                            <a :href="settings.calendar_url" target="_blank" rel="noopener" class="mt-1 block truncate text-primary underline">{{ settings.calendar_url }}</a>
+                        </div>
+                        <p v-else class="text-xs text-muted-foreground">
+                            Add a calendar link in
+                            <Link href="/calls" class="text-primary underline">Call Manager settings</Link>.
                         </p>
                         <button
                             type="submit"
-                            class="w-full rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted/50"
-                            :disabled="editForm.processing"
+                            class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-50"
+                            :disabled="editForm.processing || !editForm.scheduled_call_at"
                         >
-                            Save & schedule reminders
+                            <Calendar class="h-4 w-4" />
+                            Save &amp; schedule reminders
                         </button>
                     </form>
                 </div>
@@ -362,3 +545,14 @@ const stageLabel: Record<string, string> = {
         </div>
     </div>
 </template>
+
+<style scoped>
+.composer-input {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.composer-input::-webkit-scrollbar {
+    display: none;
+}
+</style>

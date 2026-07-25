@@ -13,6 +13,7 @@ use App\Jobs\V2\HandleCallInboundReplyJob;
 use App\V2\Integrations\Unipile\UnipileProvider;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Services\AutoResponseService;
+use App\V2\Services\CallCalendarService;
 use App\V2\Services\CallOrchestrationService;
 use App\V2\Services\OutreachPersistenceService;
 use App\V2\Services\UnifiedInboxReplyService;
@@ -79,6 +80,10 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             'account.reconnected',
             'account.connected',
             'account.error',
+            'event.created',
+            'event.updated',
+            'calendar.event.created',
+            'calendar.event.updated',
         ];
 
         if (in_array($eventType, ['message.received', 'new_message'], true)) {
@@ -400,6 +405,19 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                 [
                     'event_id' => $event->event_id,
                     'account_id' => $accountId,
+                ]
+            );
+        }
+
+        if (in_array($eventType, ['event.created', 'calendar.event.created'], true) && $event->user_id) {
+            $handled = app(CallCalendarService::class)->handleInboundCalendarEvent((int) $event->user_id, $payload);
+            $this->recordWebhookActivity(
+                (int) $event->user_id,
+                $handled ? 'webhook.calendar.event_booked' : 'webhook.calendar.event_ignored',
+                1,
+                [
+                    'event_id' => $event->event_id,
+                    'event_type' => $eventType,
                 ]
             );
         }

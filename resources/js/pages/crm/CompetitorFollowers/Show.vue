@@ -3,9 +3,11 @@ import { Head, Link, router } from '@inertiajs/vue3';
 import { ArrowLeft, Download, Loader2, Mail } from '@lucide/vue';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import EmailEnrichmentInfoTooltip from '@/components/crm/EmailEnrichmentInfoTooltip.vue';
 import { Button } from '@/components/ui/button';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 
 defineOptions({
@@ -250,12 +252,19 @@ function fullName(r: FollowerRow): string {
                 <Link href="/competitor-followers" class="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
                     <ArrowLeft class="h-3 w-3" /> Back to audiences
                 </Link>
-                <h1 class="text-xl font-semibold text-foreground">{{ audience.audience_name || 'Competitor Followers' }}</h1>
-                <p class="text-sm text-muted-foreground">{{ audience.followers_count.toLocaleString() }} followers captured</p>
+                <LinkedInPageHeading :title="audience.audience_name || 'Competitor Followers'" show-badge>
+                    <template #subtitle>
+                        {{ audience.followers_count.toLocaleString() }} followers captured
+                    </template>
+                </LinkedInPageHeading>
             </div>
             <div class="flex items-center gap-3">
                 <div class="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-                    Email quota:
+                    <span class="inline-flex items-center gap-1.5">
+                        Email quota
+                        <EmailEnrichmentInfoTooltip side="bottom" align="end" />
+                    </span>
+                    :
                     <span class="font-semibold text-foreground">{{ dailyLimit.used }}/{{ dailyLimit.daily_limit }}</span>
                     used today
                 </div>
@@ -314,7 +323,12 @@ function fullName(r: FollowerRow): string {
                         <th class="px-4 py-3 text-left font-medium text-muted-foreground">Name</th>
                         <th class="hidden px-4 py-3 text-left font-medium text-muted-foreground md:table-cell">Title</th>
                         <th class="hidden px-4 py-3 text-left font-medium text-muted-foreground lg:table-cell">Company</th>
-                        <th class="px-4 py-3 text-left font-medium text-muted-foreground">Email</th>
+                        <th class="px-4 py-3 text-left font-medium text-muted-foreground">
+                            <span class="inline-flex items-center gap-1.5">
+                                Email
+                                <EmailEnrichmentInfoTooltip side="top" align="start" />
+                            </span>
+                        </th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-border">

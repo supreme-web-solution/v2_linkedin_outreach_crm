@@ -1,4 +1,4 @@
-export type BrandChannel = 'linkedin' | 'email' | 'whatsapp' | 'instagram' | 'telegram' | 'twitter';
+export type BrandChannel = 'linkedin' | 'email' | 'whatsapp' | 'instagram' | 'telegram' | 'twitter' | 'google_calendar' | 'outlook_calendar';
 
 export const BRAND_ICON_SRC: Record<BrandChannel, string> = {
     linkedin: '/brands/linkedin.svg',
@@ -7,6 +7,8 @@ export const BRAND_ICON_SRC: Record<BrandChannel, string> = {
     telegram: '/brands/telegram.svg',
     twitter: '/brands/twitter.svg',
     email: '/brands/email.svg',
+    google_calendar: '/brands/email.svg',
+    outlook_calendar: '/brands/email.svg',
 };
 
 export function brandIconSrc(channel?: string | null): string {
@@ -23,6 +25,8 @@ export function brandChannelLabel(channel?: string | null): string {
         instagram: 'Instagram',
         telegram: 'Telegram',
         twitter: 'X (Twitter)',
+        google_calendar: 'Google Calendar',
+        outlook_calendar: 'Outlook Calendar',
     };
 
     return labels[String(channel ?? '').toLowerCase()] ?? 'Channel';

@@ -3,7 +3,8 @@ import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { AlertCircle, ChevronLeft, Clock, Edit2, FileText, Image as ImageIcon, Lightbulb, Loader2, PenLine, Rocket, Save, Send, Sparkles, Trash2, Type, Upload, Video, X } from '@lucide/vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
-import CheckboxField from '@/components/CheckboxField.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
+import ToggleField from '@/components/ToggleField.vue';
 import { INSPIRATION_DRAFT_KEY } from '@/lib/contentDraft';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
@@ -466,10 +467,11 @@ async function rewrite(mode: 'shorten' | 'expand') {
 
     <div class="flex min-h-0 flex-1 flex-col">
         <div class="flex items-center justify-between border-b border-border px-6 py-4">
-            <div>
-                <h1 class="text-xl font-semibold text-foreground">Content Creator</h1>
-                <p class="text-sm text-muted-foreground">Create, schedule, and publish LinkedIn posts with AI.</p>
-            </div>
+            <LinkedInPageHeading title="Content Creator" show-badge>
+                <template #subtitle>
+                    Create, schedule, and publish LinkedIn posts with AI.
+                </template>
+            </LinkedInPageHeading>
             <AppToolbarButton v-if="panel === 'list'" @click="openCreate">
                 <PenLine class="h-4 w-4" /> Create New Post
             </AppToolbarButton>
@@ -598,9 +600,9 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                     <option value="long">Long</option>
                                 </select>
                             </div>
-                            <CheckboxField v-model="aiGenerateImage" :disabled="aiLoading || !aiConfigured" class="rounded-lg border border-border/70 bg-background/80 px-3 py-2.5">
+                            <ToggleField v-model="aiGenerateImage" :disabled="aiLoading || !aiConfigured" description="Generate a related image with GPT Image 2.">
                                 Also generate a related image (GPT Image 2)
-                            </CheckboxField>
+                            </ToggleField>
                             <AppToolbarButton class="w-full" :disabled="aiLoading || !aiConfigured || !aiTopic.trim()" @click="generateAi">
                                 <Loader2 v-if="aiLoading" class="h-4 w-4 animate-spin" />
                                 <Sparkles v-else class="h-4 w-4" />

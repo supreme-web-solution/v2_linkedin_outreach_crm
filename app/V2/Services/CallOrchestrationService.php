@@ -4,6 +4,7 @@ namespace App\V2\Services;
 
 use App\Jobs\V2\LaunchCallFromLeadJob;
 use App\Jobs\V2\ProcessOutboundOutreachJob;
+use App\Mail\CallReminderProspectMail;
 use App\Models\User;
 use App\Models\V2Call;
 use App\Models\V2Conversation;
@@ -13,6 +14,8 @@ use App\Models\V2Reminder;
 use App\Services\ChatGPT;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 class CallOrchestrationService
@@ -27,6 +30,14 @@ class CallOrchestrationService
             'booking_message' => 'Would you be open to a quick 15-minute call? Here is my calendar: {calendar_url}',
             'auto_send_suggestions' => false,
             'reminder_hours_before' => [24, 1],
+            'calendar_id' => '',
+            'call_duration_minutes' => 30,
+            'use_unipile_calendar' => true,
+            'use_app_booking_link' => true,
+            'booking_days_ahead' => 14,
+            'booking_hours_start' => 9,
+            'booking_hours_end' => 17,
+            'calendar_timezone' => config('app.timezone', 'UTC'),
         ];
     }
 
@@ -41,6 +52,206 @@ class CallOrchestrationService
     }
 
     /**
+     * Per-flow settings snapshot on the call, falling back to workspace defaults.
+     *
+     * @return array<string, mixed>
+     */
+    public function settingsForCall(V2Call $call, User $user): array
+    {
+        $meta = is_array($call->meta) ? $call->meta : [];
+        $flowSettings = $meta['flow_settings'] ?? null;
+
+        if (is_array($flowSettings) && $flowSettings !== []) {
+            return array_merge($this->defaultSettings(), $flowSettings);
+        }
+
+        return $this->settingsFor($user);
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     */
+    public function resolveOpeningMessage(array $settings, ?string $override = null): string
+    {
+        $text = trim((string) ($override ?? ''));
+        if ($text !== '') {
+            return $text;
+        }
+
+        $template = (string) ($settings['booking_message'] ?? $this->defaultSettings()['booking_message']);
+        $calendarUrl = trim((string) ($settings['calendar_url'] ?? ''));
+
+        return str_replace('{calendar_url}', $calendarUrl, $template);
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     */
+    public function resolveOpeningMessageForCall(User $user, array $settings, ?string $override, string $bookingToken): string
+    {
+        $text = trim((string) ($override ?? ''));
+        if ($text === '') {
+            $text = (string) ($settings['booking_message'] ?? $this->defaultSettings()['booking_message']);
+        }
+
+        $calendarUrl = app(CallCalendarService::class)->resolveBookingUrl($user, $settings, $bookingToken);
+
+        return str_replace('{calendar_url}', $calendarUrl, $text);
+    }
+
+    /**
+     * Make sure the composer message includes the real booking URL (fixes older calls / empty placeholders).
+     */
+    public function ensurePendingMessageHasBookingLink(V2Call $call, User $user): V2Call
+    {
+        if ($call->conversation_id) {
+            return $call;
+        }
+
+        $settings = $this->settingsForCall($call, $user);
+        $token = app(CallCalendarService::class)->ensureBookingToken($call);
+        $bookingUrl = app(CallCalendarService::class)->resolveBookingUrl($user, $settings, $token);
+
+        if ($bookingUrl === '') {
+            return $call;
+        }
+
+        $text = trim((string) $call->pending_message);
+        if ($text === '') {
+            $text = $this->resolveOpeningMessageForCall($user, $settings, null, $token);
+        } elseif (str_contains($text, '{calendar_url}')) {
+            $text = str_replace('{calendar_url}', $bookingUrl, $text);
+        } elseif (!str_contains($text, $bookingUrl)) {
+            $text = rtrim($text, " \n\r\t:").': '.$bookingUrl;
+        }
+
+        if ($text !== trim((string) $call->pending_message)) {
+            $call->forceFill(['pending_message' => $text])->save();
+        }
+
+        return $call->fresh();
+    }
+
+    /**
+     * Snapshot workspace defaults for a new call flow (batch).
+     *
+     * @return array<string, mixed>
+     */
+    public function snapshotFlowSettings(User $user, ?string $openingOverride = null): array
+    {
+        $settings = $this->settingsFor($user);
+
+        return [
+            'calendar_url' => (string) ($settings['calendar_url'] ?? ''),
+            'booking_message' => $openingOverride !== null && trim($openingOverride) !== ''
+                ? trim($openingOverride)
+                : (string) ($settings['booking_message'] ?? $this->defaultSettings()['booking_message']),
+            'auto_send_suggestions' => (bool) ($settings['auto_send_suggestions'] ?? false),
+            'reminder_hours_before' => is_array($settings['reminder_hours_before'] ?? null)
+                ? $settings['reminder_hours_before']
+                : [24, 1],
+        ];
+    }
+
+    /**
+     * @return list<array{
+     *     batch_id: string|null,
+     *     batch_name: string,
+     *     flow_key: string,
+     *     count: int,
+     *     ready_to_send: int,
+     *     auto_send_enabled: bool,
+     *     last_message_at: string|null,
+     *     stages: array{engaged: int, scheduling: int, booked: int}
+     * }>
+     */
+    public function flowsForOrganization(int $orgId): array
+    {
+        $calls = V2Call::query()
+            ->where('organization_id', $orgId)
+            ->whereNotIn('status', ['completed', 'lost', 'failed'])
+            ->get();
+
+        return $calls
+            ->groupBy(function (V2Call $call) {
+                $meta = is_array($call->meta) ? $call->meta : [];
+
+                return (string) (Arr::get($meta, 'batch_id') ?: '_individual');
+            })
+            ->map(function ($group, $batchKey) {
+                /** @var V2Call $first */
+                $first = $group->first();
+                $meta = is_array($first->meta) ? $first->meta : [];
+                $flowSettings = is_array($meta['flow_settings'] ?? null) ? $meta['flow_settings'] : [];
+
+                $conversationIds = $group->pluck('conversation_id')->filter()->unique()->values();
+                $lastMessageAt = $conversationIds->isNotEmpty()
+                    ? V2Conversation::query()->whereIn('id', $conversationIds)->max('last_message_at')
+                    : null;
+
+                $stages = ['engaged' => 0, 'scheduling' => 0, 'booked' => 0];
+                foreach ($group as $call) {
+                    /** @var V2Call $call */
+                    $stage = $this->pipelineStage((string) $call->status);
+                    if (isset($stages[$stage])) {
+                        $stages[$stage]++;
+                    }
+                }
+
+                return [
+                    'batch_id' => $batchKey === '_individual' ? null : (string) $batchKey,
+                    'batch_name' => $batchKey === '_individual'
+                        ? 'Individual prospects'
+                        : (string) (Arr::get($meta, 'batch_name') ?: 'Untitled flow'),
+                    'flow_key' => $batchKey === '_individual' ? 'individual' : (string) $batchKey,
+                    'count' => $group->count(),
+                    'chats_started' => $group->filter(fn (V2Call $call) => (bool) $call->conversation_id)->count(),
+                    'ready_to_send' => $group->filter(
+                        fn (V2Call $call) => $call->pending_message
+                            && (!$call->scheduled_send_at || $call->scheduled_send_at->isPast())
+                    )->count(),
+                    'auto_send_enabled' => (bool) ($flowSettings['auto_send_suggestions'] ?? false),
+                    'last_message_at' => $lastMessageAt
+                        ? \Illuminate\Support\Carbon::parse($lastMessageAt)->toIso8601String()
+                        : null,
+                    'stages' => $stages,
+                ];
+            })
+            ->sortByDesc('count')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function flowSnapshotForBatch(int $orgId, ?string $batchId): ?array
+    {
+        $query = V2Call::query()
+            ->where('organization_id', $orgId)
+            ->whereNotIn('status', ['completed', 'lost', 'failed']);
+
+        if ($batchId === null) {
+            $query->where(function ($q) {
+                $q->whereNull('meta->batch_id')
+                    ->orWhere('meta->batch_id', '');
+            });
+        } else {
+            $query->where('meta->batch_id', $batchId);
+        }
+
+        $call = $query->latest('updated_at')->first();
+        if (!$call) {
+            return null;
+        }
+
+        $meta = is_array($call->meta) ? $call->meta : [];
+        $flowSettings = $meta['flow_settings'] ?? null;
+
+        return is_array($flowSettings) && $flowSettings !== [] ? $flowSettings : null;
+    }
+
+    /**
      * @param array<string, mixed> $settings
      */
     public function saveSettings(User $user, array $settings): User
@@ -50,6 +261,14 @@ class CallOrchestrationService
             'booking_message',
             'auto_send_suggestions',
             'reminder_hours_before',
+            'calendar_id',
+            'call_duration_minutes',
+            'use_unipile_calendar',
+            'use_app_booking_link',
+            'booking_days_ahead',
+            'booking_hours_start',
+            'booking_hours_end',
+            'calendar_timezone',
         ]));
 
         $user->forceFill(['call_settings' => $merged])->save();
@@ -73,11 +292,13 @@ class CallOrchestrationService
             $conversationId = $conversation?->id;
         }
 
-        $pendingMessage = trim((string) ($data['pending_message'] ?? ''));
-        if ($pendingMessage === '') {
-            $template = (string) ($settings['booking_message'] ?? $this->defaultSettings()['booking_message']);
-            $pendingMessage = str_replace('{calendar_url}', (string) ($settings['calendar_url'] ?? ''), $template);
-        }
+        $bookingToken = app(CallCalendarService::class)->generateBookingToken();
+        $pendingMessage = $this->resolveOpeningMessageForCall(
+            $user,
+            $settings,
+            $data['pending_message'] ?? null,
+            $bookingToken,
+        );
 
         $prospectName = trim((string) ($data['prospect_name'] ?? ''));
         if ($prospectName === '' && $conversation) {
@@ -98,7 +319,10 @@ class CallOrchestrationService
             'conversation_history' => [],
             'ai_analysis' => [],
             'meta' => array_merge(
-                ['source' => 'crm'],
+                [
+                    'source' => 'crm',
+                    'booking_token' => $bookingToken,
+                ],
                 is_array($data['meta'] ?? null) ? $data['meta'] : [],
             ),
         ]);
@@ -120,6 +344,8 @@ class CallOrchestrationService
         $src = (string) ($options['src'] ?? '');
         $batchName = trim((string) ($options['batch_name'] ?? ''));
         $batchId = (string) Str::uuid();
+        $flowName = $batchName !== '' ? $batchName : 'Untitled flow';
+        $flowSettings = $this->snapshotFlowSettings($user, $pendingMessage !== '' ? $pendingMessage : null);
 
         $created = 0;
         $skipped = 0;
@@ -153,9 +379,11 @@ class CallOrchestrationService
                     'source' => 'lead_list',
                     'lead_list_id' => $listId,
                     'lead_list_src' => $src,
+                    'lead_list_ids' => is_array($options['list_ids'] ?? null) ? $options['list_ids'] : null,
                     'lead_row_id' => (int) ($lead['id'] ?? 0),
                     'batch_id' => $batchId,
-                    'batch_name' => $batchName !== '' ? $batchName : null,
+                    'batch_name' => $flowName,
+                    'flow_settings' => $flowSettings,
                 ],
             ]);
 
@@ -177,6 +405,45 @@ class CallOrchestrationService
         ];
     }
 
+    /**
+     * Queue LinkedIn chat launch for all unlinked calls in a batch (or individual group).
+     *
+     * @return array{queued: int, skipped: int}
+     */
+    public function launchUnlinkedCallsInFlow(User $user, int $organizationId, string $flowKey): array
+    {
+        $query = V2Call::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->whereNull('conversation_id')
+            ->whereNotIn('status', ['completed', 'lost', 'failed']);
+
+        if ($flowKey === 'individual') {
+            $query->where(function ($batchQuery) {
+                $batchQuery->whereNull('meta->batch_id')
+                    ->orWhere('meta->batch_id', '');
+            });
+        } elseif ($flowKey !== 'all') {
+            $query->where('meta->batch_id', $flowKey);
+        }
+
+        $queued = 0;
+        $skipped = 0;
+
+        foreach ($query->get() as $call) {
+            /** @var V2Call $call */
+            if (trim((string) $call->connection_id) === '') {
+                $skipped++;
+                continue;
+            }
+
+            LaunchCallFromLeadJob::dispatch($call->id);
+            $queued++;
+        }
+
+        return ['queued' => $queued, 'skipped' => $skipped];
+    }
+
     public function launchCallChat(V2Call $call, User $user, int $organizationId): bool
     {
         $recipientId = trim((string) $call->connection_id);
@@ -191,9 +458,7 @@ class CallOrchestrationService
 
         $text = trim((string) $call->pending_message);
         if ($text === '') {
-            $settings = $this->settingsFor($user);
-            $template = (string) ($settings['booking_message'] ?? $this->defaultSettings()['booking_message']);
-            $text = str_replace('{calendar_url}', (string) ($settings['calendar_url'] ?? ''), $template);
+            $text = $this->resolveOpeningMessage($this->settingsForCall($call, $user));
         }
 
         $persistence = app(OutreachPersistenceService::class);
@@ -212,6 +477,7 @@ class CallOrchestrationService
         }
 
         $profile = is_array($resolved['profile'] ?? null) ? $resolved['profile'] : [];
+        $networkDistance = trim((string) (Arr::get($profile, 'network_distance') ?? ''));
         $lead = $persistence->findOrCreateLead($user->id, $providerId, $profile);
         $conversation = $persistence->findOrCreateConversation(
             $user->id,
@@ -225,7 +491,15 @@ class CallOrchestrationService
             ]
         );
 
-        $call->forceFill(['conversation_id' => $conversation->id])->save();
+        $callMeta = is_array($call->meta) ? $call->meta : [];
+        $callMeta['launch_conversation_id'] = $conversation->id;
+        $callMeta['launch_pending_at'] = now()->toIso8601String();
+        if ($networkDistance !== '') {
+            $callMeta['network_distance'] = $networkDistance;
+        }
+        unset($callMeta['launch_error'], $callMeta['launch_error_user']);
+
+        $call->forceFill(['meta' => $callMeta])->save();
 
         $persistence->dispatchOutboundToConversation(
             $user->id,
@@ -237,6 +511,48 @@ class CallOrchestrationService
         );
 
         return true;
+    }
+
+    public function rollbackFailedLaunch(int $callId, \Throwable $exception): void
+    {
+        $call = V2Call::query()->find($callId);
+        if (!$call) {
+            return;
+        }
+
+        $mapped = OutreachUserErrorMapper::map($exception);
+        $meta = is_array($call->meta) ? $call->meta : [];
+        $orphanConversationId = (int) ($meta['launch_conversation_id'] ?? $call->conversation_id ?? 0);
+
+        $meta['launch_error'] = $mapped['admin_detail'];
+        $meta['launch_error_user'] = $mapped['user_message'];
+        unset($meta['launch_pending_at'], $meta['launch_conversation_id']);
+
+        $call->forceFill([
+            'conversation_id' => null,
+            'meta' => $meta,
+        ])->save();
+
+        if ($orphanConversationId <= 0) {
+            return;
+        }
+
+        $conversation = V2Conversation::query()->find($orphanConversationId);
+        if (!$conversation || $conversation->provider_chat_id) {
+            return;
+        }
+
+        $hasSuccessfulMessages = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where(function ($query) {
+                $query->whereNull('meta->status')
+                    ->orWhere('meta->status', '!=', 'failed');
+            })
+            ->exists();
+
+        if (!$hasSuccessfulMessages) {
+            $conversation->delete();
+        }
     }
 
     public function linkConversation(V2Call $call, int $conversationId, User $user): V2Call
@@ -316,12 +632,12 @@ class CallOrchestrationService
             throw new \InvalidArgumentException('No prospect reply to analyze yet.');
         }
 
-        $settings = $this->settingsFor($user);
+        $settings = $this->settingsForCall($call, $user);
         $leadName = $call->prospect_name ?: 'there';
         $thread = $this->conversationThread($call);
         $originalMessage = $this->firstOutboundMessage($call);
         $analysis = $this->analyzeWithAi($thread, $originalMessage, $lastInbound, $leadName);
-        $reply = $this->buildSuggestedReply($analysis, $settings, $leadName);
+        $reply = $this->buildSuggestedReply($analysis, $settings, $leadName, $call, $user);
         $stage = $this->stageFromAnalysis($analysis);
 
         $existing = is_array($call->ai_analysis) ? $call->ai_analysis : [];
@@ -376,13 +692,13 @@ class CallOrchestrationService
     {
         $this->appendConversation($call, $sender, $message);
 
-        $settings = $this->settingsFor($user);
+        $settings = $this->settingsForCall($call, $user);
         $leadName = $call->prospect_name ?: 'there';
         $thread = $this->conversationThread($call);
         $originalMessage = $this->firstOutboundMessage($call);
         $analysis = $this->analyzeWithAi($thread, $originalMessage, $message, $leadName);
 
-        $reply = $this->buildSuggestedReply($analysis, $settings, $leadName);
+        $reply = $this->buildSuggestedReply($analysis, $settings, $leadName, $call, $user);
         $stage = $this->stageFromAnalysis($analysis);
 
         $scheduledSendAt = now()->addMinutes(5);
@@ -430,7 +746,7 @@ class CallOrchestrationService
     /**
      * @param array<string, mixed> $analysis
      */
-    public function buildSuggestedReply(array $analysis, array $settings, string $leadName): string
+    public function buildSuggestedReply(array $analysis, array $settings, string $leadName, ?V2Call $call = null, ?User $user = null): string
     {
         $reply = trim((string) ($analysis['suggested_response'] ?? ''));
         if ($reply === '') {
@@ -439,6 +755,13 @@ class CallOrchestrationService
 
         $nextAction = (string) ($analysis['next_action'] ?? '');
         $calendarUrl = trim((string) ($settings['calendar_url'] ?? ''));
+        if ($calendarUrl === '' && $call && $user) {
+            $token = trim((string) Arr::get(is_array($call->meta) ? $call->meta : [], 'booking_token', ''));
+            if ($token === '') {
+                $token = app(CallCalendarService::class)->ensureBookingToken($call);
+            }
+            $calendarUrl = app(CallCalendarService::class)->resolveBookingUrl($user, $settings, $token);
+        }
 
         if (in_array($nextAction, ['send_calendar', 'schedule_call', 'ask_availability'], true) && $calendarUrl !== '') {
             if (!str_contains(strtolower($reply), strtolower($calendarUrl))) {
@@ -730,7 +1053,13 @@ class CallOrchestrationService
             return;
         }
 
-        $settings = $this->settingsFor($user);
+        V2Reminder::query()
+            ->where('call_id', $call->id)
+            ->where('status', 'pending')
+            ->where('meta->type', 'pre_call')
+            ->update(['status' => 'cancelled']);
+
+        $settings = $this->settingsForCall($call, $user);
         $hours = is_array($settings['reminder_hours_before'] ?? null)
             ? $settings['reminder_hours_before']
             : [24, 1];
@@ -758,9 +1087,14 @@ class CallOrchestrationService
                 $call,
                 "Hi {$name}, looking forward to our call in about {$hoursBefore}h. See you then!",
                 $sendAt,
-                ['type' => 'pre_call', 'hours_before' => $hoursBefore]
+                [
+                    'type' => 'pre_call',
+                    'hours_before' => $hoursBefore,
+                ]
             );
         }
+
+        app(CallCalendarService::class)->syncEventForCall($call->fresh(), $user);
     }
 
     public function sendPendingMessage(V2Call $call): bool
@@ -806,6 +1140,40 @@ class CallOrchestrationService
     public function sendReminder(V2Reminder $reminder): bool
     {
         $call = $reminder->call;
+        if (!$call) {
+            return false;
+        }
+
+        $channels = [];
+
+        if ($call->conversation_id && $this->dispatchReminderViaLinkedIn($reminder)) {
+            $channels[] = 'linkedin';
+        }
+
+        if ($this->dispatchReminderViaEmail($reminder)) {
+            $channels[] = 'email';
+        }
+
+        if ($channels === []) {
+            return false;
+        }
+
+        $meta = is_array($reminder->meta) ? $reminder->meta : [];
+        $meta['sent_channels'] = $channels;
+        $meta['sent_channel'] = count($channels) > 1 ? 'linkedin_and_email' : $channels[0];
+
+        $reminder->forceFill([
+            'status' => 'sent',
+            'sent_at' => now(),
+            'meta' => $meta,
+        ])->save();
+
+        return true;
+    }
+
+    private function dispatchReminderViaLinkedIn(V2Reminder $reminder): bool
+    {
+        $call = $reminder->call;
         if (!$call?->conversation_id) {
             return false;
         }
@@ -837,12 +1205,72 @@ class CallOrchestrationService
             ['chat_id' => $conversation->provider_chat_id, 'text' => $text]
         );
 
-        $reminder->forceFill([
-            'status' => 'sent',
-            'sent_at' => now(),
-        ])->save();
+        return true;
+    }
+
+    private function dispatchReminderViaEmail(V2Reminder $reminder): bool
+    {
+        $call = $reminder->call;
+        if (!$call) {
+            return false;
+        }
+
+        $prospectEmail = $this->prospectEmailForCall($call);
+        if ($prospectEmail === '') {
+            return false;
+        }
+
+        $text = trim((string) $reminder->message);
+        if ($text === '') {
+            return false;
+        }
+
+        $host = User::query()->find($call->user_id);
+        $hostName = trim((string) ($host?->name ?? '')) ?: 'your host';
+        $prospectName = trim((string) ($call->prospect_name ?? '')) ?: 'there';
+        $timezone = config('app.timezone', 'UTC');
+        $scheduledLabel = $call->scheduled_call_at
+            ? $call->scheduled_call_at->timezone($timezone)->format('l, F j, Y \a\t g:i A T')
+            : null;
+
+        try {
+            Mail::to($prospectEmail)->send(new CallReminderProspectMail(
+                $prospectName,
+                $hostName,
+                $text,
+                $scheduledLabel,
+            ));
+        } catch (\Throwable $e) {
+            Log::warning('[CallReminder] prospect email failed', [
+                'reminder_id' => $reminder->id,
+                'call_id' => $call->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
 
         return true;
+    }
+
+    private function prospectEmailForCall(V2Call $call): string
+    {
+        if ($call->conversation_id) {
+            $conversation = $call->relationLoaded('conversation')
+                ? $call->conversation
+                : $call->conversation()->with('lead')->first();
+            $email = trim((string) Arr::get($conversation?->meta ?? [], 'prospect_email', ''));
+            if ($email !== '') {
+                return $email;
+            }
+
+            $email = trim((string) ($conversation?->lead?->email ?? ''));
+            if ($email !== '') {
+                return $email;
+            }
+        }
+
+        return trim((string) Arr::get(is_array($call->meta) ? $call->meta : [], 'prospect_email', ''));
     }
 
     public function dispatchDue(): array
@@ -874,7 +1302,13 @@ class CallOrchestrationService
             ->each(function (V2Reminder $reminder) use (&$remindersSent) {
                 if ($this->sendReminder($reminder)) {
                     $remindersSent++;
-                } elseif (!$reminder->call?->conversation_id) {
+                } elseif (
+                    !$reminder->call
+                    || (
+                        !$reminder->call->conversation_id
+                        && $this->prospectEmailForCall($reminder->call) === ''
+                    )
+                ) {
                     $reminder->forceFill(['status' => 'skipped'])->save();
                 }
             });

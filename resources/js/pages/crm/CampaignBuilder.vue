@@ -5,6 +5,7 @@ import { Users, Star, Eye, Settings2, CheckCircle2, Layers, Plus, Trash2, Rocket
 import CampaignFlowCanvas from '@/components/campaign/CampaignFlowCanvas.vue';
 import CampaignStepPreviewChip from '@/components/campaign/CampaignStepPreviewChip.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import { type CampaignStep } from '@/components/campaign/types';
 import { Checkbox } from '@/components/ui/checkbox';
 
@@ -319,8 +320,11 @@ onUnmounted(() => {
     <div v-if="phase === 'template'" class="flex flex-col gap-6 p-6 max-w-2xl mx-auto">
         <div class="flex items-center justify-between">
             <div>
-                <h1 class="text-xl font-semibold">New Campaign</h1>
-                <p class="text-sm text-muted-foreground mt-0.5">Pick a template to start</p>
+                <LinkedInPageHeading title="New Campaign" show-badge>
+                    <template #subtitle>
+                        Pick a template to start
+                    </template>
+                </LinkedInPageHeading>
             </div>
             <a href="/campaigns" class="rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground hover:bg-muted">Cancel</a>
         </div>

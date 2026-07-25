@@ -97,6 +97,9 @@ return [
             'list_chats'        => env('UNIPILE_ENDPOINT_LIST_CHATS', '/chats'),
             'list_messages'     => env('UNIPILE_ENDPOINT_LIST_MESSAGES', '/chats/%s/messages'),
             'send_email'        => env('UNIPILE_ENDPOINT_SEND_EMAIL', '/emails'),
+            'list_calendars'    => env('UNIPILE_ENDPOINT_LIST_CALENDARS', '/calendars'),
+            'calendar_events'   => env('UNIPILE_ENDPOINT_CALENDAR_EVENTS', '/calendars/%s/events'),
+            'calendar_event'    => env('UNIPILE_ENDPOINT_CALENDAR_EVENT', '/calendars/%s/events/%s'),
         ],
     ],
 

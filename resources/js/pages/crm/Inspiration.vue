@@ -14,10 +14,11 @@ import {
     TrendingUp,
 } from '@lucide/vue';
 import { ref } from 'vue';
-import CheckboxField from '@/components/CheckboxField.vue';
+import ToggleField from '@/components/ToggleField.vue';
 import { Button } from '@/components/ui/button';
 import { stashInspirationDraft } from '@/lib/contentDraft';
 import ListPagination from '@/components/crm/ListPagination.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 
 defineOptions({
     layout: {
@@ -177,13 +178,11 @@ function fmt(n: number | undefined): string {
 
     <div class="flex flex-col gap-5 p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-            <div class="flex items-center gap-2">
-                <Lightbulb class="h-6 w-6 text-amber-500" />
-                <div>
-                    <h1 class="text-xl font-semibold text-foreground">Inspiration</h1>
-                    <p class="text-sm text-muted-foreground">Discover and remix high-performing LinkedIn posts.</p>
-                </div>
-            </div>
+            <LinkedInPageHeading title="Inspiration" show-badge>
+                <template #subtitle>
+                    Discover and remix high-performing LinkedIn posts.
+                </template>
+            </LinkedInPageHeading>
         </div>
 
         <!-- Stats -->
@@ -249,9 +248,9 @@ function fmt(n: number | undefined): string {
                 <option value="">All categories</option>
                 <option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
             </select>
-            <CheckboxField v-model="favoriteOnly" class="rounded-lg border border-border bg-card px-3 py-2" @update:model-value="applyFilters">
+            <ToggleField v-model="favoriteOnly" class="rounded-lg border border-border bg-card px-3 py-2" @update:model-value="applyFilters">
                 Favorites only
-            </CheckboxField>
+            </ToggleField>
         </div>
 
         <!-- Empty -->

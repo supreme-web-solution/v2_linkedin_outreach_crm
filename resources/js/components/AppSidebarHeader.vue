@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { router, usePage } from '@inertiajs/vue3';
-import { Bell, ChevronDown, Search, Sparkles } from '@lucide/vue';
+import { Link, router, usePage } from '@inertiajs/vue3';
+import { Bell, ChevronDown, Phone, Search, Sparkles } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -14,6 +14,15 @@ import { useInitials } from '@/composables/useInitials';
 import UserMenuContent from '@/components/UserMenuContent.vue';
 import type { BreadcrumbItem, User } from '@/types';
 
+type AppNotification = {
+    id: number;
+    module: string;
+    identifier: string;
+    stat: number;
+    meta: Record<string, unknown>;
+    created_at: string | null;
+};
+
 withDefaults(
     defineProps<{
         breadcrumbs?: BreadcrumbItem[];
@@ -25,6 +34,8 @@ withDefaults(
 
 const page = usePage();
 const user = computed(() => page.props.auth.user as User);
+const notifications = computed(() => (page.props.notifications as AppNotification[] | undefined) ?? []);
+const hasNotifications = computed(() => notifications.value.length > 0);
 const searchQuery = ref('');
 const { getInitials } = useInitials();
 const showAvatar = computed(() => Boolean(user.value?.avatar));
@@ -33,6 +44,38 @@ function submitSearch() {
     const q = searchQuery.value.trim();
     if (!q) return;
     router.get('/leads', { search: q }, { preserveState: true });
+}
+
+function notificationHref(notification: AppNotification): string | null {
+    const callId = notification.meta?.call_id;
+    if (notification.module === 'calls' && callId != null && callId !== '') {
+        return `/calls/${callId}`;
+    }
+
+    return null;
+}
+
+function notificationSubtitle(notification: AppNotification): string {
+    const scheduled = notification.meta?.scheduled_label;
+    if (typeof scheduled === 'string' && scheduled.trim() !== '') {
+        return scheduled;
+    }
+
+    return formatNotificationTime(notification.created_at);
+}
+
+function formatNotificationTime(at: string | null): string {
+    if (!at) return '';
+    try {
+        return new Date(at).toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    } catch {
+        return at;
+    }
 }
 </script>
 
@@ -68,19 +111,41 @@ function submitSearch() {
                         aria-label="Notifications"
                     >
                         <Bell class="size-[18px]" />
+                        <span
+                            v-if="hasNotifications"
+                            class="absolute top-1.5 right-1.5 size-2 rounded-full bg-blue-500 ring-2 ring-white dark:ring-slate-900"
+                        />
                     </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" :side-offset="8" class="w-80 rounded-xl p-0">
                     <div class="flex items-center justify-between border-b border-border/60 px-4 py-3">
                         <p class="text-sm font-semibold">Notifications</p>
                     </div>
-                    <div class="flex flex-col items-center gap-2 px-6 py-10 text-center">
+                    <div v-if="!hasNotifications" class="flex flex-col items-center gap-2 px-6 py-10 text-center">
                         <div class="flex size-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-sm">
                             <Sparkles class="size-4" />
                         </div>
                         <p class="text-sm font-medium text-foreground">You're all caught up</p>
                         <p class="text-xs text-muted-foreground">New replies, connections and outreach events will show up here.</p>
                     </div>
+                    <ul v-else class="max-h-80 divide-y divide-border/60 overflow-y-auto">
+                        <li v-for="item in notifications" :key="item.id">
+                            <component
+                                :is="notificationHref(item) ? Link : 'div'"
+                                :href="notificationHref(item) ?? undefined"
+                                class="flex items-start gap-3 px-4 py-3 text-left transition hover:bg-muted/40"
+                            >
+                                <div class="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-blue-500/10 text-blue-600">
+                                    <Phone v-if="item.module === 'calls'" class="size-3.5" />
+                                    <Bell v-else class="size-3.5" />
+                                </div>
+                                <div class="min-w-0 flex-1">
+                                    <p class="text-sm font-medium text-foreground">{{ item.identifier }}</p>
+                                    <p class="text-xs text-muted-foreground">{{ notificationSubtitle(item) }}</p>
+                                </div>
+                            </component>
+                        </li>
+                    </ul>
                 </DropdownMenuContent>
             </DropdownMenu>
 

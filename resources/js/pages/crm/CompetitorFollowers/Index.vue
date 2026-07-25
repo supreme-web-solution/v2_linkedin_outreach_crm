@@ -3,6 +3,7 @@ import { Head, Link, router, useForm } from '@inertiajs/vue3';
 import { AlertTriangle, Loader2, Search, Trash2, TrendingUp, Users2 } from '@lucide/vue';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 
 defineOptions({
     layout: {
@@ -134,12 +135,11 @@ onBeforeUnmount(() => {
     <Head title="Competitor Active Followers" />
 
     <div class="flex flex-col gap-6 p-4">
-        <div>
-            <h1 class="text-xl font-semibold text-foreground">Competitor Active Followers</h1>
-            <p class="text-sm text-muted-foreground">
+        <LinkedInPageHeading title="Competitor Active Followers" show-badge>
+            <template #subtitle>
                 Pull people who like or comment on a competitor's LinkedIn posts into a targeted audience (via Unipile).
-            </p>
-        </div>
+            </template>
+        </LinkedInPageHeading>
 
         <!-- Session warning -->
         <div

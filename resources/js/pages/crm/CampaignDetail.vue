@@ -17,6 +17,7 @@ import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import { Button } from '@/components/ui/button';
 import LinkedInDisconnectBanner from '@/components/campaign/LinkedInDisconnectBanner.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import CampaignStepIcon from '@/components/campaign/CampaignStepIcon.vue';
 
 defineOptions({
@@ -298,15 +299,22 @@ function toggleStatus() {
         <!-- Header -->
         <div class="flex flex-col sm:flex-row sm:items-start gap-4">
             <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                    <h1 class="text-xl font-semibold truncate">{{ campaign.name }}</h1>
-                    <span class="rounded-full border px-2 py-0.5 text-xs font-medium capitalize" :class="statusColor(campaign.status)">
-                        {{ campaign.status }}
-                    </span>
-                    <span v-if="isRunning" class="inline-flex items-center gap-1 text-xs text-green-600">
-                        <Loader2 class="h-3 w-3 animate-spin" /> Live
-                    </span>
-                </div>
+                <LinkedInPageHeading
+                    inline
+                    :icon-size="24"
+                    heading-class="truncate text-xl font-semibold"
+                    :title="campaign.name"
+                    show-badge
+                >
+                    <template #trailing>
+                        <span class="rounded-full border px-2 py-0.5 text-xs font-medium capitalize" :class="statusColor(campaign.status)">
+                            {{ campaign.status }}
+                        </span>
+                        <span v-if="isRunning" class="inline-flex items-center gap-1 text-xs text-green-600">
+                            <Loader2 class="h-3 w-3 animate-spin" /> Live
+                        </span>
+                    </template>
+                </LinkedInPageHeading>
                 <div class="flex items-center gap-3 mt-1 text-sm text-muted-foreground flex-wrap">
                     <span>{{ typeLabel[campaign.sequence_type] ?? campaign.sequence_type }}</span>
                     <ChevronRight class="h-3 w-3" />

@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\User;
+use App\Models\V2UserActivity;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Services\ChannelConnectionService;
 use App\V2\Services\EntitlementService;
@@ -63,6 +64,24 @@ class HandleInertiaRequests extends Middleware
                 : null,
             'connectedChannels' => fn () => $user
                 ? app(ChannelConnectionService::class)->summarizeForUser($user)
+                : [],
+            'notifications' => fn () => $user && $user->current_organization_id
+                ? V2UserActivity::query()
+                    ->where('user_id', $user->id)
+                    ->where('organization_id', $user->current_organization_id)
+                    ->latest()
+                    ->limit(15)
+                    ->get(['id', 'module', 'identifier', 'stat', 'meta', 'created_at'])
+                    ->map(fn (V2UserActivity $row) => [
+                        'id' => $row->id,
+                        'module' => $row->module,
+                        'identifier' => $row->identifier,
+                        'stat' => $row->stat,
+                        'meta' => is_array($row->meta) ? $row->meta : [],
+                        'created_at' => $row->created_at?->toIso8601String(),
+                    ])
+                    ->values()
+                    ->all()
                 : [],
         ];
     }

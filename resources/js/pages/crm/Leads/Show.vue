@@ -2,6 +2,8 @@
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import EmailEnrichmentInfoTooltip from '@/components/crm/EmailEnrichmentInfoTooltip.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import {
     ArrowLeft,
     Download,
@@ -267,11 +269,12 @@ function distanceLabel(d: string | null): string {
             <div class="flex items-center gap-3">
                 <Link href="/leads" class="rounded-lg border border-border p-2 hover:bg-muted"><ArrowLeft class="h-4 w-4" /></Link>
                 <div>
-                    <h1 class="text-xl font-semibold text-foreground">{{ listName }}</h1>
-                    <p class="text-sm text-muted-foreground">
-                        {{ leads.total.toLocaleString() }} leads ·
-                        <span :class="src === 'aud' ? 'text-blue-600' : 'text-amber-600'">{{ src === 'aud' ? 'Audience' : 'Sales Navigator' }}</span>
-                    </p>
+                    <LinkedInPageHeading :title="listName" show-badge>
+                        <template #subtitle>
+                            {{ leads.total.toLocaleString() }} leads ·
+                            <span :class="src === 'aud' ? 'text-blue-600' : 'text-amber-600'">{{ src === 'aud' ? 'Audience' : 'Sales Navigator' }}</span>
+                        </template>
+                    </LinkedInPageHeading>
                 </div>
             </div>
             <div class="flex items-center gap-2">
@@ -293,17 +296,16 @@ function distanceLabel(d: string | null): string {
         <!-- Daily limit -->
         <div v-if="dailyLimit" class="rounded-xl border border-border bg-card p-4">
             <div class="mb-1 flex items-center justify-between text-sm">
-                <span class="font-medium">Daily email enrichment</span>
+                <span class="inline-flex items-center gap-1.5 font-medium">
+                    Daily email enrichment
+                    <EmailEnrichmentInfoTooltip side="right" />
+                </span>
                 <span class="text-muted-foreground">{{ dailyLimit.used }} / {{ dailyLimit.daily_limit }} used · {{ dailyLimit.remaining }} left</span>
             </div>
             <div class="h-2 overflow-hidden rounded-full bg-muted">
                 <div class="h-full rounded-full bg-gradient-to-b from-blue-500 to-blue-600 transition-all" :style="{ width: `${Math.min(100, (dailyLimit.used / dailyLimit.daily_limit) * 100)}%` }"></div>
             </div>
             <p v-if="src === 'aud' && pendingCount > 0" class="mt-2 text-xs text-amber-600">{{ pendingCount }} email fetch job(s) in progress…</p>
-            <p v-else-if="src === 'sn'" class="mt-2 text-xs text-muted-foreground">
-                Sales Navigator lists: click <strong>Fetch</strong> per lead to load email from the LinkedIn profile via Unipile when the member has shared it.
-            </p>
-            <p v-else class="mt-2 text-xs text-muted-foreground">Email enrichment uses Unipile profile lookup when the member has shared an address.</p>
         </div>
 
         <!-- Filters + search -->
@@ -357,7 +359,13 @@ function distanceLabel(d: string | null): string {
                         <th class="px-4 py-3 font-medium">Name</th>
                         <th class="px-4 py-3 font-medium">Headline</th>
                         <th class="px-4 py-3 font-medium">Location</th>
-                        <th class="px-4 py-3 font-medium">Email</th>
+                        <th class="px-4 py-3 font-medium">
+                            <span v-if="src === 'aud'" class="inline-flex items-center gap-1.5">
+                                Email
+                                <EmailEnrichmentInfoTooltip side="top" align="start" />
+                            </span>
+                            <span v-else>Email</span>
+                        </th>
                         <th v-if="src === 'sn'" class="px-4 py-3 font-medium">Status</th>
                         <th class="px-4 py-3 text-right font-medium">Actions</th>
                     </tr>

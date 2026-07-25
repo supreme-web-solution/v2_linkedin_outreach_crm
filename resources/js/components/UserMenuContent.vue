@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link, router } from '@inertiajs/vue3';
-import { Link2, LogOut, Settings, Shield, User as UserIcon } from '@lucide/vue';
+import { LogOut, Settings, Shield, User as UserIcon } from '@lucide/vue';
 import {
     DropdownMenuGroup,
     DropdownMenuItem,
@@ -36,12 +36,6 @@ defineProps<Props>();
             <Link class="block w-full cursor-pointer" :href="edit()" prefetch>
                 <UserIcon class="mr-2 h-4 w-4" />
                 Profile
-            </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem :as-child="true">
-            <Link class="block w-full cursor-pointer" href="/settings/social-accounts" prefetch>
-                <Link2 class="mr-2 h-4 w-4" />
-                Social Accounts
             </Link>
         </DropdownMenuItem>
         <DropdownMenuItem :as-child="true">

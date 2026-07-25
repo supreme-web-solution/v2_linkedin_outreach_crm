@@ -52,6 +52,20 @@ class OutreachChannelRegistry
                 'integration_provider' => 'twitter',
                 'color' => '#0f1419',
             ],
+            'google_calendar' => [
+                'label' => 'Google Calendar',
+                'unipile_hosted_provider' => 'GOOGLE',
+                'unipile_providers' => ['GOOGLE_OAUTH', 'GOOGLE'],
+                'integration_provider' => 'google_calendar',
+                'color' => '#4285F4',
+            ],
+            'outlook_calendar' => [
+                'label' => 'Outlook Calendar',
+                'unipile_hosted_provider' => 'OUTLOOK',
+                'unipile_providers' => ['OUTLOOK', 'MICROSOFT'],
+                'integration_provider' => 'outlook_calendar',
+                'color' => '#0078D4',
+            ],
         ];
     }
 

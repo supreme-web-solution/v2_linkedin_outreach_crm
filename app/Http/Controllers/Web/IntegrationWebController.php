@@ -7,6 +7,7 @@ use App\Models\V2EspDelivery;
 use App\Models\V2EspIntegration;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Services\ChannelConnectionService;
+use App\V2\Services\IntegrationUserErrorMapper;
 use App\V2\Services\LinkedInConnectionService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -37,7 +38,12 @@ class IntegrationWebController extends Controller
 
                 return redirect()->route('integrations')->with('success', "{$label} connected successfully.");
             } catch (\Throwable $e) {
-                return redirect()->route('integrations')->with('error', 'Could not save channel connection: '.$e->getMessage());
+                IntegrationUserErrorMapper::log($e, 'complete_hosted_connection', ['channel' => $channelKey]);
+
+                return redirect()->route('integrations')->with(
+                    'error',
+                    IntegrationUserErrorMapper::forConnection($e, OutreachChannelRegistry::channelLabel($channelKey !== '' ? $channelKey : 'email'))
+                );
             }
         }
 
@@ -122,7 +128,12 @@ class IntegrationWebController extends Controller
 
             return redirect()->away($url);
         } catch (\Throwable $e) {
-            return redirect()->route('integrations')->with('error', 'Could not start LinkedIn connection: '.$e->getMessage());
+            IntegrationUserErrorMapper::log($e, 'start_linkedin_hosted_auth');
+
+            return redirect()->route('integrations')->with(
+                'error',
+                IntegrationUserErrorMapper::forConnection($e, 'LinkedIn')
+            );
         }
     }
 
@@ -145,7 +156,9 @@ class IntegrationWebController extends Controller
                 $orgId
             );
         } catch (\Throwable $e) {
-            return back()->with('error', 'Connection failed: '.$e->getMessage());
+            IntegrationUserErrorMapper::log($e, 'connect_linkedin_cookie');
+
+            return back()->with('error', IntegrationUserErrorMapper::forConnection($e, 'LinkedIn'));
         }
 
         return back()->with('success', 'LinkedIn connected successfully.');
@@ -166,7 +179,9 @@ class IntegrationWebController extends Controller
 
             return back()->with('success', 'LinkedIn connection verified.');
         } catch (\Throwable $e) {
-            return back()->with('error', 'Could not verify LinkedIn connection: '.$e->getMessage());
+            IntegrationUserErrorMapper::log($e, 'verify_linkedin');
+
+            return back()->with('error', IntegrationUserErrorMapper::forConnection($e, 'LinkedIn'));
         }
     }
 
@@ -213,7 +228,12 @@ class IntegrationWebController extends Controller
 
             return redirect()->away($url);
         } catch (\Throwable $e) {
-            return redirect()->route('integrations')->with('error', 'Could not start connection: '.$e->getMessage());
+            IntegrationUserErrorMapper::log($e, 'start_channel_hosted_auth', ['channel' => $channel]);
+
+            return redirect()->route('integrations')->with(
+                'error',
+                IntegrationUserErrorMapper::forConnection($e, OutreachChannelRegistry::channelLabel($channel))
+            );
         }
     }
 

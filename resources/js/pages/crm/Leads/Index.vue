@@ -3,6 +3,7 @@ import { Head, Link, router, useForm } from '@inertiajs/vue3';
 import { Database, Layers, Pencil, Search, Trash2, Users2, X } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import ClientPagination from '@/components/crm/ClientPagination.vue';
+import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import { useClientList } from '@/composables/useClientList';
 
 defineOptions({
@@ -80,12 +81,11 @@ function fmtDate(iso: string | null): string {
     <Head title="Leads" />
 
     <div class="flex flex-col gap-5 p-4">
-        <div>
-            <h1 class="text-xl font-semibold text-foreground">Leads</h1>
-            <p class="text-sm text-muted-foreground">
+        <LinkedInPageHeading title="Leads" show-badge>
+            <template #subtitle>
                 Audiences, Sales Navigator lists, and extension imports share one pipeline — SN imports from the Chrome extension appear here automatically.
-            </p>
-        </div>
+            </template>
+        </LinkedInPageHeading>
 
         <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">

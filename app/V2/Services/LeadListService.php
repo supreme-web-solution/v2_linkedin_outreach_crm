@@ -94,6 +94,38 @@ class LeadListService
     }
 
     /**
+     * @param  list<array{list_id: string, src: string, select_all?: bool, lead_ids?: array<int>}>  $lists
+     * @return Collection<int, array<string, mixed>>
+     */
+    public function resolveLeadsFromLists(int $userId, array $lists): Collection
+    {
+        $merged = collect();
+
+        foreach ($lists as $list) {
+            $listId = trim((string) ($list['list_id'] ?? ''));
+            $src = trim((string) ($list['src'] ?? ''));
+            if ($listId === '' || !in_array($src, ['aud', 'sn'], true)) {
+                continue;
+            }
+
+            $leads = $this->resolveLeads(
+                $userId,
+                $listId,
+                $src,
+                array_map('intval', $list['lead_ids'] ?? []),
+                (bool) ($list['select_all'] ?? false),
+            );
+
+            $merged = $merged->concat($leads);
+        }
+
+        return $merged
+            ->filter(fn (array $lead) => trim((string) ($lead['profileid'] ?? '')) !== '')
+            ->unique(fn (array $lead) => trim((string) ($lead['profileid'] ?? '')))
+            ->values();
+    }
+
+    /**
      * @param  array<int, int>  $leadIds
      * @return Collection<int, array<string, mixed>>
      */
