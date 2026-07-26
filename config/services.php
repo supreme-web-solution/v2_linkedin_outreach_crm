@@ -35,6 +35,13 @@ return [
         ],
     ],
 
+    'ops' => [
+        'slack_webhook_url' => env('OPS_SLACK_WEBHOOK_URL'),
+        'alert_daily_limit_hits' => env('OPS_ALERT_DAILY_LIMITS', true),
+        'alert_queue_health' => env('OPS_ALERT_QUEUE_HEALTH', true),
+        'alert_failed_jobs_threshold' => (int) env('OPS_ALERT_FAILED_JOBS_THRESHOLD', 10),
+    ],
+
     'openai' => [
         'key' => env('OPENAI_API_KEY', env('OPENAI_KEY')),
         'image_model' => env('OPENAI_IMAGE_MODEL', 'gpt-image-2'),
@@ -69,6 +76,26 @@ return [
         'page_size' => env('COMPETITOR_PAGE_SIZE', 100),
         'max_engagers_per_post' => env('COMPETITOR_MAX_ENGAGERS_PER_POST', 500),
         'max_posts_scan' => env('COMPETITOR_MAX_POSTS_SCAN', 30),
+    ],
+
+    /*
+    | Per-user daily action caps + pacing to stay within Unipile / LinkedIn
+    | conventional-usage limits. Caps of 0 or less mean "unlimited".
+    | When a cap is reached, queued actions auto-defer to the next day.
+    */
+    'unipile_pacing' => [
+        'daily_invites' => (int) env('UNIPILE_DAILY_INVITE_CAP', 40),
+        'daily_new_chats' => (int) env('UNIPILE_DAILY_NEW_CHAT_CAP', 60),
+        'daily_messages' => (int) env('UNIPILE_DAILY_MESSAGE_CAP', 200),
+        // Bulk "start all chats": seconds between each queued chat + random jitter
+        'chat_launch_stagger_seconds' => (int) env('UNIPILE_CHAT_LAUNCH_STAGGER_SECONDS', 8),
+        'chat_launch_jitter_seconds' => (int) env('UNIPILE_CHAT_LAUNCH_JITTER_SECONDS', 7),
+        // Random pause between chained profile lookups (email enrichment batches)
+        'profile_lookup_delay_min_ms' => (int) env('UNIPILE_PROFILE_LOOKUP_DELAY_MIN_MS', 1000),
+        'profile_lookup_delay_max_ms' => (int) env('UNIPILE_PROFILE_LOOKUP_DELAY_MAX_MS', 3000),
+        // Random pause between paginated harvest calls (competitor engagers)
+        'harvest_page_delay_min_ms' => (int) env('UNIPILE_HARVEST_PAGE_DELAY_MIN_MS', 800),
+        'harvest_page_delay_max_ms' => (int) env('UNIPILE_HARVEST_PAGE_DELAY_MAX_MS', 2500),
     ],
 
     'unipile' => [

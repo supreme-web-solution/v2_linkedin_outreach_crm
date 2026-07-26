@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
-import { ArrowLeft, ExternalLink, Loader2, MessageSquare, Send, Trash2 } from '@lucide/vue';
+import { ArrowLeft, ExternalLink, Info, Loader2, MessageSquare, Send, Sparkles, Trash2 } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
+import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 defineOptions({
     layout: {
@@ -76,6 +78,8 @@ const stageFilter = ref(props.filters?.stage ?? 'all');
 const launchingFlow = ref(false);
 const deletingFlow = ref(false);
 const deletingProspectId = ref<number | null>(null);
+const savingAutoSend = ref(false);
+const autoSendEnabled = ref(props.flow.auto_send_enabled);
 
 const flowBaseUrl = computed(() => `/conversations/flows/${encodeURIComponent(props.flow.flow_key)}`);
 const chatsNotStarted = computed(() => Math.max(0, props.flow.count - props.flow.chats_started));
@@ -123,6 +127,16 @@ function deleteProspect(prospect: (typeof props.prospects.data)[0]) {
     router.delete(`/conversations/prospects/${prospect.call_id}`, {
         preserveScroll: true,
         onFinish: () => { deletingProspectId.value = null; },
+    });
+}
+
+function toggleFlowAutoSend(enabled: boolean) {
+    if (props.flow.is_aggregate) return;
+    savingAutoSend.value = true;
+    router.put(`${flowBaseUrl.value}/auto-send`, { auto_send_suggestions: enabled }, {
+        preserveScroll: true,
+        onSuccess: () => { autoSendEnabled.value = enabled; },
+        onFinish: () => { savingAutoSend.value = false; },
     });
 }
 
@@ -200,9 +214,33 @@ const stageBadgeClass: Record<string, string> = {
             Connect LinkedIn via <Link href="/integrations" class="underline">Integrations</Link> to send replies.
         </div>
 
-        <div v-if="flowSettings && !flow.is_aggregate" class="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-3 text-sm">
-            <p class="font-medium">Flow settings (snapshot from launch)</p>
-            <p v-if="flowSettings.booking_message" class="mt-1 line-clamp-3 whitespace-pre-wrap text-muted-foreground">{{ flowSettings.booking_message }}</p>
+        <div v-if="flowSettings && !flow.is_aggregate" class="rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-sm">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <p class="font-medium">Flow settings</p>
+                    <p v-if="flowSettings.booking_message" class="mt-1 line-clamp-2 whitespace-pre-wrap text-xs text-muted-foreground">{{ flowSettings.booking_message }}</p>
+                </div>
+                <div class="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+                    <Sparkles class="h-3.5 w-3.5 shrink-0 text-violet-600" />
+                    <span class="text-xs font-medium">AI auto-send</span>
+                    <Tooltip :delay-duration="200">
+                        <TooltipTrigger as-child>
+                            <button type="button" class="rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label="About batch auto-send">
+                                <Info class="h-3.5 w-3.5" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" class="max-w-[14rem] text-xs leading-relaxed">
+                            When on, AI replies are sent automatically for every prospect in this flow. Turn off to review each chat individually.
+                        </TooltipContent>
+                    </Tooltip>
+                    <Switch
+                        :model-value="autoSendEnabled"
+                        :disabled="savingAutoSend"
+                        class="shrink-0"
+                        @update:model-value="toggleFlowAutoSend"
+                    />
+                </div>
+            </div>
             <Link href="/calls" class="mt-2 inline-block text-xs text-primary hover:underline">Edit defaults for new flows in Call Manager →</Link>
         </div>
 
@@ -240,7 +278,52 @@ const stageBadgeClass: Record<string, string> = {
         </div>
 
         <div v-else class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-            <table class="w-full text-sm">
+            <!-- Mobile cards -->
+            <div class="divide-y divide-border md:hidden">
+                <div v-for="prospect in prospects.data" :key="`m-${prospect.call_id}`" class="p-4">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                            <p class="font-medium">{{ displayName(prospect) }}</p>
+                            <p v-if="prospect.prospect_headline" class="line-clamp-1 text-xs text-muted-foreground">{{ prospect.prospect_headline }}</p>
+                        </div>
+                        <div class="flex shrink-0 gap-1">
+                            <Link :href="`/calls/${prospect.call_id}`" class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-primary">
+                                <ExternalLink class="h-4 w-4" />
+                            </Link>
+                            <button
+                                type="button"
+                                class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 text-red-600 disabled:opacity-50"
+                                :disabled="deletingProspectId === prospect.call_id"
+                                @click="deleteProspect(prospect)"
+                            >
+                                <Loader2 v-if="deletingProspectId === prospect.call_id" class="h-4 w-4 animate-spin" />
+                                <Trash2 v-else class="h-4 w-4" />
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                        <span
+                            class="rounded-full px-2 py-0.5 text-[10px] font-medium capitalize"
+                            :class="stageBadgeClass[prospect.pipeline_stage] ?? 'bg-muted text-muted-foreground'"
+                        >
+                            {{ stageLabels[prospect.pipeline_stage] ?? prospect.pipeline_stage }}
+                        </span>
+                        <span
+                            v-if="prospect.chat_started"
+                            class="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-700"
+                        >
+                            Chat started
+                        </span>
+                        <span v-else class="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800">Not started</span>
+                    </div>
+                    <p v-if="prospect.last_message_preview || prospect.pending_message_preview" class="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                        {{ prospect.last_message_preview || `Draft: ${prospect.pending_message_preview}` }}
+                    </p>
+                </div>
+            </div>
+
+            <!-- Desktop table -->
+            <table class="hidden w-full text-sm md:table">
                 <thead class="border-b border-border bg-muted/40">
                     <tr>
                         <th class="px-4 py-3 text-left font-medium text-muted-foreground">Prospect</th>
@@ -293,7 +376,7 @@ const stageBadgeClass: Record<string, string> = {
                                 </Link>
                                 <button
                                     type="button"
-                                    class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-red-500/10 hover:text-red-600 disabled:opacity-50"
+                                    class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-red-500/10 hover:text-red-600 disabled:opacity-50 md:opacity-100"
                                     :disabled="deletingProspectId === prospect.call_id"
                                     title="Remove prospect"
                                     @click="deleteProspect(prospect)"

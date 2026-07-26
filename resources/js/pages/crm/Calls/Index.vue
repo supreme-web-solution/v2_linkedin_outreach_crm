@@ -159,6 +159,7 @@ const campaignForm = useForm({
     batch_name: '',
     pending_message: '',
     run: true,
+    auto_send_suggestions: props.settings.auto_send_suggestions,
     lists: [] as Array<{ list_id: string; src: 'aud' | 'sn'; select_all: boolean; lead_ids: number[] }>,
 });
 
@@ -288,6 +289,7 @@ function resetCampaignModal() {
     listLeads.value = [];
     campaignForm.reset();
     campaignForm.run = true;
+    campaignForm.auto_send_suggestions = props.settings.auto_send_suggestions;
 }
 
 function openCampaignModal() {
@@ -467,11 +469,18 @@ function submitCampaign() {
 }
 
 function resolveOpeningMessage(override?: string) {
+    const link = props.hasCalendarIntegration && props.settings.use_app_booking_link
+        ? `${window.location.origin}/book/[prospect-link]`
+        : (props.settings.calendar_url?.trim() || '[your calendar link]');
     const custom = (override ?? '').trim();
-    if (custom) return custom;
+    if (custom) {
+        return custom.includes('{calendar_url}')
+            ? custom.replaceAll('{calendar_url}', link)
+            : custom;
+    }
     const template = props.settings.booking_message?.trim()
         || 'Would you be open to a quick 15-minute call? Here is my calendar: {calendar_url}';
-    return template.replaceAll('{calendar_url}', props.settings.calendar_url?.trim() || '[your calendar link]');
+    return template.replaceAll('{calendar_url}', link);
 }
 
 const campaignOpeningPreview = computed(() => resolveOpeningMessage(campaignForm.pending_message));
@@ -877,6 +886,16 @@ watch(showUpcomingModal, (open) => {
                         </button>
                     </div>
                     <p v-else class="text-xs text-muted-foreground">Custom opening message for this flow only.</p>
+
+                    <ToggleField
+                        v-model="campaignForm.auto_send_suggestions"
+                        description="When on, AI draft replies send automatically for every prospect in this flow. Turn off to review each chat before sending."
+                    >
+                        AI auto-send for this flow
+                    </ToggleField>
+                    <p v-if="campaignForm.auto_send_suggestions" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                        Replies go out without manual approval. You can change this later on the flow page in Conversations.
+                    </p>
 
                     <ToggleField
                         v-model="campaignForm.run"

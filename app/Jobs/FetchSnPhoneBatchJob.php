@@ -38,6 +38,8 @@ class FetchSnPhoneBatchJob implements ShouldQueue
             return;
         }
 
+        $lookupsDone = 0;
+
         foreach (SnLead::whereIn('id', $this->snLeadIds)->where('sn_list_id', $this->listHash)->get() as $lead) {
             if (! empty($lead->phone) || ! empty($lead->phone_fetch_attempted_at)) {
                 continue;
@@ -48,6 +50,11 @@ class FetchSnPhoneBatchJob implements ShouldQueue
                 $lead->update(['phone_fetch_attempted_at' => now(), 'phone_fetch_status' => 'completed']);
                 continue;
             }
+
+            if ($lookupsDone > 0) {
+                $this->humanPause();
+            }
+            $lookupsDone++;
 
             $lead->update(['phone_fetch_status' => 'processing']);
 
@@ -64,6 +71,16 @@ class FetchSnPhoneBatchJob implements ShouldQueue
                 'phone_fetch_attempted_at' => now(),
                 'phone_fetch_status' => 'completed',
             ]);
+        }
+    }
+
+    private function humanPause(): void
+    {
+        $min = max(0, (int) config('services.unipile_pacing.profile_lookup_delay_min_ms', 1000));
+        $max = max($min, (int) config('services.unipile_pacing.profile_lookup_delay_max_ms', 3000));
+
+        if ($max > 0) {
+            usleep(random_int($min, $max) * 1000);
         }
     }
 }

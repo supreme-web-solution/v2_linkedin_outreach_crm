@@ -181,12 +181,14 @@ class OutreachImportListService
     public function toListOption(V2OutreachImportList $list): array
     {
         return [
+            'id' => $list->id,
             'list_name' => $list->name,
             'list_hash' => $list->list_hash,
             'total_leads' => (int) $list->lead_count,
             'source' => 'Spreadsheet import',
             'src' => 'csv',
             'type' => $list->list_hash.'-csv',
+            'created_at' => optional($list->created_at)->toIso8601String(),
         ];
     }
 

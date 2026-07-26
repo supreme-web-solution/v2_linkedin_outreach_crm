@@ -283,6 +283,7 @@ class CallsWebController extends Controller
             'batch_name' => ['required', 'string', 'max:191'],
             'pending_message' => ['nullable', 'string'],
             'run' => ['nullable', 'boolean'],
+            'auto_send_suggestions' => ['nullable', 'boolean'],
         ]);
 
         $lists = is_array($data['lists'] ?? null) ? $data['lists'] : null;
@@ -337,11 +338,14 @@ class CallsWebController extends Controller
             return back()->with('error', 'No leads found in the selected list(s).');
         }
 
-        $result = $this->orchestration->createCallsFromLeads($user, $orgId, $leads, array_merge($listMeta, [
+        $result = $this->orchestration->createCallsFromLeads($user, $orgId, $leads, array_merge($listMeta, array_filter([
             'batch_name' => $data['batch_name'] ?? null,
             'pending_message' => $data['pending_message'] ?? null,
             'run' => (bool) ($data['run'] ?? false),
-        ]));
+            'auto_send_suggestions' => array_key_exists('auto_send_suggestions', $data)
+                ? (bool) $data['auto_send_suggestions']
+                : null,
+        ], fn ($value) => $value !== null)));
 
         $message = "{$result['created']} prospect(s) added to Call Manager.";
         if ($result['skipped'] > 0) {
@@ -396,6 +400,13 @@ class CallsWebController extends Controller
             return back()->with('error', 'Connect LinkedIn under Integrations before starting chats.');
         }
 
+        $limiter = app(\App\V2\Services\UnipileDailyActionLimiter::class);
+        if (!$limiter->hasQuota($user->id, \App\V2\Services\UnipileDailyActionLimiter::ACTION_NEW_CHATS)) {
+            $limit = $limiter->limitFor(\App\V2\Services\UnipileDailyActionLimiter::ACTION_NEW_CHATS);
+
+            return back()->with('error', "Daily LinkedIn chat limit reached ({$limit}/day). This protects your account — new chats resume tomorrow.");
+        }
+
         LaunchCallFromLeadJob::dispatch($call->id);
 
         return back()->with('success', 'LinkedIn chat queued — your opening message will send shortly.');
@@ -415,15 +426,28 @@ class CallsWebController extends Controller
             return back()->with('error', 'Connect LinkedIn under Integrations before starting chats.');
         }
 
+        $limiter = app(\App\V2\Services\UnipileDailyActionLimiter::class);
+        $chatAction = \App\V2\Services\UnipileDailyActionLimiter::ACTION_NEW_CHATS;
+        $remainingToday = $limiter->remaining($user->id, $chatAction);
+
+        if ($remainingToday === 0) {
+            $limit = $limiter->limitFor($chatAction);
+
+            return back()->with('error', "Daily LinkedIn chat limit reached ({$limit}/day). This protects your account — queued chats resume tomorrow automatically.");
+        }
+
         $result = $this->orchestration->launchUnlinkedCallsInFlow($user, $orgId, $flowKey);
 
         if ($result['queued'] === 0) {
             return back()->with('error', 'No prospects need a chat started in this flow.');
         }
 
-        $message = "{$result['queued']} chat(s) queued via Unipile.";
+        $message = "{$result['queued']} chat(s) queued via Unipile — sends are paced automatically to protect your LinkedIn account.";
         if ($result['skipped'] > 0) {
             $message .= " {$result['skipped']} skipped (missing profile).";
+        }
+        if ($remainingToday < $result['queued'] && $limiter->limitFor($chatAction) > 0) {
+            $message .= " {$remainingToday} will send today; the rest resume tomorrow (daily limit ".$limiter->limitFor($chatAction).'/day).';
         }
 
         return back()->with('success', $message);
@@ -450,11 +474,11 @@ class CallsWebController extends Controller
             ]);
 
         $latestAnalysis = is_array($call->ai_analysis) ? collect($call->ai_analysis)->last() : null;
-        $bookingToken = $this->calendar->ensureBookingToken($call);
-        $settings = $this->orchestration->settingsFor($user);
-        $bookingUrl = $this->calendar->resolveBookingUrl($user, $settings, $bookingToken);
+        $this->calendar->ensureBookingToken($call);
         $call = $this->orchestration->ensurePendingMessageHasBookingLink($call->fresh(), $user);
+        $settings = $this->orchestration->settingsForCall($call, $user);
         $bookingUrl = $this->calendar->resolveBookingUrl($user, $settings, $this->calendar->ensureBookingToken($call));
+        $callMeta = is_array($call->meta) ? $call->meta : [];
 
         if ($call->scheduled_call_at && $call->status === 'booked') {
             $meta = is_array($call->meta) ? $call->meta : [];
@@ -469,6 +493,8 @@ class CallsWebController extends Controller
             'messages' => $messages,
             'latestAnalysis' => $latestAnalysis,
             'settings' => $settings,
+            'auto_send_suggestions' => (bool) ($settings['auto_send_suggestions'] ?? false),
+            'auto_send_overridden' => array_key_exists('auto_send_suggestions', $callMeta),
             'bookingUrl' => $bookingUrl !== '' ? $bookingUrl : null,
             'hasUnipile' => (bool) V2IntegrationAccount::activeUnipileAccountId($user->id),
             'hasCalendarIntegration' => $this->calendar->isAvailable($user->id),
@@ -526,15 +552,24 @@ class CallsWebController extends Controller
             'scheduled_send_at' => ['nullable', 'date'],
             'scheduled_call_at' => ['nullable', 'date'],
             'prospect_name' => ['nullable', 'string', 'max:191'],
+            'auto_send_suggestions' => ['nullable', 'boolean'],
         ]);
 
-        $call->forceFill(array_filter([
+        $updates = array_filter([
             'status' => $data['status'] ?? null,
             'pending_message' => array_key_exists('pending_message', $data) ? $data['pending_message'] : null,
             'scheduled_send_at' => $data['scheduled_send_at'] ?? null,
             'scheduled_call_at' => $data['scheduled_call_at'] ?? null,
             'prospect_name' => $data['prospect_name'] ?? null,
-        ], fn ($v) => $v !== null))->save();
+        ], fn ($v) => $v !== null);
+
+        if ($updates !== []) {
+            $call->forceFill($updates)->save();
+        }
+
+        if (array_key_exists('auto_send_suggestions', $data)) {
+            $this->orchestration->setAutoSendSuggestions($call, (bool) $data['auto_send_suggestions']);
+        }
 
         if (!empty($data['scheduled_call_at'])) {
             $call->forceFill(['status' => 'booked'])->save();

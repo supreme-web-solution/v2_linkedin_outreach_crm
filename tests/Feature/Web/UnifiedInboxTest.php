@@ -262,7 +262,7 @@ class UnifiedInboxTest extends TestCase
             ->first();
 
         $this->assertSame('replied', $lead->status);
-        $this->assertTrue($progress->acceptance_status);
+        $this->assertNotTrue($progress->acceptance_status);
         $this->assertNull($progress->next_run_at);
         $this->assertTrue($progress->channel_state['whatsapp']['replied'] ?? false);
     }
@@ -696,6 +696,48 @@ class UnifiedInboxTest extends TestCase
         $this->assertDatabaseMissing('v2_messages', ['id' => $ghost->id]);
         $wrongMessage->refresh();
         $this->assertNull($wrongMessage->meta['reactions'] ?? null);
+    }
+
+    public function test_whatsapp_webhook_without_outreach_lead_does_not_create_inbox_thread(): void
+    {
+        $user = $this->userWithOrg();
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'whatsapp',
+            'provider_account_id' => 'wa_random_acc',
+            'status' => 'active',
+            'meta' => ['unipile_account_id' => 'wa_random_acc'],
+        ]);
+
+        $event = V2ProviderEvent::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'unipile',
+            'event_id' => 'evt_wa_random_1',
+            'event_type' => 'message.received',
+            'payload' => [
+                'provider' => 'WHATSAPP',
+                'account_id' => 'wa_random_acc',
+                'chat_id' => 'wa_random_chat',
+                'data' => [
+                    'chat_id' => 'wa_random_chat',
+                    'message_id' => 'msg_random_1',
+                    'text' => 'Hey from a friend',
+                    'sender' => [
+                        'provider_id' => 'wa_unknown_user',
+                        'display_name' => 'Random Friend',
+                    ],
+                ],
+            ],
+        ]);
+
+        ProcessUnipileWebhookEventJob::dispatchSync($event->id);
+
+        $this->assertDatabaseMissing('v2_conversations', [
+            'user_id' => $user->id,
+            'provider' => 'whatsapp',
+            'provider_chat_id' => 'wa_random_chat',
+        ]);
     }
 
     private function userWithOrg(): User

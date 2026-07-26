@@ -10,11 +10,13 @@
     "license": "MIT",
     "require": {
         "php": "^8.3",
+        "archtechx/laravel-seo": "^0.10.4",
         "cloudinary/cloudinary_php": "^3.1",
         "inertiajs/inertia-laravel": "^3.0",
         "laravel/chisel": "^0.1.0",
         "laravel/fortify": "^1.37.2",
         "laravel/framework": "^13.7",
+        "laravel/horizon": "^5.48",
         "laravel/tinker": "^3.0",
         "laravel/wayfinder": "^0.1.14",
         "phpoffice/phpspreadsheet": "^5.9"
@@ -35,7 +37,10 @@
             "App\\": "app/",
             "Database\\Factories\\": "database/factories/",
             "Database\\Seeders\\": "database/seeders/"
-        }
+        },
+        "files": [
+            "app/Support/windows_pcntl_polyfill.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {
@@ -53,7 +58,15 @@
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
-            "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74\" \"php artisan serve\" \"php artisan queue:listen --tries=1\" \"npm run dev\" --names='server,queue,vite'"
+            "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74\" \"php artisan serve\" \"php artisan horizon\" \"npm run dev\" --names='server,horizon,vite'"
+        ],
+        "dev:queue": [
+            "Composer\\Config::disableProcessTimeout",
+            "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74\" \"php artisan serve\" \"php artisan queue:work --queue=outreach,campaigns,webhooks,default --tries=3 --timeout=900\" \"npm run dev\" --names='server,queue,vite'"
+        ],
+        "dev:horizon": [
+            "Composer\\Config::disableProcessTimeout",
+            "npx concurrently -c \"#93c5fd,#c4b5fd,#fdba74\" \"php artisan serve\" \"php artisan horizon\" \"npm run dev\" --names='server,horizon,vite'"
         ],
         "lint": [
             "pint --parallel"
@@ -79,6 +92,7 @@
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
+            "@php scripts/patch-horizon-l13.php",
             "@php artisan package:discover --ansi"
         ],
         "post-update-cmd": [
@@ -111,6 +125,10 @@
         "allow-plugins": {
             "pestphp/pest-plugin": true,
             "php-http/discovery": true
+        },
+        "platform": {
+            "ext-pcntl": "8.3",
+            "ext-posix": "8.3"
         }
     },
     "minimum-stability": "stable",

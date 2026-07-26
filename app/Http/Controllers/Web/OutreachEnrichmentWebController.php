@@ -3,14 +3,98 @@
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\FetchAudienceEmailBatchJob;
 use App\Jobs\FetchAudiencePhoneBatchJob;
 use App\Jobs\FetchSnPhoneBatchJob;
 use App\V2\Outreach\OutreachContactEnrichmentService;
+use App\V2\Outreach\OutreachLeadReadinessService;
+use App\V2\Services\EmailEnrichmentLimiter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class OutreachEnrichmentWebController extends Controller
 {
+    public function fetchEmails(
+        Request $request,
+        OutreachLeadReadinessService $readiness,
+        EmailEnrichmentLimiter $limiter,
+    ): JsonResponse {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+
+        $data = $request->validate([
+            'lead_lists' => ['required', 'array', 'min:1'],
+            'lead_lists.*.list_hash' => ['required', 'string'],
+            'lead_lists.*.list_src' => ['required', 'in:aud,sn,csv'],
+            'node_model' => ['nullable', 'array'],
+        ]);
+
+        $preview = $readiness->previewForLists(
+            $data['lead_lists'],
+            $data['node_model'] ?? [],
+            $user->id,
+        );
+
+        $batches = $preview['email_fetch']['batches'] ?? [];
+        if ($batches === []) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No audience profiles are eligible for email lookup.',
+            ], 400);
+        }
+
+        $allIds = [];
+        foreach ($batches as $batch) {
+            foreach ($batch['audience_list_ids'] as $id) {
+                $allIds[] = (int) $id;
+            }
+        }
+
+        $requested = count($allIds);
+        $capacity = $limiter->queueCapacity($user, $requested);
+
+        if (! $capacity['allowed']) {
+            return response()->json([
+                'success' => false,
+                'message' => $capacity['message'],
+                'remaining_daily' => $capacity['remaining_daily'],
+                'pending_jobs' => $capacity['pending_jobs'],
+                'enrichment_limits' => $limiter->limitsPayloadForUser($user->fresh()),
+            ], $capacity['pending_jobs'] >= 5 ? 429 : 400);
+        }
+
+        $allowedIds = array_slice($allIds, 0, $capacity['max_queue_now']);
+        $allowedSet = array_flip($allowedIds);
+        $queued = 0;
+
+        foreach ($batches as $batch) {
+            $ids = array_values(array_filter(
+                $batch['audience_list_ids'],
+                fn ($id) => isset($allowedSet[(int) $id]),
+            ));
+
+            if ($ids === []) {
+                continue;
+            }
+
+            FetchAudienceEmailBatchJob::dispatch($ids, $user->id);
+            $queued += count($ids);
+        }
+
+        $skipped = $requested - $queued;
+        $message = $skipped > 0
+            ? "Queued {$queued} email lookup(s). {$skipped} skipped due to today's daily limit — run again tomorrow."
+            : "Queued {$queued} email lookup(s). Profiles are checked one at a time with a short delay to protect your LinkedIn account.";
+
+        return response()->json([
+            'success' => true,
+            'queued' => $queued,
+            'skipped' => $skipped,
+            'message' => $message,
+            'enrichment_limits' => $limiter->limitsPayloadForUser($user->fresh()),
+        ]);
+    }
+
     public function fetchPhones(Request $request): JsonResponse
     {
         /** @var \App\Models\User $user */
@@ -44,7 +128,7 @@ class OutreachEnrichmentWebController extends Controller
             'success' => true,
             'queued' => $queued,
             'message' => $queued > 0
-                ? "Queued phone fetch for {$queued} profile(s)."
+                ? "Queued phone lookup for {$queued} profile(s). Each profile is checked one at a time with a short delay."
                 : 'No profiles eligible for phone fetch.',
         ]);
     }

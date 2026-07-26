@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
-import { ArrowLeft, Camera, ChevronRight, Info, Layers, Mail, MessageCircle, Rocket, Settings2, Users } from '@lucide/vue';
+import { ArrowLeft, Bookmark, Camera, ChevronRight, Copy, Info, Layers, Mail, MessageCircle, Rocket, Settings2, Trash2, Users } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import OutreachFlowCanvas from '@/components/outreach/OutreachFlowCanvas.vue';
 import OutreachImportListPanel, { type ImportedListOption } from '@/components/outreach/OutreachImportListPanel.vue';
@@ -24,7 +24,7 @@ interface LeadListOption {
 }
 
 const props = defineProps<{
-    templates: Record<string, { label: string; description: string; node_model: OutreachStep[] }>;
+    templates: Record<string, { label: string; description: string; node_model: OutreachStep[]; saved?: boolean }>;
     channelRegistry: {
         channels: Record<string, { label: string; color: string }>;
         actions: Record<string, Array<{ key: string; label: string }>>;
@@ -90,6 +90,19 @@ const templateIcons: Record<string, unknown> = {
     custom: Settings2,
 };
 
+function templateIcon(key: string) {
+    if (key.startsWith('saved_')) return Bookmark;
+    return templateIcons[key] ?? Settings2;
+}
+
+const builtInTemplates = computed(() =>
+    Object.fromEntries(Object.entries(props.templates).filter(([, tpl]) => !tpl.saved)),
+);
+
+const savedTemplates = computed(() =>
+    Object.fromEntries(Object.entries(props.templates).filter(([, tpl]) => tpl.saved)),
+);
+
 const requiredChannels = computed(() => {
     const channels = new Set<string>();
     const walk = (nodes: OutreachStep[]) => {
@@ -110,6 +123,22 @@ function pickTemplate(key: string) {
     steps.value = JSON.parse(JSON.stringify(props.templates[key].node_model));
     if (!campaignName.value) campaignName.value = props.templates[key].label;
     phase.value = 'leads';
+}
+
+function duplicateSavedTemplate(key: string, event: Event) {
+    event.stopPropagation();
+    const templateId = key.replace(/^saved_/, '');
+    if (!templateId) return;
+    router.post(`/outreach/${templateId}/duplicate-template`, {}, { preserveScroll: true });
+}
+
+function deleteSavedTemplate(key: string, event: Event) {
+    event.stopPropagation();
+    const templateId = key.replace(/^saved_/, '');
+    if (!templateId) return;
+    const tpl = props.templates[key];
+    if (!confirm(`Delete template "${tpl?.label ?? 'this template'}"?`)) return;
+    router.delete(`/outreach/templates/${templateId}`, { preserveScroll: true });
 }
 
 function toggleList(list: LeadListOption) {
@@ -277,7 +306,7 @@ onUnmounted(() => {
 
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <button
-                v-for="(tpl, key) in templates"
+                v-for="(tpl, key) in builtInTemplates"
                 :key="key"
                 type="button"
                 class="flex flex-col gap-3 rounded-2xl border-2 bg-card p-5 text-left hover:border-primary/40"
@@ -285,7 +314,7 @@ onUnmounted(() => {
             >
                 <div class="flex items-center gap-3">
                     <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                        <component :is="templateIcons[key]" class="h-5 w-5" />
+                        <component :is="templateIcon(key)" class="h-5 w-5" />
                     </div>
                     <span class="font-semibold text-sm">{{ tpl.label }}</span>
                 </div>
@@ -294,6 +323,50 @@ onUnmounted(() => {
                     <OutreachStepPreviewChip v-for="step in previewSteps(tpl.node_model)" :key="step.key" :step="step" :badge-class="stepBadge(step)" />
                 </div>
             </button>
+        </div>
+
+        <div v-if="Object.keys(savedTemplates).length" class="flex flex-col gap-3">
+            <h2 class="text-sm font-semibold">Your saved templates</h2>
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <button
+                    v-for="(tpl, key) in savedTemplates"
+                    :key="key"
+                    type="button"
+                    class="relative flex flex-col gap-3 rounded-2xl border-2 border-violet-200 bg-card p-5 text-left hover:border-violet-400/60"
+                    @click="pickTemplate(key)"
+                >
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-3">
+                            <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 text-violet-700">
+                                <Bookmark class="h-5 w-5" />
+                            </div>
+                            <span class="font-semibold text-sm">{{ tpl.label }}</span>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <button
+                                type="button"
+                                class="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                title="Duplicate template"
+                                @click="duplicateSavedTemplate(key, $event)"
+                            >
+                                <Copy class="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-lg p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                                title="Delete template"
+                                @click="deleteSavedTemplate(key, $event)"
+                            >
+                                <Trash2 class="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+                    </div>
+                    <p class="text-xs text-muted-foreground">{{ tpl.description }}</p>
+                    <div class="flex flex-wrap gap-1.5">
+                        <OutreachStepPreviewChip v-for="step in previewSteps(tpl.node_model)" :key="step.key" :step="step" :badge-class="stepBadge(step)" />
+                    </div>
+                </button>
+            </div>
         </div>
     </div>
 

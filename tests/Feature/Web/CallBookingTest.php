@@ -33,6 +33,51 @@ class CallBookingTest extends TestCase
         config()->set('billing.require_entitlement', false);
     }
 
+    public function test_public_booking_page_includes_open_graph_meta_for_social_sharing(): void
+    {
+        $user = $this->userWithOrg();
+        $user->forceFill([
+            'name' => 'Alex Host',
+            'call_settings' => [
+                'use_app_booking_link' => true,
+                'use_unipile_calendar' => false,
+                'call_duration_minutes' => 30,
+                'booking_hours_start' => 9,
+                'booking_hours_end' => 17,
+            ],
+        ])->save();
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'google_calendar',
+            'provider_account_id' => 'uni_cal_og',
+            'status' => 'active',
+            'meta' => ['unipile_account_id' => 'uni_cal_og'],
+        ]);
+
+        $token = 'og-booking-token-xyz';
+        V2Call::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'prospect_name' => 'Jane Doe',
+            'status' => 'scheduling',
+            'meta' => ['booking_token' => $token],
+        ]);
+
+        $response = $this->get(route('book.show', ['token' => $token]));
+
+        $response->assertOk();
+        $response->assertSee('property="og:title"', false);
+        $response->assertSee('Book a call with Alex Host', false);
+        $response->assertSee('property="og:description"', false);
+        $response->assertSee('Jane Doe', false);
+        $response->assertSee('property="og:image"', false);
+        $response->assertSee('images/seo/book-call-og.png', false);
+        $response->assertSee('property="og:url"', false);
+        $response->assertSee('name="twitter:card"', false);
+        $response->assertSee('summary_large_image', false);
+    }
+
     public function test_public_booking_page_lists_slots_and_books_call(): void
     {
         Mail::fake();

@@ -62,10 +62,59 @@ class CallOrchestrationService
         $flowSettings = $meta['flow_settings'] ?? null;
 
         if (is_array($flowSettings) && $flowSettings !== []) {
-            return array_merge($this->defaultSettings(), $flowSettings);
+            $settings = array_merge($this->defaultSettings(), $flowSettings);
+        } else {
+            $settings = $this->settingsFor($user);
         }
 
-        return $this->settingsFor($user);
+        if (array_key_exists('auto_send_suggestions', $meta)) {
+            $settings['auto_send_suggestions'] = (bool) $meta['auto_send_suggestions'];
+        }
+
+        return $settings;
+    }
+
+    public function setAutoSendSuggestions(V2Call $call, bool $enabled): V2Call
+    {
+        $meta = is_array($call->meta) ? $call->meta : [];
+        $meta['auto_send_suggestions'] = $enabled;
+        $call->forceFill(['meta' => $meta])->save();
+
+        return $call->fresh();
+    }
+
+    /**
+     * Update auto-send for every active call in a flow batch.
+     * Clears per-call overrides so the batch setting applies uniformly.
+     */
+    public function setFlowAutoSendSuggestions(int $orgId, ?string $batchId, bool $enabled): int
+    {
+        $query = V2Call::query()
+            ->where('organization_id', $orgId)
+            ->whereNotIn('status', ['completed', 'lost', 'failed']);
+
+        if ($batchId === null || $batchId === '') {
+            $query->where(function ($q) {
+                $q->whereNull('meta->batch_id')
+                    ->orWhere('meta->batch_id', '');
+            });
+        } else {
+            $query->where('meta->batch_id', $batchId);
+        }
+
+        $updated = 0;
+        foreach ($query->get() as $call) {
+            /** @var V2Call $call */
+            $meta = is_array($call->meta) ? $call->meta : [];
+            $flowSettings = is_array($meta['flow_settings'] ?? null) ? $meta['flow_settings'] : [];
+            $flowSettings['auto_send_suggestions'] = $enabled;
+            $meta['flow_settings'] = $flowSettings;
+            unset($meta['auto_send_suggestions']);
+            $call->forceFill(['meta' => $meta])->save();
+            $updated++;
+        }
+
+        return $updated;
     }
 
     /**
@@ -100,7 +149,7 @@ class CallOrchestrationService
     }
 
     /**
-     * Make sure the composer message includes the real booking URL (fixes older calls / empty placeholders).
+     * Replace {calendar_url} in the pending opening message when present — never append a link automatically.
      */
     public function ensurePendingMessageHasBookingLink(V2Call $call, User $user): V2Call
     {
@@ -110,19 +159,12 @@ class CallOrchestrationService
 
         $settings = $this->settingsForCall($call, $user);
         $token = app(CallCalendarService::class)->ensureBookingToken($call);
-        $bookingUrl = app(CallCalendarService::class)->resolveBookingUrl($user, $settings, $token);
-
-        if ($bookingUrl === '') {
-            return $call;
-        }
 
         $text = trim((string) $call->pending_message);
         if ($text === '') {
             $text = $this->resolveOpeningMessageForCall($user, $settings, null, $token);
-        } elseif (str_contains($text, '{calendar_url}')) {
-            $text = str_replace('{calendar_url}', $bookingUrl, $text);
-        } elseif (!str_contains($text, $bookingUrl)) {
-            $text = rtrim($text, " \n\r\t:").': '.$bookingUrl;
+        } else {
+            $text = $this->substituteCalendarPlaceholder($user, $settings, $text, $token);
         }
 
         if ($text !== trim((string) $call->pending_message)) {
@@ -130,6 +172,23 @@ class CallOrchestrationService
         }
 
         return $call->fresh();
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     */
+    public function substituteCalendarPlaceholder(User $user, array $settings, string $text, string $bookingToken): string
+    {
+        if (!str_contains($text, '{calendar_url}')) {
+            return $text;
+        }
+
+        $bookingUrl = app(CallCalendarService::class)->resolveBookingUrl($user, $settings, $bookingToken);
+        if ($bookingUrl === '') {
+            return $text;
+        }
+
+        return str_replace('{calendar_url}', $bookingUrl, $text);
     }
 
     /**
@@ -346,6 +405,9 @@ class CallOrchestrationService
         $batchId = (string) Str::uuid();
         $flowName = $batchName !== '' ? $batchName : 'Untitled flow';
         $flowSettings = $this->snapshotFlowSettings($user, $pendingMessage !== '' ? $pendingMessage : null);
+        if (array_key_exists('auto_send_suggestions', $options)) {
+            $flowSettings['auto_send_suggestions'] = (bool) $options['auto_send_suggestions'];
+        }
 
         $created = 0;
         $skipped = 0;
@@ -430,6 +492,11 @@ class CallOrchestrationService
         $queued = 0;
         $skipped = 0;
 
+        // Human-paced launch: stagger each chat with jitter so bulk starts
+        // never burst Unipile with back-to-back start_chat calls.
+        $stagger = max(1, (int) config('services.unipile_pacing.chat_launch_stagger_seconds', 8));
+        $jitterMax = max(0, (int) config('services.unipile_pacing.chat_launch_jitter_seconds', 7));
+
         foreach ($query->get() as $call) {
             /** @var V2Call $call */
             if (trim((string) $call->connection_id) === '') {
@@ -437,7 +504,8 @@ class CallOrchestrationService
                 continue;
             }
 
-            LaunchCallFromLeadJob::dispatch($call->id);
+            $delaySeconds = $queued * $stagger + ($jitterMax > 0 ? random_int(0, $jitterMax) : 0);
+            LaunchCallFromLeadJob::dispatch($call->id)->delay(now()->addSeconds($delaySeconds));
             $queued++;
         }
 
@@ -456,9 +524,14 @@ class CallOrchestrationService
             return false;
         }
 
+        $settings = $this->settingsForCall($call, $user);
+        $token = app(CallCalendarService::class)->ensureBookingToken($call);
+
         $text = trim((string) $call->pending_message);
         if ($text === '') {
-            $text = $this->resolveOpeningMessage($this->settingsForCall($call, $user));
+            $text = $this->resolveOpeningMessageForCall($user, $settings, null, $token);
+        } else {
+            $text = $this->substituteCalendarPlaceholder($user, $settings, $text, $token);
         }
 
         $persistence = app(OutreachPersistenceService::class);
@@ -753,25 +826,12 @@ class CallOrchestrationService
             $reply = $this->nextReplyForIntent((string) ($analysis['intent'] ?? 'neutral'));
         }
 
-        $nextAction = (string) ($analysis['next_action'] ?? '');
-        $calendarUrl = trim((string) ($settings['calendar_url'] ?? ''));
-        if ($calendarUrl === '' && $call && $user) {
+        if ($call && $user && str_contains($reply, '{calendar_url}')) {
             $token = trim((string) Arr::get(is_array($call->meta) ? $call->meta : [], 'booking_token', ''));
             if ($token === '') {
                 $token = app(CallCalendarService::class)->ensureBookingToken($call);
             }
-            $calendarUrl = app(CallCalendarService::class)->resolveBookingUrl($user, $settings, $token);
-        }
-
-        if (in_array($nextAction, ['send_calendar', 'schedule_call', 'ask_availability'], true) && $calendarUrl !== '') {
-            if (!str_contains(strtolower($reply), strtolower($calendarUrl))) {
-                $template = (string) ($settings['booking_message'] ?? '');
-                if ($template !== '' && str_contains($template, '{calendar_url}')) {
-                    $reply = str_replace('{calendar_url}', $calendarUrl, $template);
-                } elseif (!str_contains(strtolower($reply), 'calendar') && !str_contains(strtolower($reply), 'schedule')) {
-                    $reply .= "\n\n".$calendarUrl;
-                }
-            }
+            $reply = $this->substituteCalendarPlaceholder($user, $settings, $reply, $token);
         }
 
         return $reply;

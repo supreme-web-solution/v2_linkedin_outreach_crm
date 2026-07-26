@@ -3,6 +3,7 @@ import { Link, usePage } from '@inertiajs/vue3';
 import {
     BarChart3,
     Bot,
+    Calendar,
     FileText,
     Gift,
     GraduationCap,
@@ -48,6 +49,7 @@ function hasAny(keys: string[]): boolean {
 const overviewItems: NavItem[] = [
     { title: 'Dashboard', href: dashboard(), icon: LayoutGrid },
     { title: 'Tutorials', href: '/tutorials', icon: GraduationCap },
+    { title: 'Calendar', href: '/calendar', icon: Calendar },
     { title: 'Analytics', href: '/analytics', icon: BarChart3 },
 ];
 

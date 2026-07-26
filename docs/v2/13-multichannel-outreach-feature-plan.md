@@ -4,6 +4,8 @@
 **Date:** 2026-07-19  
 **Scope:** New standalone product module. Does **not** modify the existing LinkedIn Campaign system or browser extension flow.
 
+> **Status & checklists:** See [00-feature-status-checklist.md](./00-feature-status-checklist.md) — phase boxes below are **historical** and many items are already shipped.
+
 ---
 
 ## 1. Vision
@@ -447,57 +449,68 @@ Copy **patterns** from `components/campaign/*`, not files — avoids accidental 
 
 ## 7. Phased delivery plan
 
+**Moved.** Implementation status, remaining work, and staging checklist live in:
+
+→ **[00-feature-status-checklist.md](./00-feature-status-checklist.md)** (Section 5: Multi-channel outreach)
+
+The phase boxes below are kept for historical context only.
+
+<details>
+<summary>Historical phase checklists (archived)</summary>
+
 ### Phase 0 — Foundation (1–2 weeks)
 
-- [ ] ADR sign-off on isolation rules (this doc)
-- [ ] DB migrations for `v2_outreach_*` tables
-- [ ] Models + empty CRUD routes/controllers
-- [ ] Sidebar nav + empty list page
-- [ ] `OutreachChannelRegistry` scaffold
+- [x] ADR sign-off on isolation rules (this doc)
+- [x] DB migrations for `v2_outreach_*` tables
+- [x] Models + empty CRUD routes/controllers
+- [x] Sidebar nav + empty list page
+- [x] `OutreachChannelRegistry` scaffold
 
 ### Phase 1 — Integrations multi-channel (1–2 weeks)
 
-- [ ] Integrations UI: channel cards for Email, WhatsApp, Instagram, Telegram, X
-- [ ] Hosted auth connect per Unipile provider type
-- [ ] Store multiple `V2IntegrationAccount` rows per org
-- [ ] Shared Inertia prop: `connectedChannels` summary
-- [ ] Verify + disconnect + disconnected banner per channel
+- [x] Integrations UI: channel cards for Email, WhatsApp, Instagram, Telegram, X
+- [x] Hosted auth connect per Unipile provider type
+- [x] Store multiple `V2IntegrationAccount` rows per org
+- [x] Shared Inertia prop: `connectedChannels` summary
+- [x] Verify + disconnect + disconnected banner per channel
 
 ### Phase 2 — Builder MVP (2–3 weeks)
 
-- [ ] `OutreachFlowCanvas` with channel → action picker
-- [ ] Templates: LinkedIn-only, Email-only, LinkedIn→Email sequence
-- [ ] Audience attach (reuse campaign list attach logic, new pivot table)
-- [ ] Save draft / launch validation (channels connected)
+- [x] `OutreachFlowCanvas` with channel → action picker
+- [x] Templates: LinkedIn-only, Email-only, LinkedIn→Email sequence
+- [x] Audience attach (reuse campaign list attach logic, new pivot table)
+- [x] Save draft / launch validation (channels connected)
 
 ### Phase 3 — Execution engine (2–3 weeks)
 
-- [ ] `OutreachRunDispatcher` + `ProcessOutreachLeadJob`
-- [ ] `LinkedInChannelExecutor` (wrap existing UnipileProvider)
-- [ ] `EmailChannelExecutor` (Unipile email API)
-- [ ] Wait + end steps
-- [ ] Activity log + detail page live polling
-- [ ] Disconnect guard + pause (mirror recent campaign work)
+- [x] `OutreachRunDispatcher` + `ProcessOutreachLeadJob`
+- [x] `LinkedInChannelExecutor` (wrap existing UnipileProvider)
+- [x] `EmailChannelExecutor` (Unipile email API)
+- [x] Wait + end steps
+- [x] Activity log + detail page live polling
+- [x] Disconnect guard + pause (mirror recent campaign work)
 
 ### Phase 4 — Conditions & webhooks (1–2 weeks)
 
-- [ ] LinkedIn: invite accepted condition
-- [ ] Email: replied / no reply
-- [ ] Webhook → `channel_state` updates
-- [ ] Re-dispatch lead job on condition met
+- [x] LinkedIn: invite accepted condition
+- [x] Email: replied / no reply
+- [x] Webhook → `channel_state` updates
+- [x] Re-dispatch lead job on condition met
 
 ### Phase 5 — Additional channels (rolling)
 
-- [ ] WhatsApp executor + conditions
-- [ ] Instagram executor
-- [ ] Telegram executor
-- [ ] X executor (after API verification)
+- [x] WhatsApp executor + conditions
+- [x] Instagram executor
+- [x] Telegram executor
+- [x] X executor (after API verification)
 
 ### Phase 6 — Polish
 
-- [ ] Analytics dashboard for multichannel campaigns
-- [ ] AI compose step (optional)
-- [ ] Template marketplace / duplicate campaign
+- [x] Per-campaign stats + funnel (detail page)
+- [x] AI auto-reply per channel
+- [x] Save / duplicate templates (org-local; no public marketplace)
+
+</details>
 
 ---
 

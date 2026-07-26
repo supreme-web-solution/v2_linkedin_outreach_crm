@@ -10,6 +10,7 @@ const props = defineProps<{
     channelRegistry: {
         channels: Record<string, { label: string; color: string }>;
         actions: Record<string, Array<{ key: string; label: string }>>;
+        conditions?: Record<string, Array<{ key: string; label: string }>>;
     };
 }>();
 
@@ -22,6 +23,15 @@ const emit = defineEmits<{
 const isAction = computed(() => props.step.type === 'action');
 const isDelay = computed(() => props.step.type === 'delay');
 const isCondition = computed(() => props.step.type === 'condition');
+const conditionOptions = computed(() => {
+    const ch = props.step.channel;
+    if (!ch) return [];
+    return props.channelRegistry.conditions?.[ch] ?? [];
+});
+const defaultTimeoutDays = computed(() => {
+    const cond = props.step.condition ?? '';
+    return cond === 'invite_accepted' ? 7 : 3;
+});
 const channelColor = computed(() => {
     const ch = props.step.channel;
     return ch ? (props.channelRegistry.channels[ch]?.color ?? '#64748b') : '#64748b';
@@ -152,8 +162,34 @@ const channelColor = computed(() => {
         </template>
 
         <template v-if="isCondition">
+            <div class="flex flex-col gap-1">
+                <label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Condition</label>
+                <select
+                    :value="step.condition ?? ''"
+                    class="rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-xs"
+                    @change="emit('updateField', 'condition', ($event.target as HTMLSelectElement).value)"
+                >
+                    <option v-for="opt in conditionOptions" :key="opt.key" :value="opt.key">{{ opt.label }}</option>
+                </select>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Wait up to (days)
+                </label>
+                <input
+                    type="number"
+                    :value="(step.config?.timeout_days as number) ?? defaultTimeoutDays"
+                    min="1"
+                    max="90"
+                    class="w-20 rounded-lg border border-orange-200 px-2 py-1 text-xs text-center"
+                    @change="emit('updateConfig', 'timeout_days', +(($event.target as HTMLInputElement).value))"
+                />
+                <p class="text-[10px] text-muted-foreground">
+                    Resolves automatically after this many days if the condition is not met.
+                </p>
+            </div>
             <p class="text-xs text-muted-foreground">
-                Add steps to the Yes / No branches using the platform panel. Select any branch step to configure it.
+                Add steps to the Yes / No branches using the platform panel.
             </p>
         </template>
     </div>

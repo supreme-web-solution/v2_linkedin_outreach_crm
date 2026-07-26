@@ -5,13 +5,14 @@ namespace App\Http\Controllers\Web;
 use App\Http\Controllers\Controller;
 use App\Models\V2MiniStat;
 use App\Models\V2UserActivity;
+use App\V2\Services\DailyUsageQuotaService;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class AnalyticsWebController extends Controller
 {
-    public function index(): Response
+    public function index(DailyUsageQuotaService $quotas): Response
     {
         $user = auth()->user();
         $orgId = $user->current_organization_id;
@@ -57,6 +58,7 @@ class AnalyticsWebController extends Controller
             'dailyActivity' => $dailyActivity,
             'webhookActivity' => $webhookActivity,
             'hasOrg' => (bool) $orgId,
+            'dailyQuotas' => $quotas->forUser($user),
         ]);
     }
 }

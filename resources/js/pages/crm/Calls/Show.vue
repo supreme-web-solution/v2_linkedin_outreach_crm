@@ -3,6 +3,7 @@ import { Head, Link, router, useForm } from '@inertiajs/vue3';
 import { ArrowLeft, Bell, Calendar, CheckCircle2, Copy, Info, Loader2, MessageSquare, Send, Sparkles, Video, X, XCircle } from '@lucide/vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
+import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
@@ -44,6 +45,8 @@ const props = defineProps<{
     hasUnipile: boolean;
     hasCalendarIntegration?: boolean;
     aiConfigured: boolean;
+    auto_send_suggestions: boolean;
+    auto_send_overridden?: boolean;
     suggestedConversations: Array<{
         id: number;
         prospect_name: string | null;
@@ -83,6 +86,27 @@ const editForm = useForm({
     prospect_name: props.call.prospect_name ?? '',
 });
 
+const autoSendEnabled = ref(props.auto_send_suggestions);
+const autoSendSaving = ref(false);
+
+watch(
+    () => props.auto_send_suggestions,
+    (value) => {
+        autoSendEnabled.value = value;
+    },
+);
+
+function toggleAutoSend(enabled: boolean) {
+    autoSendEnabled.value = enabled;
+    autoSendSaving.value = true;
+    router.put(`/calls/${props.call.id}`, { auto_send_suggestions: enabled }, {
+        preserveScroll: true,
+        onFinish: () => {
+            autoSendSaving.value = false;
+        },
+    });
+}
+
 const canSend = computed(() => {
     if (!editForm.pending_message?.trim() || !props.hasUnipile || sending.value || props.call.launch_pending) {
         return false;
@@ -97,16 +121,17 @@ const sendButtonTitle = computed(() =>
     props.call.has_conversation ? 'Send via Unipile' : 'Start chat & send opening message',
 );
 
-const messageMissingBookingLink = computed(() => {
-    if (!props.bookingUrl || !editForm.pending_message) return false;
-    return !editForm.pending_message.includes(props.bookingUrl);
-});
+const messageHasCalendarPlaceholder = computed(() => editForm.pending_message?.includes('{calendar_url}') ?? false);
 
 function insertBookingLink() {
     if (!props.bookingUrl) return;
     const text = editForm.pending_message?.trim() ?? '';
+    if (text.includes('{calendar_url}')) {
+        editForm.pending_message = text.replaceAll('{calendar_url}', props.bookingUrl);
+        return;
+    }
     if (text.includes(props.bookingUrl)) return;
-    editForm.pending_message = text ? `${text.replace(/[:\s]+$/, '')}: ${props.bookingUrl}` : props.bookingUrl;
+    editForm.pending_message = text ? `${text}\n\n${props.bookingUrl}` : props.bookingUrl;
 }
 
 async function copyBookingLink() {
@@ -119,6 +144,17 @@ async function copyBookingLink() {
 }
 
 const aiSource = computed(() => (props.latestAnalysis?.source as string | undefined) ?? null);
+
+const aiAutoSendTooltip = computed(() => {
+    const mode = autoSendEnabled.value
+        ? 'AI replies send automatically when this prospect messages you.'
+        : 'AI drafts appear in the composer for you to review before sending.';
+    const scope = props.auto_send_overridden
+        ? 'This override applies to this chat only.'
+        : 'Uses your flow default — toggle to override for this chat only.';
+
+    return `${mode} ${scope}`;
+});
 
 const intentLabel = computed(() => {
     const intent = props.latestAnalysis?.current_intent as string | undefined;
@@ -396,11 +432,11 @@ const stageLabel: Record<string, string> = {
                         Connect LinkedIn under <Link href="/integrations" class="underline">Integrations</Link> to send messages.
                     </p>
                     <p v-else-if="!call.has_conversation" class="mt-2 text-xs text-muted-foreground">
-                        Send starts the LinkedIn chat with your edited opening message — include the booking link so they can pick a time.
+                        Send starts the LinkedIn chat with your edited opening message. Add <code>{calendar_url}</code> if you want their personal booking link inserted when sent.
                     </p>
-                    <p v-if="messageMissingBookingLink && bookingUrl" class="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
-                        Booking link not in message yet.
-                        <button type="button" class="font-medium underline" @click="insertBookingLink">Insert link</button>
+                    <p v-if="messageHasCalendarPlaceholder && bookingUrl" class="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        Preview with link:
+                        <button type="button" class="font-medium text-primary underline" @click="insertBookingLink">Replace {calendar_url}</button>
                     </p>
                     <p v-else class="mt-1 text-[10px] text-muted-foreground">
                         Enter to send · Shift+Enter for new line
@@ -436,10 +472,37 @@ const stageLabel: Record<string, string> = {
                 </div>
             </div>
 
-            <!-- Sidebar: booking + reminders -->
-            <div class="flex min-h-0 flex-col gap-3 overflow-hidden lg:col-span-2">
+            <!-- Sidebar: AI + booking + reminders -->
+            <div class="flex min-h-0 flex-col gap-2 overflow-y-auto lg:col-span-2 lg:overflow-hidden">
+                <div class="flex shrink-0 items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2 shadow-sm">
+                    <div class="flex min-w-0 items-center gap-1.5">
+                        <Sparkles class="h-3.5 w-3.5 shrink-0 text-violet-600" />
+                        <span class="text-sm font-medium">Auto-send AI</span>
+                        <Tooltip :delay-duration="200">
+                            <TooltipTrigger as-child>
+                                <button
+                                    type="button"
+                                    class="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                                    aria-label="About AI auto-send"
+                                >
+                                    <Info class="h-3.5 w-3.5" />
+                                </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="left" align="start" class="max-w-[14rem] text-xs leading-relaxed">
+                                {{ aiAutoSendTooltip }}
+                            </TooltipContent>
+                        </Tooltip>
+                    </div>
+                    <Switch
+                        :model-value="autoSendEnabled"
+                        :disabled="autoSendSaving"
+                        class="shrink-0"
+                        @update:model-value="toggleAutoSend"
+                    />
+                </div>
+
                 <div class="shrink-0 rounded-xl border border-border bg-card shadow-sm">
-                    <div class="flex items-center justify-between border-b border-border px-3 py-2.5">
+                    <div class="flex items-center justify-between border-b border-border px-3 py-2">
                         <div class="flex items-center gap-2">
                             <Calendar class="h-4 w-4" />
                             <h2 class="text-sm font-semibold">Book call</h2>
@@ -463,15 +526,15 @@ const stageLabel: Record<string, string> = {
                             </TooltipContent>
                         </Tooltip>
                     </div>
-                    <form class="space-y-2.5 p-3" @submit.prevent="saveEdits">
-                        <div v-if="call.meeting_url" class="rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2">
+                    <form class="space-y-2 p-2.5" @submit.prevent="saveEdits">
+                        <div v-if="call.meeting_url" class="rounded-lg border border-primary/30 bg-primary/5 px-2 py-1.5">
                             <a
                                 :href="call.meeting_url"
                                 target="_blank"
                                 rel="noopener"
-                                class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                                class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                             >
-                                <Video class="h-4 w-4" />
+                                <Video class="h-3.5 w-3.5" />
                                 Join meeting
                             </a>
                             <a
@@ -479,55 +542,53 @@ const stageLabel: Record<string, string> = {
                                 :href="call.calendar_html_link"
                                 target="_blank"
                                 rel="noopener"
-                                class="mt-1.5 block truncate text-center text-xs text-primary underline"
+                                class="mt-1 block truncate text-center text-[11px] text-primary underline"
                             >
-                                Open in Google / Outlook
+                                Open in calendar
                             </a>
                         </div>
-                        <div v-else-if="call.calendar_html_link" class="rounded-lg border border-green-200 bg-green-50 px-2.5 py-2 text-xs dark:border-green-900/40 dark:bg-green-950/30">
-                            <a :href="call.calendar_html_link" target="_blank" rel="noopener" class="block truncate font-medium text-green-700 underline dark:text-green-300">Open in Google / Outlook</a>
+                        <div v-else-if="call.calendar_html_link" class="rounded-lg border border-green-200 bg-green-50 px-2 py-1.5 text-xs dark:border-green-900/40 dark:bg-green-950/30">
+                            <a :href="call.calendar_html_link" target="_blank" rel="noopener" class="block truncate font-medium text-green-700 underline dark:text-green-300">Open in calendar</a>
                         </div>
-                        <p v-else-if="call.calendar_sync_error" class="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
-                            Calendar sync failed — call is still booked. Reconnect your calendar under Integrations.
+                        <p v-else-if="call.calendar_sync_error" class="rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                            Calendar sync failed — call is still booked.
                         </p>
-                        <label class="grid gap-1 text-sm">
-                            <span class="text-xs font-medium">Prospect name</span>
-                            <input v-model="editForm.prospect_name" type="text" class="rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm" />
-                        </label>
-                        <label class="grid gap-1 text-sm">
-                            <span class="text-xs font-medium">Call date &amp; time</span>
-                            <input v-model="editForm.scheduled_call_at" type="datetime-local" class="rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm" />
-                        </label>
-                        <div v-if="bookingUrl" class="rounded-lg border border-dashed border-primary/25 bg-primary/5 px-2.5 py-2 text-xs">
-                            <p class="font-medium text-primary">Prospect booking link</p>
-                            <div class="mt-1 flex items-center gap-2">
-                                <a :href="bookingUrl" target="_blank" rel="noopener" class="min-w-0 flex-1 truncate text-primary underline">{{ bookingUrl }}</a>
-                                <button type="button" class="shrink-0 rounded p-1 hover:bg-primary/10" title="Copy link" @click="copyBookingLink">
-                                    <Copy class="h-3.5 w-3.5 text-primary" />
-                                </button>
-                            </div>
+                        <div class="grid gap-2 sm:grid-cols-2">
+                            <label class="grid gap-0.5 text-sm">
+                                <span class="text-[11px] font-medium text-muted-foreground">Prospect name</span>
+                                <input v-model="editForm.prospect_name" type="text" class="rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
+                            </label>
+                            <label class="grid gap-0.5 text-sm">
+                                <span class="text-[11px] font-medium text-muted-foreground">Call date &amp; time</span>
+                                <input v-model="editForm.scheduled_call_at" type="datetime-local" class="rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
+                            </label>
                         </div>
-                        <div v-else-if="settings.calendar_url" class="rounded-lg border border-dashed border-primary/25 bg-primary/5 px-2.5 py-2 text-xs">
-                            <p class="font-medium text-primary">Manual booking link</p>
-                            <a :href="settings.calendar_url" target="_blank" rel="noopener" class="mt-1 block truncate text-primary underline">{{ settings.calendar_url }}</a>
+                        <div v-if="bookingUrl" class="flex items-center gap-2 rounded-lg border border-dashed border-primary/25 bg-primary/5 px-2 py-1.5 text-[11px]">
+                            <span class="shrink-0 font-medium text-primary">Booking link</span>
+                            <a :href="bookingUrl" target="_blank" rel="noopener" class="min-w-0 flex-1 truncate text-primary underline">{{ bookingUrl }}</a>
+                            <button type="button" class="shrink-0 rounded p-0.5 hover:bg-primary/10" title="Copy link" @click="copyBookingLink">
+                                <Copy class="h-3.5 w-3.5 text-primary" />
+                            </button>
                         </div>
-                        <p v-else class="text-xs text-muted-foreground">
-                            Add a calendar link in
-                            <Link href="/calls" class="text-primary underline">Call Manager settings</Link>.
+                        <div v-else-if="settings.calendar_url" class="rounded-lg border border-dashed border-primary/25 bg-primary/5 px-2 py-1.5 text-[11px]">
+                            <a :href="settings.calendar_url" target="_blank" rel="noopener" class="block truncate text-primary underline">{{ settings.calendar_url }}</a>
+                        </div>
+                        <p v-else class="text-[11px] text-muted-foreground">
+                            <Link href="/calls" class="text-primary underline">Call settings</Link> to add a calendar link.
                         </p>
                         <button
                             type="submit"
-                            class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-50"
+                            class="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-2.5 py-1.5 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-50"
                             :disabled="editForm.processing || !editForm.scheduled_call_at"
                         >
-                            <Calendar class="h-4 w-4" />
-                            Save &amp; schedule reminders
+                            <Calendar class="h-3.5 w-3.5" />
+                            Save &amp; schedule
                         </button>
                     </form>
                 </div>
 
                 <div v-if="call.reminders.length" class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-                    <div class="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+                    <div class="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
                         <div class="flex items-center gap-2">
                             <Bell class="h-4 w-4" />
                             <h2 class="text-sm font-semibold">Reminders</h2>
@@ -535,7 +596,7 @@ const stageLabel: Record<string, string> = {
                         <span class="text-xs text-muted-foreground">{{ call.reminders.length }}</span>
                     </div>
                     <ul class="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
-                        <li v-for="r in call.reminders" :key="r.id" class="px-4 py-2 text-sm">
+                        <li v-for="r in call.reminders" :key="r.id" class="px-3 py-1.5 text-sm">
                             <p class="line-clamp-2">{{ r.message }}</p>
                             <p class="text-xs text-muted-foreground">{{ formatTime(r.send_at) }} · {{ r.status }}</p>
                         </li>

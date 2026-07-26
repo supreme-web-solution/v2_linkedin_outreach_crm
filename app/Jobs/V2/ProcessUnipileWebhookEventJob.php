@@ -11,6 +11,7 @@ use App\Models\V2Call;
 use App\Models\User;
 use App\Jobs\V2\HandleCallInboundReplyJob;
 use App\V2\Integrations\Unipile\UnipileProvider;
+use App\V2\Outreach\OutreachChannelGuard;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Services\AutoResponseService;
 use App\V2\Services\CallCalendarService;
@@ -80,6 +81,14 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             'account.reconnected',
             'account.connected',
             'account.error',
+            'email.opened',
+            'email.replied',
+            'email.bounced',
+            'mail.opened',
+            'mail.received',
+            'mail.bounced',
+            'email.tracked.open',
+            'email.failed',
             'event.created',
             'event.updated',
             'calendar.event.created',
@@ -249,6 +258,9 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
         }
 
         if (in_array($eventType, ['invitation.accepted', 'connection.accepted'], true) && $event->user_id) {
+            app(\App\V2\Outreach\OutreachWebhookProgressService::class)
+                ->handleInvitationAccepted((int) $event->user_id, $payload);
+
             $this->recordWebhookActivity(
                 (int) $event->user_id,
                 'webhook.connection.accepted',
@@ -352,6 +364,18 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             );
         }
 
+        if (in_array($eventType, ['email.opened', 'mail.opened', 'email.tracked.open', 'email.replied', 'mail.received', 'email.bounced', 'mail.bounced', 'email.failed'], true) && $event->user_id) {
+            app(\App\V2\Outreach\OutreachWebhookProgressService::class)
+                ->handleEmailTrackingEvent((int) $event->user_id, $eventType, $payload);
+
+            $this->recordWebhookActivity(
+                (int) $event->user_id,
+                'webhook.email.tracking',
+                1,
+                ['event_id' => $event->event_id, 'event_type' => $eventType]
+            );
+        }
+
         if (in_array($eventType, ['account.disconnected', 'account.reconnected', 'account.connected', 'account.error'], true) && $event->user_id) {
             $statusMap = [
                 'account.reconnected' => 'reconnected',
@@ -396,6 +420,17 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                         'last_synced_at' => now(),
                     ]
                 );
+
+                if ($eventType === 'account.disconnected') {
+                    $channelKey = OutreachChannelRegistry::channelKeyForUnipileType($providerRaw) ?? $provider;
+                    $organizationId = (int) (User::query()->where('id', $event->user_id)->value('current_organization_id') ?? 0);
+                    app(OutreachChannelGuard::class)->handleChannelDisconnect(
+                        (int) $event->user_id,
+                        $organizationId > 0 ? $organizationId : null,
+                        $channelKey,
+                        'Account disconnected via webhook',
+                    );
+                }
             }
 
             $this->recordWebhookActivity(
@@ -435,6 +470,18 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
         }
 
         $event->forceFill(['processed_at' => now()])->save();
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        app(\App\V2\Services\OpsAlertService::class)->notify(
+            'unipile_webhook',
+            'Unipile webhook job failed after retries',
+            [
+                'provider_event_id' => $this->providerEventId,
+                'error' => $exception->getMessage(),
+            ],
+        );
     }
 
     /**

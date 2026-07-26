@@ -9,6 +9,7 @@ use App\Models\V2OutreachRun;
 use App\V2\Outreach\OutreachActivityLogger;
 use App\V2\Outreach\OutreachChannelGuard;
 use App\V2\Outreach\OutreachCompletionService;
+use App\V2\Outreach\OutreachConditionEvaluator;
 use App\V2\Outreach\OutreachSequenceResolver;
 use App\V2\Outreach\OutreachStepExecutor;
 use Illuminate\Bus\Queueable;
@@ -44,6 +45,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
         OutreachActivityLogger $logger,
         OutreachCompletionService $completion,
         OutreachChannelGuard $guard,
+        OutreachConditionEvaluator $conditionEvaluator,
     ): void {
         $campaign = V2OutreachCampaign::query()->find($this->outreachCampaignId);
         if (! $campaign || ! in_array($campaign->status, ['active', 'running'], true)) {
@@ -105,7 +107,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         try {
             if ($stepType === 'condition') {
-                $this->handleCondition($campaign, $lead, $progress, $run, $node, $nodes, $resolver, $logger);
+                $this->handleCondition($campaign, $lead, $progress, $run, $node, $nodes, $resolver, $logger, $conditionEvaluator);
 
                 return;
             }
@@ -163,6 +165,26 @@ class ProcessOutreachLeadJob implements ShouldQueue
             $logger->log($campaign->id, $lead->id, $run?->id, $node, 'paused', "Paused — {$channel} disconnected.");
             $lead->update(['status' => 'pending']);
             $progress->update(['next_run_at' => null]);
+
+            return;
+        }
+
+        if ($status === 'deferred') {
+            $runAt = $result['next_run_at'] ?? now()->addDay()->startOfDay()->addMinutes(10);
+
+            $logger->log(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'scheduled',
+                "Daily limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                $result['payload'] ?? [],
+            );
+
+            // Same node retries tomorrow; keys are not advanced.
+            $progress->update(['next_run_at' => $runAt]);
+            self::dispatch($campaign->id, $lead->id, $run?->id)->delay($runAt);
 
             return;
         }
@@ -232,11 +254,14 @@ class ProcessOutreachLeadJob implements ShouldQueue
         array $nodes,
         OutreachSequenceResolver $resolver,
         OutreachActivityLogger $logger,
+        OutreachConditionEvaluator $conditionEvaluator,
     ): void {
-        $acceptance = $this->resolveConditionValue($progress, $node);
+        $acceptance = $conditionEvaluator->evaluate($progress, $node);
         if ($acceptance === null) {
+            $conditionEvaluator->markConditionWaiting($progress);
             $logger->log($campaign->id, $lead->id, $run?->id, $node, 'waiting', 'Waiting for condition.');
             $progress->update(['next_run_at' => now()->addHours(6)]);
+            self::dispatch($campaign->id, $lead->id, $run?->id)->delay(now()->addHours(6));
 
             return;
         }
@@ -250,6 +275,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
             'next_node_key' => $nextKey,
             'completed_keys' => array_values(array_unique($completed)),
             'next_run_at' => null,
+            'meta' => array_merge(is_array($progress->meta) ? $progress->meta : [], ['condition_wait_since' => null]),
         ]);
 
         if ($nextKey !== null) {
@@ -286,23 +312,5 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         $logger->log($campaign->id, $lead->id, $run?->id, null, 'completed', "Sequence finished for {$lead->full_name}.");
         $completion->maybeFinish($campaign, $run);
-    }
-
-    /**
-     * @param  array<string, mixed>  $node
-     */
-    private function resolveConditionValue(V2OutreachLeadProgress $progress, array $node): ?bool
-    {
-        $condition = (string) ($node['condition'] ?? 'invite_accepted');
-        $channel = (string) ($node['channel'] ?? 'linkedin');
-        $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
-        $channelData = is_array($channelState[$channel] ?? null) ? $channelState[$channel] : [];
-        $replied = (bool) ($channelData['replied'] ?? false);
-
-        return match ($condition) {
-            'message_replied', 'email_replied', 'has_replied' => $replied ? true : ($progress->acceptance_status === false ? false : null),
-            'no_reply' => $replied ? false : ($progress->acceptance_status === false ? true : null),
-            default => $progress->acceptance_status,
-        };
     }
 }

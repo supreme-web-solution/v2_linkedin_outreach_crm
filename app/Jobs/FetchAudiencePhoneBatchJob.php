@@ -41,6 +41,7 @@ class FetchAudiencePhoneBatchJob implements ShouldQueue
         }
 
         $items = AudienceList::whereIn('id', $this->audienceListItemIds)->get();
+        $lookupsDone = 0;
 
         foreach ($items as $item) {
             if (! empty($item->con_phone) || ! empty($item->phone_fetch_attempted_at)) {
@@ -59,6 +60,11 @@ class FetchAudiencePhoneBatchJob implements ShouldQueue
                 ]);
                 continue;
             }
+
+            if ($lookupsDone > 0) {
+                $this->humanPause();
+            }
+            $lookupsDone++;
 
             $item->update(['phone_fetch_status' => 'processing']);
 
@@ -89,6 +95,16 @@ class FetchAudiencePhoneBatchJob implements ShouldQueue
                     'phone_fetch_status' => 'completed',
                 ]);
             }
+        }
+    }
+
+    private function humanPause(): void
+    {
+        $min = max(0, (int) config('services.unipile_pacing.profile_lookup_delay_min_ms', 1000));
+        $max = max($min, (int) config('services.unipile_pacing.profile_lookup_delay_max_ms', 3000));
+
+        if ($max > 0) {
+            usleep(random_int($min, $max) * 1000);
         }
     }
 }

@@ -8,6 +8,7 @@ import {
     MessageSquare,
     Phone,
     Sparkles,
+    Upload,
     Users2,
 } from '@lucide/vue';
 import { computed } from 'vue';
@@ -19,9 +20,11 @@ defineOptions({
     },
 });
 
-defineProps<{
+const props = defineProps<{
     stats: {
         leads: number;
+        linkedin_leads: number;
+        imported_leads: number;
         campaigns: number;
         conversations: number;
         calls: number;
@@ -43,11 +46,19 @@ const todayLabel = new Intl.DateTimeFormat(undefined, {
     day: 'numeric',
 }).format(new Date());
 
+const isEmptyWorkspace = computed(() =>
+    props.stats.leads === 0
+    && props.stats.campaigns === 0
+    && props.stats.conversations === 0
+    && props.stats.calls === 0,
+);
+
 const statCards = [
     {
         href: '/leads',
-        label: 'Leads',
+        label: 'Total contacts',
         valueKey: 'leads' as const,
+        sublabelKey: null as null,
         icon: Users2,
         gradient: 'from-blue-400 to-blue-600',
         ring: 'ring-blue-500/10',
@@ -56,22 +67,25 @@ const statCards = [
         href: '/campaigns',
         label: 'Campaigns',
         valueKey: 'campaigns' as const,
+        sublabelKey: null,
         icon: Megaphone,
         gradient: 'from-sky-400 to-sky-600',
         ring: 'ring-sky-500/10',
     },
     {
         href: '/conversations',
-        label: 'Conversations',
+        label: 'Inbox threads',
         valueKey: 'conversations' as const,
+        sublabelKey: null,
         icon: MessageSquare,
         gradient: 'from-violet-400 to-violet-600',
         ring: 'ring-violet-500/10',
     },
     {
         href: '/calls',
-        label: 'Calls',
+        label: 'In pipeline',
         valueKey: 'calls' as const,
+        sublabelKey: null,
         icon: Phone,
         gradient: 'from-emerald-400 to-emerald-600',
         ring: 'ring-emerald-500/10',
@@ -80,23 +94,31 @@ const statCards = [
 
 const quickActions = [
     { href: '/leads', label: 'View Leads', icon: Users2 },
+    { href: '/outreach/create', label: 'New outreach', icon: Upload },
     { href: '/campaigns', label: 'Campaigns', icon: Megaphone },
     { href: '/conversations', label: 'Conversations', icon: MessageSquare },
     { href: '/analytics', label: 'Analytics', icon: BarChart3 },
 ];
+
+function leadsSublabel(): string {
+    const parts: string[] = [];
+    if (props.stats.linkedin_leads > 0) parts.push(`${props.stats.linkedin_leads.toLocaleString()} LinkedIn`);
+    if (props.stats.imported_leads > 0) parts.push(`${props.stats.imported_leads.toLocaleString()} imported`);
+    return parts.join(' · ') || 'Import or sync lists to get started';
+}
 </script>
 
 <template>
     <Head title="Dashboard" />
 
-    <div class="flex flex-col gap-6 p-5 md:p-6 lg:p-8">
+    <div class="flex flex-col gap-6 p-4 sm:p-5 md:p-6 lg:p-8">
         <div v-if="!hasOrg" class="rounded-2xl border border-yellow-500/40 bg-yellow-500/10 p-4 text-sm text-yellow-700 dark:text-yellow-400">
             <strong>No organisation linked yet.</strong>
             Connect the LinkedEmpire v2 extension to this account to auto-create your workspace, or use the extension to sign in.
         </div>
 
         <!-- Welcome banner -->
-        <div class="relative overflow-hidden rounded-3xl border border-blue-900/5 bg-gradient-to-br from-blue-600 via-blue-600 to-sky-500 p-6 shadow-lg shadow-blue-900/10 md:p-8">
+        <div class="relative overflow-hidden rounded-3xl border border-blue-900/5 bg-gradient-to-br from-blue-600 via-blue-600 to-sky-500 p-5 shadow-lg shadow-blue-900/10 sm:p-6 md:p-8">
             <div class="pointer-events-none absolute inset-0 overflow-hidden">
                 <div class="absolute -top-16 -right-10 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
                 <div class="absolute -bottom-20 left-1/3 h-56 w-56 rounded-full bg-sky-300/20 blur-3xl" />
@@ -108,16 +130,16 @@ const quickActions = [
             <div class="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div class="flex items-start gap-4">
                     <div
-                        class="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white shadow-inner ring-1 ring-inset ring-white/25 backdrop-blur-sm"
+                        class="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white shadow-inner ring-1 ring-inset ring-white/25 backdrop-blur-sm sm:size-14"
                     >
-                        <LayoutGrid class="size-7 stroke-[1.75]" />
+                        <LayoutGrid class="size-6 stroke-[1.75] sm:size-7" />
                     </div>
                     <div>
                         <p class="flex items-center gap-1.5 text-sm text-blue-100">
                             <Sparkles class="size-3.5" />
                             {{ todayLabel }}
                         </p>
-                        <h1 class="text-2xl font-bold tracking-tight text-white md:text-3xl">
+                        <h1 class="text-xl font-bold tracking-tight text-white sm:text-2xl md:text-3xl">
                             Hey, {{ firstName }}
                         </h1>
                         <p v-if="organization" class="mt-1 text-sm text-blue-100">
@@ -129,33 +151,53 @@ const quickActions = [
             </div>
         </div>
 
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div
+            v-if="isEmptyWorkspace && hasOrg"
+            class="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-10 text-center"
+        >
+            <Users2 class="h-10 w-10 text-muted-foreground/50" />
+            <div>
+                <p class="font-semibold">Your workspace is ready</p>
+                <p class="mt-1 max-w-md text-sm text-muted-foreground">
+                    Import a contact list, sync LinkedIn leads with the extension, or launch your first outreach campaign.
+                </p>
+            </div>
+            <div class="flex flex-wrap justify-center gap-2">
+                <Link href="/leads" class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">Import contacts</Link>
+                <Link href="/outreach/create" class="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium">New outreach</Link>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
             <Link
                 v-for="card in statCards"
                 :key="card.label"
                 :href="card.href"
-                class="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg"
+                class="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg sm:p-5"
             >
                 <div class="flex items-start justify-between gap-3">
-                    <div>
+                    <div class="min-w-0">
                         <p class="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
                             {{ card.label }}
                         </p>
-                        <p class="mt-2 text-3xl font-bold text-foreground">
+                        <p class="mt-2 text-2xl font-bold text-foreground sm:text-3xl">
                             {{ stats[card.valueKey].toLocaleString() }}
+                        </p>
+                        <p v-if="card.valueKey === 'leads'" class="mt-1 truncate text-xs text-muted-foreground">
+                            {{ leadsSublabel() }}
                         </p>
                     </div>
                     <div
                         :class="[
-                            'flex size-11 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm ring-4 transition-transform group-hover:scale-105',
+                            'flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm ring-4 transition-transform group-hover:scale-105 sm:size-11',
                             card.gradient,
                             card.ring,
                         ]"
                     >
-                        <component :is="card.icon" class="size-5 stroke-[1.75]" />
+                        <component :is="card.icon" class="size-4 stroke-[1.75] sm:size-5" />
                     </div>
                 </div>
-                <div class="mt-4 flex items-center gap-1 text-sm font-medium text-primary opacity-0 transition group-hover:opacity-100">
+                <div class="mt-3 flex items-center gap-1 text-sm font-medium text-primary opacity-0 transition group-hover:opacity-100 sm:mt-4">
                     View
                     <ArrowRight class="size-4" />
                 </div>
@@ -164,23 +206,25 @@ const quickActions = [
 
         <div class="grid gap-4 lg:grid-cols-3">
             <div class="rounded-2xl border border-border/60 bg-card shadow-sm lg:col-span-2">
-                <div class="flex items-center justify-between border-b border-border/60 px-5 py-4">
+                <div class="flex items-center justify-between border-b border-border/60 px-4 py-4 sm:px-5">
                     <div>
                         <h2 class="text-base font-semibold text-foreground">Recent Activity</h2>
                         <p class="text-sm text-muted-foreground">Latest events across your workspace</p>
                     </div>
                 </div>
-                <div v-if="recentActivity.length === 0" class="p-5 text-sm text-muted-foreground">
-                    No activity recorded yet. Connect the extension to start capturing events.
+                <div v-if="recentActivity.length === 0" class="flex flex-col items-center gap-2 p-8 text-center text-sm text-muted-foreground sm:p-10">
+                    <MessageSquare class="h-8 w-8 text-muted-foreground/40" />
+                    <p>No activity recorded yet.</p>
+                    <p class="text-xs">Connect the extension or launch outreach to start capturing events.</p>
                 </div>
                 <ul v-else class="divide-y divide-border/60">
                     <li
                         v-for="item in recentActivity"
                         :key="item.created_at + item.identifier"
-                        class="flex items-center gap-3 px-5 py-3.5 text-sm"
+                        class="flex flex-col gap-1 px-4 py-3 text-sm sm:flex-row sm:items-center sm:gap-3 sm:px-5 sm:py-3.5"
                     >
                         <span
-                            class="inline-flex h-7 min-w-[4.5rem] items-center justify-center rounded-full bg-gradient-to-b from-blue-500 to-blue-600 px-2.5 text-xs font-semibold text-white shadow-sm"
+                            class="inline-flex h-7 w-fit min-w-[4.5rem] items-center justify-center rounded-full bg-gradient-to-b from-blue-500 to-blue-600 px-2.5 text-xs font-semibold text-white shadow-sm"
                         >
                             {{ item.module }}
                         </span>
@@ -190,7 +234,7 @@ const quickActions = [
                 </ul>
             </div>
 
-            <div class="rounded-2xl border border-border/60 bg-card p-5 shadow-sm">
+            <div class="rounded-2xl border border-border/60 bg-card p-4 shadow-sm sm:p-5">
                 <h2 class="text-base font-semibold text-foreground">Quick Actions</h2>
                 <p class="mt-1 text-sm text-muted-foreground">Jump into your most-used tools</p>
                 <div class="mt-4 grid gap-2">
@@ -201,7 +245,7 @@ const quickActions = [
                         class="group flex items-center gap-3 rounded-xl border border-border/60 bg-muted/30 px-3 py-3 text-sm font-medium transition hover:border-blue-500/30 hover:bg-blue-500/5 hover:text-blue-600"
                     >
                         <div
-                            class="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-sm transition-transform group-hover:scale-105"
+                            class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-sm transition-transform group-hover:scale-105"
                         >
                             <component :is="action.icon" class="size-4 stroke-[1.75]" />
                         </div>

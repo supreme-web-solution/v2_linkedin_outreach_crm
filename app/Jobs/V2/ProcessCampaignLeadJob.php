@@ -478,6 +478,26 @@ class ProcessCampaignLeadJob implements ShouldQueue
             }
         }
 
+        if ($status === 'deferred') {
+            $runAt = $result['next_run_at'] ?? now()->addDay()->startOfDay()->addMinutes(10);
+
+            $logger->log(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'scheduled',
+                "Daily LinkedIn limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                $result['payload'] ?? [],
+            );
+
+            // Same node retries tomorrow; keys are not advanced.
+            $progress->update(['next_run_at' => $runAt]);
+            self::dispatch($campaign->id, $lead->id, $run?->id)->delay($runAt);
+
+            return;
+        }
+
         if ($status === 'scheduled') {
             $waitSeconds = (int) ($result['payload']['wait_seconds'] ?? 3600);
             $logger->log(

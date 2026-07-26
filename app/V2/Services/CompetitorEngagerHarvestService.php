@@ -252,6 +252,10 @@ class CompetitorEngagerHarvestService
         $cursor = null;
 
         while (count($items) < $maxItems) {
+            // Pace paginated calls so a harvest doesn't chain hundreds of
+            // Unipile requests back-to-back (LinkedIn throttling risk).
+            $this->pageDelay();
+
             $response = $fetchPage($cursor);
             $pageItems = Arr::get($response, 'items', []);
             if (! is_array($pageItems) || $pageItems === []) {
@@ -377,6 +381,16 @@ class CompetitorEngagerHarvestService
     /**
      * @return array<string, true>
      */
+    private function pageDelay(): void
+    {
+        $min = max(0, (int) config('services.unipile_pacing.harvest_page_delay_min_ms', 800));
+        $max = max($min, (int) config('services.unipile_pacing.harvest_page_delay_max_ms', 2500));
+
+        if ($max > 0) {
+            usleep(random_int($min, $max) * 1000);
+        }
+    }
+
     private function existingEngagerKeys(int|string $audienceId): array
     {
         $keys = [];

@@ -12,6 +12,7 @@ use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
 use App\Models\V2OutreachList;
 use App\V2\Outreach\OutreachActivityLogger;
+use App\V2\Outreach\OutreachCampaignStatsService;
 use App\V2\Outreach\OutreachChannelGuard;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\Models\V2OutreachImportLead;
@@ -40,7 +41,9 @@ class OutreachWebController extends Controller
         $orgId = (int) $user->current_organization_id;
 
         $query = $orgId
-            ? V2OutreachCampaign::where('organization_id', $orgId)->withCount(['outreachLeads', 'outreachLists'])
+            ? V2OutreachCampaign::where('organization_id', $orgId)
+                ->where('status', '!=', 'template')
+                ->withCount(['outreachLeads', 'outreachLists'])
             : null;
 
         $search = trim((string) $request->query('search', ''));
@@ -78,7 +81,7 @@ class OutreachWebController extends Controller
         $user = auth()->user();
 
         return Inertia::render('crm/outreach/OutreachBuilder', [
-            'templates' => V2OutreachCampaign::templates(),
+            'templates' => $this->mergeTemplatesWithSaved(),
             'channelRegistry' => [
                 'channels' => OutreachChannelRegistry::channels(),
                 'actions' => OutreachChannelRegistry::actionsByChannel(),
@@ -143,7 +146,13 @@ class OutreachWebController extends Controller
         return redirect("/outreach/{$campaign->id}")->with('success', 'Outreach campaign created.');
     }
 
-    public function show(Request $request, int $id, OutreachSequenceResolver $resolver, OutreachChannelInboxSettingsService $inboxSettings): Response
+    public function show(
+        Request $request,
+        int $id,
+        OutreachSequenceResolver $resolver,
+        OutreachChannelInboxSettingsService $inboxSettings,
+        OutreachCampaignStatsService $statsService,
+    ): Response
     {
         $campaign = $this->findOwned($id);
         $campaign->loadCount(['outreachLeads', 'outreachLists']);
@@ -243,6 +252,7 @@ class OutreachWebController extends Controller
                 'platforms' => $inboxByPlatform,
             ],
             'aiConfigured' => app(\App\V2\Services\OpenAIContentService::class)->isConfigured(),
+            'stats' => $statsService->statsFor($campaign),
         ]);
     }
 
@@ -261,7 +271,7 @@ class OutreachWebController extends Controller
         ]);
 
         return Inertia::render('crm/outreach/OutreachBuilder', [
-            'templates' => V2OutreachCampaign::templates(),
+            'templates' => $this->mergeTemplatesWithSaved(),
             'channelRegistry' => [
                 'channels' => OutreachChannelRegistry::channels(),
                 'actions' => OutreachChannelRegistry::actionsByChannel(),
@@ -273,6 +283,98 @@ class OutreachWebController extends Controller
             'attachedLists' => $attachedLists,
             'initialStep' => request()->query('step', 'build'),
         ]);
+    }
+
+    public function duplicate(Request $request, int $id): RedirectResponse
+    {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+        $source = $this->findOwned($id);
+
+        $data = $request->validate([
+            'name' => ['nullable', 'string', 'max:191'],
+        ]);
+
+        $copy = V2OutreachCampaign::create([
+            'user_id' => $user->id,
+            'organization_id' => (int) $user->current_organization_id,
+            'name' => $data['name'] ?? ($source->name.' (copy)'),
+            'template_type' => $source->template_type,
+            'node_model' => $source->node_model,
+            'meta' => $source->meta,
+            'status' => 'draft',
+        ]);
+
+        return redirect("/outreach/{$copy->id}/edit")->with('success', 'Campaign duplicated as draft.');
+    }
+
+    public function saveAsTemplate(Request $request, int $id): RedirectResponse
+    {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+        $source = $this->findOwned($id);
+
+        $data = $request->validate([
+            'name' => ['nullable', 'string', 'max:191'],
+            'description' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $meta = is_array($source->meta) ? $source->meta : [];
+        if (! empty($data['description'])) {
+            $meta['template_description'] = $data['description'];
+        }
+
+        V2OutreachCampaign::create([
+            'user_id' => $user->id,
+            'organization_id' => (int) $user->current_organization_id,
+            'name' => $data['name'] ?? ('Template: '.$source->name),
+            'template_type' => $source->template_type ?: 'custom',
+            'node_model' => $source->node_model,
+            'meta' => $meta,
+            'status' => 'template',
+        ]);
+
+        return redirect('/outreach/create')->with('success', 'Saved as template — pick it when creating a new outreach.');
+    }
+
+    public function duplicateTemplate(Request $request, int $id): RedirectResponse
+    {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+        $source = $this->findOwned($id);
+
+        if ($source->status !== 'template') {
+            abort(404);
+        }
+
+        $data = $request->validate([
+            'name' => ['nullable', 'string', 'max:191'],
+        ]);
+
+        $copy = V2OutreachCampaign::create([
+            'user_id' => $user->id,
+            'organization_id' => (int) $user->current_organization_id,
+            'name' => $data['name'] ?? ($source->name.' (copy)'),
+            'template_type' => $source->template_type ?: 'custom',
+            'node_model' => $source->node_model,
+            'meta' => $source->meta,
+            'status' => 'template',
+        ]);
+
+        return redirect('/outreach/create')->with('success', 'Template duplicated.');
+    }
+
+    public function destroyTemplate(int $id): RedirectResponse
+    {
+        $campaign = $this->findOwned($id);
+
+        if ($campaign->status !== 'template') {
+            abort(404);
+        }
+
+        $campaign->delete();
+
+        return redirect('/outreach/create')->with('success', 'Template deleted.');
     }
 
     public function update(Request $request, int $id, OutreachRunDispatcher $dispatcher, OutreachChannelGuard $guard, OutreachProgressReconciler $reconciler): RedirectResponse|JsonResponse
@@ -406,7 +508,8 @@ class OutreachWebController extends Controller
 
     public function readinessPreview(Request $request, OutreachLeadReadinessService $readiness): JsonResponse
     {
-        auth()->user();
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
 
         $data = $request->validate([
             'lead_lists' => ['required', 'array', 'min:1'],
@@ -415,9 +518,12 @@ class OutreachWebController extends Controller
             'node_model' => ['required', 'array'],
         ]);
 
+        $limiter = app(\App\V2\Services\EmailEnrichmentLimiter::class);
+
         return response()->json([
             'success' => true,
-            'readiness' => $readiness->previewForLists($data['lead_lists'], $data['node_model'], (int) auth()->id()),
+            'readiness' => $readiness->previewForLists($data['lead_lists'], $data['node_model'], (int) $user->id),
+            'enrichment_limits' => $limiter->limitsPayloadForUser($user),
         ]);
     }
 
@@ -440,6 +546,43 @@ class OutreachWebController extends Controller
         return V2OutreachCampaign::where('organization_id', (int) $user->current_organization_id)
             ->where('user_id', $user->id)
             ->findOrFail($id);
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function mergeTemplatesWithSaved(): array
+    {
+        $templates = V2OutreachCampaign::templates();
+
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+        $orgId = (int) $user->current_organization_id;
+
+        if ($orgId <= 0) {
+            return $templates;
+        }
+
+        $saved = V2OutreachCampaign::query()
+            ->where('organization_id', $orgId)
+            ->where('user_id', $user->id)
+            ->where('status', 'template')
+            ->latest()
+            ->get();
+
+        foreach ($saved as $campaign) {
+            $meta = is_array($campaign->meta) ? $campaign->meta : [];
+            $templates['saved_'.$campaign->id] = [
+                'label' => $campaign->name,
+                'description' => (string) ($meta['template_description'] ?? 'Your saved sequence template.'),
+                'icon' => 'bookmark',
+                'color' => 'violet',
+                'node_model' => is_array($campaign->node_model) ? $campaign->node_model : [],
+                'saved' => true,
+            ];
+        }
+
+        return $templates;
     }
 
     /**

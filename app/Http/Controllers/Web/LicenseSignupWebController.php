@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\V2\Services\AuthPageSeoService;
 use App\V2\Services\EntitlementService;
 use App\V2\Services\UserBootstrapService;
 use Illuminate\Http\RedirectResponse;
@@ -16,21 +17,28 @@ class LicenseSignupWebController extends Controller
     public function __construct(
         private readonly EntitlementService $entitlements,
         private readonly UserBootstrapService $bootstrap,
+        private readonly AuthPageSeoService $authSeo,
     ) {
     }
 
     public function showFe(): Response
     {
+        $this->authSeo->licenseSignup(request(), 'fe');
+
         return Inertia::render('auth/FeSignup', ['variant' => 'fe']);
     }
 
     public function showBundle(): Response
     {
+        $this->authSeo->licenseSignup(request(), 'bundle');
+
         return Inertia::render('auth/BundleSignup', ['variant' => 'bundle']);
     }
 
     public function showReseller(): Response
     {
+        $this->authSeo->licenseSignup(request(), 'reseller');
+
         return Inertia::render('auth/ResellerSignup');
     }
 

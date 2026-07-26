@@ -18,7 +18,7 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
 
     public int $tries = 1;
 
-    public int $timeout = 600;
+    public int $timeout = 900;
 
     public bool $deleteWhenMissingModels = true;
 
@@ -44,6 +44,7 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
 
         $dailyLimit = (int) config('services.email_scraping.daily_limit_per_user', 100);
         $items = AudienceList::whereIn('id', $this->audienceListItemIds)->get();
+        $lookupsDone = 0;
 
         foreach ($items as $item) {
             if (! empty($item->con_email) || ! empty($item->email_fetch_attempted_at)) {
@@ -71,6 +72,13 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
             }
 
             $item->update(['email_fetch_status' => 'processing']);
+
+            // Unipile recommends random delays between chained profile
+            // lookups so LinkedIn doesn't throttle the account.
+            if ($lookupsDone > 0) {
+                $this->humanPause();
+            }
+            $lookupsDone++;
 
             try {
                 $email = $emailService->fetchEmailForUser($user, $publicIdentifier);
@@ -102,6 +110,16 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
                     'email_fetch_status' => 'completed',
                 ]);
             }
+        }
+    }
+
+    private function humanPause(): void
+    {
+        $min = max(0, (int) config('services.unipile_pacing.profile_lookup_delay_min_ms', 1000));
+        $max = max($min, (int) config('services.unipile_pacing.profile_lookup_delay_max_ms', 3000));
+
+        if ($max > 0) {
+            usleep(random_int($min, $max) * 1000);
         }
     }
 

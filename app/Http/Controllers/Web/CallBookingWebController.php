@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\V2\Services\BookingPageSeoService;
 use App\V2\Services\CallCalendarService;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -13,8 +14,10 @@ use Inertia\Response;
 
 class CallBookingWebController extends Controller
 {
-    public function __construct(private readonly CallCalendarService $calendar)
-    {
+    public function __construct(
+        private readonly CallCalendarService $calendar,
+        private readonly BookingPageSeoService $bookingSeo,
+    ) {
     }
 
     public function show(string $token): Response|RedirectResponse
@@ -30,6 +33,15 @@ class CallBookingWebController extends Controller
         }
 
         if ($call->scheduled_call_at && $call->status === 'booked') {
+            $this->bookingSeo->apply(
+                $user,
+                $call->prospect_name,
+                booked: true,
+                scheduledAt: $call->scheduled_call_at,
+                durationMinutes: max(15, (int) (app(\App\V2\Services\CallOrchestrationService::class)->settingsFor($user)['call_duration_minutes'] ?? 30)),
+                token: $token,
+            );
+
             return Inertia::render('public/BookCall', [
                 'booked' => true,
                 'hostName' => $user->name,
@@ -39,12 +51,23 @@ class CallBookingWebController extends Controller
             ]);
         }
 
+        $durationMinutes = max(15, (int) (app(\App\V2\Services\CallOrchestrationService::class)->settingsFor($user)['call_duration_minutes'] ?? 30));
+
+        $this->bookingSeo->apply(
+            $user,
+            $call->prospect_name,
+            booked: false,
+            scheduledAt: null,
+            durationMinutes: $durationMinutes,
+            token: $token,
+        );
+
         return Inertia::render('public/BookCall', [
             'booked' => false,
             'token' => $token,
             'hostName' => $user->name,
             'prospectName' => $call->prospect_name,
-            'durationMinutes' => max(15, (int) (app(\App\V2\Services\CallOrchestrationService::class)->settingsFor($user)['call_duration_minutes'] ?? 30)),
+            'durationMinutes' => $durationMinutes,
             'slots' => $this->calendar->availableSlotsForUser($user),
         ]);
     }

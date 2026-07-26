@@ -186,7 +186,18 @@ function onEmailKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-    <Head :title="booked ? 'Call booked' : 'Book a call'" />
+    <Head>
+        <title>{{ booked ? `Call confirmed with ${hostName}` : `Book a call with ${hostName}` }}</title>
+        <meta
+            head-key="description"
+            name="description"
+            :content="booked
+                ? `Your call with ${hostName} is confirmed.`
+                : (prospectName
+                    ? `Hi ${prospectName} — pick a time for a ${durationMinutes ?? 30}-minute call with ${hostName}.`
+                    : `Pick a time for a ${durationMinutes ?? 30}-minute video call with ${hostName}.`)"
+        />
+    </Head>
 
     <div class="relative flex min-h-svh flex-col items-center justify-center bg-slate-50 p-4 sm:p-6 md:p-10 dark:bg-slate-950">
         <!-- Background -->

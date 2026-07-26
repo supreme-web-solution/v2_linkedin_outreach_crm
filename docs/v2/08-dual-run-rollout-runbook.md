@@ -2,6 +2,8 @@
 
 This file implements todo `create-rollout-plan`.
 
+For single-release deploy steps (migrations, workers, smoke tests), see [14-production-deploy-checklist.md](./14-production-deploy-checklist.md).
+
 ## Rollout phases
 
 1. **Shadow mode**: v2 reads and mirrors events; v1 remains source of truth.

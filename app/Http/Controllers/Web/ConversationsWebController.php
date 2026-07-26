@@ -290,6 +290,44 @@ class ConversationsWebController extends Controller
         return redirect()->route('conversations')->with('success', "{$count} prospect(s) and their chats removed.");
     }
 
+    public function updateFlowAutoSend(Request $request, string $flowKey): RedirectResponse
+    {
+        if ($flowKey === 'all') {
+            abort(404);
+        }
+
+        /** @var User $user */
+        $user = auth()->user();
+        $orgId = (int) $user->current_organization_id;
+
+        if (! $orgId) {
+            return back()->with('error', 'Connect your workspace first.');
+        }
+
+        $data = $request->validate([
+            'auto_send_suggestions' => ['required', 'boolean'],
+        ]);
+
+        $flow = $this->resolveFlowContext($orgId, $flowKey);
+        if ($flow['is_aggregate']) {
+            abort(404);
+        }
+
+        $updated = $this->callOrchestration->setFlowAutoSendSuggestions(
+            $orgId,
+            $flow['batch_id'],
+            (bool) $data['auto_send_suggestions'],
+        );
+
+        if ($updated === 0) {
+            return back()->with('error', 'No active prospects in this flow.');
+        }
+
+        $state = $data['auto_send_suggestions'] ? 'enabled' : 'disabled';
+
+        return back()->with('success', "AI auto-send {$state} for {$updated} prospect(s) in this flow.");
+    }
+
     public function bulkDestroy(Request $request): RedirectResponse
     {
         /** @var User $user */

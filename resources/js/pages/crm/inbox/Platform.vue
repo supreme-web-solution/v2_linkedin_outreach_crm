@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
-import { ArrowLeft, Bot, Loader2, Megaphone, MessageCircle, MessagesSquare, Paperclip, Search, Send, X } from '@lucide/vue';
+import { ArrowLeft, Bot, Info, Loader2, Megaphone, MessageCircle, MessagesSquare, Paperclip, Pause, Search, Send, Sparkles, X } from '@lucide/vue';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
+import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 defineOptions({
     layout: {
@@ -248,6 +250,13 @@ function openThread(id: number) {
     }, { preserveState: false });
 }
 
+function backToThreadList() {
+    router.get(`/inbox/${props.platform}`, {
+        search: search.value.trim() || undefined,
+        page: props.conversations.current_page > 1 ? props.conversations.current_page : undefined,
+    }, { preserveState: false });
+}
+
 function scrollToBottom() {
     nextTick(() => {
         const el = messageScroll.value;
@@ -411,8 +420,11 @@ function onComposerKeydown(e: KeyboardEvent) {
         <div v-if="flashError" class="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{{ flashError }}</div>
 
         <div class="grid min-h-0 flex-1 gap-4 lg:grid-cols-5">
-            <!-- Threads list -->
-            <div class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:col-span-2">
+            <!-- Threads list (hidden on mobile when a thread is open) -->
+            <div
+                class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:col-span-2"
+                :class="selected ? 'hidden lg:flex' : 'flex'"
+            >
                 <div class="shrink-0 border-b border-border bg-muted/20 px-3 py-3">
                     <ListSearchBar v-model="search" placeholder="Search conversations…" hide-button />
                     <p class="mt-2 text-[11px] text-muted-foreground">
@@ -486,12 +498,23 @@ function onComposerKeydown(e: KeyboardEvent) {
                 />
             </div>
 
-            <!-- Chat + outreach sidebar -->
-            <div class="flex min-h-0 flex-col gap-3 lg:col-span-3 lg:flex-row">
+            <!-- Chat + sidebar (full width on mobile when a thread is open) -->
+            <div
+                class="flex min-h-0 flex-col gap-3 lg:col-span-3 lg:flex-row"
+                :class="selected ? 'flex' : 'hidden lg:flex'"
+            >
                 <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                     <template v-if="selected">
                         <div class="shrink-0 border-b border-border px-4 py-3">
                             <div class="flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted/50 lg:hidden"
+                                    aria-label="Back to conversations"
+                                    @click="backToThreadList"
+                                >
+                                    <ArrowLeft class="h-4 w-4" />
+                                </button>
                                 <div
                                     class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold shadow-sm"
                                     :style="{
@@ -627,17 +650,40 @@ function onComposerKeydown(e: KeyboardEvent) {
                                 class="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
                                 placeholder="Campaign goal, offer, tone, objections to handle — AI also uses the live conversation."
                             />
-                            <label class="flex items-center gap-2 text-xs">
-                                <input v-model="settingsForm.auto_reply_enabled" type="checkbox" class="rounded" />
-                                AI auto-reply when this lead messages
-                            </label>
-                            <label class="flex items-start gap-2 text-xs">
-                                <input v-model="settingsForm.pause_on_reply" type="checkbox" class="mt-0.5 rounded" />
-                                <span>
-                                    Pause <strong>this lead's</strong> sequence when they reply on {{ platformLabel }}
-                                    <span class="mt-0.5 block text-[10px] text-muted-foreground">Other leads in the campaign keep running.</span>
-                                </span>
-                            </label>
+                            <div class="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+                                <div class="flex min-w-0 items-center gap-1.5">
+                                    <Sparkles class="h-3.5 w-3.5 shrink-0 text-violet-600" />
+                                    <span class="text-xs font-medium">AI auto-reply</span>
+                                    <Tooltip :delay-duration="200">
+                                        <TooltipTrigger as-child>
+                                            <button type="button" class="rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label="About AI auto-reply">
+                                                <Info class="h-3.5 w-3.5" />
+                                            </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" class="max-w-[14rem] text-xs leading-relaxed">
+                                            When enabled, inbound replies on {{ platformLabel }} get an AI reply using this campaign context.
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </div>
+                                <Switch v-model="settingsForm.auto_reply_enabled" class="shrink-0" />
+                            </div>
+                            <div class="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
+                                <div class="flex min-w-0 items-center gap-1.5">
+                                    <Pause class="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                                    <span class="text-xs font-medium">Pause on reply</span>
+                                    <Tooltip :delay-duration="200">
+                                        <TooltipTrigger as-child>
+                                            <button type="button" class="rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label="About pause on reply">
+                                                <Info class="h-3.5 w-3.5" />
+                                            </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" class="max-w-[14rem] text-xs leading-relaxed">
+                                            Stops this lead's sequence when they reply on {{ platformLabel }}. Other leads keep running.
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </div>
+                                <Switch v-model="settingsForm.pause_on_reply" class="shrink-0" />
+                            </div>
                             <button type="submit" class="w-full rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50" :disabled="settingsForm.processing">
                                 Save for this campaign
                             </button>
@@ -665,7 +711,9 @@ function onComposerKeydown(e: KeyboardEvent) {
                 </div>
 
                 <div v-else-if="selected" class="flex w-full items-start rounded-xl border border-dashed border-border p-4 text-xs text-muted-foreground lg:w-72">
-                    This thread is not linked to an outreach campaign. AI and pause settings are configured per campaign on the outreach detail page.
+                    Campaign context is missing for this thread. Open it from
+                    <Link href="/outreach" class="mx-1 text-primary hover:underline">Multi-Channel Outreach</Link>
+                    to configure AI and pause settings.
                 </div>
             </div>
         </div>

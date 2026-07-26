@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\V2\Services\OpsAlertService;
 
 class RecoverQueueCommand extends Command
 {
@@ -56,6 +57,25 @@ class RecoverQueueCommand extends Command
 
         $this->newLine();
         $this->printQueueStats();
+
+        $failed = Schema::hasTable('failed_jobs')
+            ? (int) DB::table('failed_jobs')->count()
+            : 0;
+        $threshold = (int) config('services.ops.alert_failed_jobs_threshold', 10);
+
+        if ($released > 0) {
+            app(OpsAlertService::class)->queueHealth(
+                "Released {$released} stale reserved queue job(s)",
+                ['released' => $released],
+            );
+        }
+
+        if ($failed >= $threshold && $threshold > 0) {
+            app(OpsAlertService::class)->queueHealth(
+                "Failed job count is {$failed} (threshold {$threshold})",
+                ['failed_jobs' => $failed, 'threshold' => $threshold],
+            );
+        }
 
         if ($released === 0 && $retried === 0 && ! $this->option('retry-failed')) {
             $this->comment('Tip: run with --retry-failed to re-queue recent failures.');

@@ -12,6 +12,8 @@ use App\V2\Outreach\Channels\LinkedInChannelExecutor;
 use App\V2\Outreach\Channels\MessagingChannelExecutor;
 use App\V2\Services\LinkedInConnectionService;
 use App\V2\Services\UnifiedInboxService;
+use App\V2\Services\UnipileDailyActionLimiter;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class OutreachStepExecutor
@@ -100,6 +102,10 @@ class OutreachStepExecutor
             return ['status' => 'failed', 'error_message' => "No executor for channel: {$channel}"];
         }
 
+        if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, $action)) {
+            return $deferred;
+        }
+
         $context = [
             'owner_id' => (string) $campaign->user_id,
             'organization_id' => $campaign->organization_id,
@@ -139,5 +145,48 @@ class OutreachStepExecutor
 
             return ['status' => 'failed', 'error_message' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Reserve daily quota for send actions; return a "deferred" result when
+     * the user's cap is reached so the lead retries this node tomorrow.
+     * Email sends are excluded — they go through ESP limits, not Unipile pacing.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function deferIfOverDailyCap(int $userId, string $action): ?array
+    {
+        $quotaAction = match ($action) {
+            'send_invite' => UnipileDailyActionLimiter::ACTION_INVITES,
+            'send_message' => UnipileDailyActionLimiter::ACTION_MESSAGES,
+            default => null,
+        };
+
+        if ($quotaAction === null) {
+            return null;
+        }
+
+        $limiter = app(UnipileDailyActionLimiter::class);
+        if ($limiter->tryConsume($userId, $quotaAction)) {
+            return null;
+        }
+
+        $resumeAt = $limiter->resumeAt();
+
+        Log::info('[Outreach] Daily quota reached — step deferred', [
+            'user_id' => $userId,
+            'action' => $action,
+            'quota' => $quotaAction,
+            'resume_at' => $resumeAt->toIso8601String(),
+        ]);
+
+        return [
+            'status' => 'deferred',
+            'next_run_at' => $resumeAt,
+            'payload' => [
+                'reason' => 'daily_'.$quotaAction.'_limit',
+                'limit' => $limiter->limitFor($quotaAction),
+            ],
+        ];
     }
 }

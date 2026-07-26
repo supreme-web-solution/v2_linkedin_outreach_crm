@@ -3,6 +3,7 @@
 use App\Http\Controllers\Web\AiMessagesWebController;
 use App\Http\Controllers\Web\AnalyticsWebController;
 use App\Http\Controllers\Web\AutoResponsesWebController;
+use App\Http\Controllers\Web\CalendarWebController;
 use App\Http\Controllers\Web\CallsWebController;
 use App\Http\Controllers\Web\CampaignsWebController;
 use App\Http\Controllers\Web\CompetitorFollowersWebController;
@@ -99,6 +100,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
 
     Route::post('outreach/readiness-preview', [OutreachWebController::class, 'readinessPreview'])->name('outreach.readiness-preview');
     Route::post('outreach/ai/content', [OutreachAiWebController::class, 'generateContent'])->name('outreach.ai.content');
+    Route::post('outreach/enrich/fetch-emails', [OutreachEnrichmentWebController::class, 'fetchEmails'])->name('outreach.enrich.fetch-emails');
     Route::post('outreach/enrich/fetch-phones', [OutreachEnrichmentWebController::class, 'fetchPhones'])->name('outreach.enrich.fetch-phones');
     Route::post('outreach/enrich/verify-whatsapp', [OutreachEnrichmentWebController::class, 'verifyWhatsApp'])->name('outreach.enrich.verify-whatsapp');
     Route::post('outreach/enrich/resolve-handles', [OutreachEnrichmentWebController::class, 'resolveHandles'])->name('outreach.enrich.resolve-handles');
@@ -112,6 +114,10 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::get('outreach/{id}/edit', [OutreachWebController::class, 'edit'])->whereNumber('id')->name('outreach.edit');
     Route::put('outreach/{id}', [OutreachWebController::class, 'update'])->whereNumber('id')->name('outreach.update');
     Route::post('outreach/{id}/activate', [OutreachWebController::class, 'activate'])->whereNumber('id')->name('outreach.activate');
+    Route::post('outreach/{id}/duplicate', [OutreachWebController::class, 'duplicate'])->whereNumber('id')->name('outreach.duplicate');
+    Route::post('outreach/{id}/duplicate-template', [OutreachWebController::class, 'duplicateTemplate'])->whereNumber('id')->name('outreach.duplicate-template');
+    Route::delete('outreach/templates/{id}', [OutreachWebController::class, 'destroyTemplate'])->whereNumber('id')->name('outreach.templates.destroy');
+    Route::post('outreach/{id}/save-template', [OutreachWebController::class, 'saveAsTemplate'])->whereNumber('id')->name('outreach.save-template');
     Route::get('outreach/{id}/activity', [OutreachWebController::class, 'activity'])->whereNumber('id')->name('outreach.activity');
     Route::put('outreach/{id}/channel-inbox/{channel}', [OutreachWebController::class, 'updateChannelInbox'])->whereNumber('id')->name('outreach.channel-inbox');
     Route::delete('outreach/{id}', [OutreachWebController::class, 'destroy'])->whereNumber('id')->name('outreach.destroy');
@@ -125,6 +131,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
 
     Route::get('conversations', [ConversationsWebController::class, 'index'])->name('conversations');
     Route::get('conversations/flows/{flowKey}', [ConversationsWebController::class, 'flow'])->name('conversations.flow');
+    Route::put('conversations/flows/{flowKey}/auto-send', [ConversationsWebController::class, 'updateFlowAutoSend'])->name('conversations.flow.auto-send');
     Route::post('conversations/sync', fn () => redirect()
         ->route('conversations')
         ->with('success', 'Inbox sync is disabled. Launch outreach from Call Manager to start a conversation.'))
@@ -175,6 +182,11 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::post('team/switch/{orgId}', [TeamWebController::class, 'switchOrganization'])->whereNumber('orgId')->name('team.switch');
     Route::post('team/accept/{token}', [TeamWebController::class, 'acceptInvite'])->name('team.accept');
     Route::get('analytics', [AnalyticsWebController::class, 'index'])->name('analytics');
+    Route::get('calendar', [CalendarWebController::class, 'index'])->name('calendar');
+    Route::patch('calendar/events/{type}/{id}', [CalendarWebController::class, 'reschedule'])
+        ->whereIn('type', ['call', 'call_send', 'content', 'reminder'])
+        ->whereNumber('id')
+        ->name('calendar.events.reschedule');
     Route::get('integrations', [IntegrationWebController::class, 'index'])->name('integrations');
     Route::post('integrations/unipile/hosted-auth', [IntegrationWebController::class, 'startUnipileHostedAuth'])->name('integrations.unipile.hosted-auth');
     Route::post('integrations/channels/{channel}/connect', [IntegrationWebController::class, 'startChannelHostedAuth'])->name('integrations.channels.connect');

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { AlertTriangle, CheckCircle2, Loader2, Mail, Phone, RefreshCw, MessageCircle, AtSign } from '@lucide/vue';
+import { AlertTriangle, CheckCircle2, Clock, Loader2, Mail, Phone, RefreshCw, MessageCircle, AtSign } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import EmailEnrichmentInfoTooltip from '@/components/crm/EmailEnrichmentInfoTooltip.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
+import { Button } from '@/components/ui/button';
 import type { OutreachChannel, OutreachStep } from '@/components/outreach/types';
 
 export interface LeadListRef {
@@ -59,6 +61,22 @@ export interface ReadinessPreview {
     should_confirm_launch: boolean;
 }
 
+export interface EnrichmentLimits {
+    email: {
+        used: number;
+        limit: number;
+        remaining: number;
+        in_flight?: number;
+        effective_remaining?: number;
+        unlimited: boolean;
+        at_limit: boolean;
+        percent: number;
+    };
+    pending_email_jobs: number;
+    lookup_pace_seconds: { min: number; max: number };
+    resets_at: string;
+}
+
 const props = defineProps<{
     leadLists: LeadListRef[];
     nodeModel: OutreachStep[];
@@ -73,6 +91,7 @@ const verifyingWhatsApp = ref(false);
 const resolvingHandles = ref(false);
 const error = ref<string | null>(null);
 const readiness = ref<ReadinessPreview | null>(null);
+const enrichmentLimits = ref<EnrichmentLimits | null>(null);
 const fetchMessage = ref<string | null>(null);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -131,6 +150,48 @@ const needsContactPrep = computed(() => {
     );
 });
 
+const emailQueueToday = computed(() => {
+    if (!readiness.value || !enrichmentLimits.value) return 0;
+    const fetchable = readiness.value.email_fetch.fetchable;
+    const remaining = enrichmentLimits.value.email.effective_remaining
+        ?? enrichmentLimits.value.email.remaining;
+    if (enrichmentLimits.value.email.unlimited) return fetchable;
+    return Math.max(0, Math.min(fetchable, remaining));
+});
+
+const emailUsageLabel = computed(() => {
+    if (!enrichmentLimits.value) return '';
+    const { used, limit, in_flight = 0, remaining } = enrichmentLimits.value.email;
+    const inProgress = in_flight > 0 ? ` (+${in_flight} in progress)` : '';
+    return `${used}${inProgress} / ${limit} used · ${remaining} left today`;
+});
+
+function applyEnrichmentLimits(payload: EnrichmentLimits | null | undefined) {
+    if (payload) {
+        enrichmentLimits.value = payload;
+    }
+}
+
+const emailAtDailyLimit = computed(() => enrichmentLimits.value?.email.at_limit ?? false);
+
+const emailFetchButtonLabel = computed(() => {
+    if (fetchingEmails.value) return 'Queueing lookups…';
+    if (emailAtDailyLimit.value) return 'Daily email limit reached';
+    const n = emailQueueToday.value;
+    if (n <= 0) return 'Fetch emails';
+    if (n < (readiness.value?.email_fetch.fetchable ?? 0)) {
+        return `Queue ${n} emails today`;
+    }
+    return `Queue ${n} email lookup${n === 1 ? '' : 's'}`;
+});
+
+const phoneFetchButtonLabel = computed(() => {
+    if (fetchingPhones.value) return 'Queueing lookups…';
+    const n = readiness.value?.phone_fetch.fetchable ?? 0;
+    if (n <= 0) return 'Fetch phone numbers';
+    return `Queue ${n} phone lookup${n === 1 ? '' : 's'}`;
+});
+
 function xsrf(): string {
     if (typeof document === 'undefined') {
         return '';
@@ -177,6 +238,7 @@ async function loadReadiness() {
             throw new Error(data.message || 'Could not load lead readiness.');
         }
         readiness.value = data.readiness as ReadinessPreview;
+        applyEnrichmentLimits(data.enrichment_limits as EnrichmentLimits | undefined);
     } catch (e) {
         error.value = e instanceof Error ? e.message : 'Could not load lead readiness.';
         readiness.value = null;
@@ -186,38 +248,38 @@ async function loadReadiness() {
 }
 
 async function fetchEmails() {
-    if (!readiness.value?.email_fetch.can_batch_fetch) return;
+    if (!readiness.value?.email_fetch.can_batch_fetch || emailAtDailyLimit.value || emailQueueToday.value <= 0) {
+        return;
+    }
 
     fetchingEmails.value = true;
     fetchMessage.value = null;
     error.value = null;
 
     try {
-        let queued = 0;
-        for (const batch of readiness.value.email_fetch.batches) {
-            for (let i = 0; i < batch.audience_list_ids.length; i += 50) {
-                const chunk = batch.audience_list_ids.slice(i, i + 50);
-                const res = await fetch(`/leads/${batch.list_hash}/fetch-email-batch?src=aud`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Accept: 'application/json',
-                        'X-XSRF-TOKEN': xsrf(),
-                    },
-                    body: JSON.stringify({ audience_list_ids: chunk }),
-                });
-                const data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data.message || 'Email fetch failed.');
-                }
-                queued += chunk.length;
-            }
+        const res = await fetch('/outreach/enrich/fetch-emails', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-XSRF-TOKEN': xsrf(),
+            },
+            body: JSON.stringify({
+                lead_lists: leadListsPayload(),
+                node_model: props.nodeModel,
+            }),
+        });
+        const data = await res.json();
+        applyEnrichmentLimits(data.enrichment_limits as EnrichmentLimits | undefined);
+        if (!res.ok) {
+            throw new Error(data.message || 'Email fetch failed.');
         }
-        fetchMessage.value = `Queued email fetch for ${queued} profile(s). Refreshing automatically…`;
+        fetchMessage.value = data.message || 'Email lookups queued.';
         startPolling();
         await loadReadiness();
     } catch (e) {
         error.value = e instanceof Error ? e.message : 'Email fetch failed.';
+        await loadReadiness();
     } finally {
         fetchingEmails.value = false;
     }
@@ -249,6 +311,7 @@ async function fetchPhones() {
         await loadReadiness();
     } catch (e) {
         error.value = e instanceof Error ? e.message : 'Phone fetch failed.';
+        await loadReadiness();
     } finally {
         fetchingPhones.value = false;
     }
@@ -316,15 +379,18 @@ async function resolveHandles() {
 
 function startPolling() {
     stopPolling();
-    pollTimer = setInterval(() => {
-        const pending =
+    pollTimer = setInterval(async () => {
+        const pendingReadiness =
             (readiness.value?.email_fetch.pending ?? 0) + (readiness.value?.phone_fetch.pending ?? 0);
-        if (pending > 0) {
-            loadReadiness();
+        const pendingJobs = enrichmentLimits.value?.pending_email_jobs ?? 0;
+
+        if (pendingReadiness > 0 || pendingJobs > 0) {
+            await loadReadiness();
         } else {
+            await loadReadiness();
             stopPolling();
         }
-    }, 12000);
+    }, 5000);
 }
 
 function stopPolling() {
@@ -392,17 +458,17 @@ defineExpose({
         </div>
 
         <template v-if="readiness">
-            <div class="mb-4 grid gap-2" :class="sidebar ? 'grid-cols-1' : 'sm:grid-cols-3'">
-                <div class="rounded-lg bg-muted/40 px-3 py-2">
+            <div class="mb-4 grid grid-cols-3 gap-2">
+                <div class="min-w-0 rounded-lg bg-muted/40 px-3 py-2">
                     <p class="text-[10px] uppercase text-muted-foreground">Total leads</p>
                     <p class="text-lg font-semibold">{{ readiness.total_leads }}</p>
                 </div>
-                <div class="rounded-lg bg-emerald-50 px-3 py-2">
+                <div class="min-w-0 rounded-lg bg-emerald-50 px-3 py-2">
                     <p class="text-[10px] uppercase text-emerald-700">Fully ready</p>
                     <p class="text-lg font-semibold text-emerald-900">{{ readiness.fully_ready }}</p>
-                    <p class="mt-0.5 text-[10px] text-emerald-800/80">Verified for every step in your sequence</p>
+                    <p class="mt-0.5 text-[10px] leading-tight text-emerald-800/80">Verified for every step in your sequence</p>
                 </div>
-                <div class="rounded-lg px-3 py-2" :class="readiness.will_skip_any ? 'bg-amber-50' : 'bg-muted/40'">
+                <div class="min-w-0 rounded-lg px-3 py-2" :class="readiness.will_skip_any ? 'bg-amber-50' : 'bg-muted/40'">
                     <p class="text-[10px] uppercase" :class="readiness.will_skip_any ? 'text-amber-700' : 'text-muted-foreground'">May skip steps</p>
                     <p class="text-lg font-semibold" :class="readiness.will_skip_any ? 'text-amber-900' : ''">{{ readiness.will_skip_any }}</p>
                 </div>
@@ -411,38 +477,64 @@ defineExpose({
             <div v-if="needsContactPrep" class="mb-4 space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
                 <p class="text-xs font-semibold text-primary">Prepare contacts</p>
 
-                <div v-if="readiness.email_fetch.can_batch_fetch && linkedinLists.length" class="rounded-lg border border-border bg-white p-3 shadow-sm">
+                <div
+                    v-if="enrichmentLimits && (readiness.email_fetch.can_batch_fetch || readiness.email_fetch.pending > 0)"
+                    class="rounded-lg border border-blue-200/60 bg-blue-50/50 p-3 dark:border-blue-900/40 dark:bg-blue-950/20"
+                >
+                    <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span class="inline-flex items-center gap-1.5 font-medium text-blue-900 dark:text-blue-200">
+                            Daily email enrichment
+                            <EmailEnrichmentInfoTooltip side="right" />
+                        </span>
+                        <span class="text-blue-800/80 dark:text-blue-300/80">
+                            {{ emailUsageLabel }}
+                        </span>
+                    </div>
+                    <div class="h-2 overflow-hidden rounded-full bg-blue-200/50 dark:bg-blue-900/40">
+                        <div
+                            class="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all"
+                            :style="{ width: `${Math.min(100, enrichmentLimits.email.percent)}%` }"
+                        />
+                    </div>
+                    <p v-if="enrichmentLimits.pending_email_jobs > 0" class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                        <Clock class="h-3 w-3" />
+                        {{ enrichmentLimits.pending_email_jobs }} email lookup(s) in progress…
+                    </p>
+                </div>
+
+                <div v-if="readiness.email_fetch.can_batch_fetch && linkedinLists.length" class="rounded-lg border border-border bg-white p-3 shadow-sm dark:bg-card">
                     <p class="text-[11px] leading-relaxed text-muted-foreground">
                         <Mail class="mr-1 inline h-3.5 w-3.5 align-text-bottom" />
-                        {{ readiness.email_fetch.fetchable }} emails to fetch from LinkedIn profiles
+                        {{ readiness.email_fetch.fetchable }} emails missing from LinkedIn profiles
                     </p>
-                    <button
+                    <Button
                         type="button"
-                        class="mt-2.5 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-blue-700 bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 active:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
-                        :disabled="fetchingEmails"
+                        class="mt-2.5 w-full"
+                        :disabled="fetchingEmails || emailAtDailyLimit || emailQueueToday <= 0 || (enrichmentLimits?.pending_email_jobs ?? 0) >= 5"
                         @click="fetchEmails"
                     >
                         <Loader2 v-if="fetchingEmails" class="h-4 w-4 animate-spin" />
                         <Mail v-else class="h-4 w-4" />
-                        {{ fetchingEmails ? 'Fetching emails…' : 'Fetch emails' }}
-                    </button>
+                        {{ emailFetchButtonLabel }}
+                    </Button>
                 </div>
 
-                <div v-if="readiness.phone_fetch.can_batch_fetch && linkedinLists.length" class="rounded-lg border border-border bg-white p-3 shadow-sm">
+                <div v-if="readiness.phone_fetch.can_batch_fetch && linkedinLists.length" class="rounded-lg border border-border bg-white p-3 shadow-sm dark:bg-card">
                     <p class="text-[11px] leading-relaxed text-muted-foreground">
                         <Phone class="mr-1 inline h-3.5 w-3.5 align-text-bottom" />
                         {{ readiness.phone_fetch.fetchable }} phone numbers to fetch from LinkedIn profiles
                     </p>
-                    <button
+                    <Button
                         type="button"
-                        class="mt-2.5 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-violet-700 bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 active:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        variant="violet"
+                        class="mt-2.5 w-full"
                         :disabled="fetchingPhones"
                         @click="fetchPhones"
                     >
                         <Loader2 v-if="fetchingPhones" class="h-4 w-4 animate-spin" />
                         <Phone v-else class="h-4 w-4" />
-                        {{ fetchingPhones ? 'Fetching phones…' : 'Fetch phone numbers' }}
-                    </button>
+                        {{ phoneFetchButtonLabel }}
+                    </Button>
                 </div>
 
                 <div v-if="readiness.whatsapp_verify.can_verify" class="rounded-lg border border-border bg-white p-3 shadow-sm">

@@ -59,6 +59,14 @@ class V2Conversation extends Model
     }
 
     /**
+     * Unified Inbox threads — multi-channel outreach replies only, never Call Manager.
+     */
+    public function scopeForUnifiedInbox(Builder $query): Builder
+    {
+        return $query->forOutreachInbox();
+    }
+
+    /**
      * Outreach campaign inbox threads only — never Call Manager.
      */
     public function scopeForOutreachInbox(Builder $query): Builder
@@ -78,17 +86,17 @@ class V2Conversation extends Model
     public function scopeManagedByUnifiedInbox(Builder $query): Builder
     {
         return $query
-            ->forOutreachInbox()
+            ->forUnifiedInbox()
             ->where('meta->source', 'unified_inbox');
     }
 
     /**
-     * Inbox threads for a platform — outreach campaigns only, not Call Manager.
+     * Inbox threads for a platform — not Call Manager.
      */
     public function scopeForInboxPlatform(Builder $query, string $platform): Builder
     {
         return $query
-            ->forOutreachInbox()
+            ->forUnifiedInbox()
             ->where('provider', $platform);
     }
 

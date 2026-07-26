@@ -146,6 +146,7 @@ class UnifiedInboxWebController extends Controller
         $thread->refresh();
 
         $config = OutreachChannelRegistry::channels()[$platform] ?? [];
+        $outreachContext = $this->buildOutreachContext($thread, $user);
 
         return Inertia::render('crm/inbox/Platform', [
             'platform' => $platform,
@@ -155,7 +156,7 @@ class UnifiedInboxWebController extends Controller
             'conversations' => $this->paginateConversations($user, $platform, $request),
             'selected' => $this->serializeThread($thread),
             'messages' => $this->serializeMessages($thread),
-            'outreachContext' => $this->buildOutreachContext($thread, $user),
+            'outreachContext' => $outreachContext,
             'aiConfigured' => app(OpenAIContentService::class)->isConfigured(),
             'supportsAttachments' => InboxAttachmentSupport::supportsAttachments($platform),
             'filters' => [
@@ -182,13 +183,15 @@ class UnifiedInboxWebController extends Controller
         $this->inbox->syncMessagesFromProvider($thread);
         $thread->refresh();
 
+        $outreachContext = $this->buildOutreachContext($thread, $user);
+
         return response()->json([
             'messages' => $this->serializeMessages($thread),
             'conversations' => $this->serializeConversationsPaginator(
                 $this->paginateConversations($user, $platform, $request)
             ),
             'selected' => $this->serializeThread($thread),
-            'outreachContext' => $this->buildOutreachContext($thread, $user),
+            'outreachContext' => $outreachContext,
         ]);
     }
 

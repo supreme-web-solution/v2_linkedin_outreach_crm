@@ -10,6 +10,7 @@ use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Integrations\ProviderManager;
 use App\V2\Integrations\Unipile\UnipileProvider;
 use App\V2\Services\CallOrchestrationService;
+use App\V2\Services\UnipileDailyActionLimiter;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -83,6 +84,10 @@ class CampaignStepExecutor
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
             }
 
+            if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_INVITES)) {
+                return $deferred;
+            }
+
             return $this->executeWithProviderFallback(
                 'campaign_send_invitation',
                 function (string $providerKey) use ($recipientId, $message, $context): array {
@@ -99,6 +104,10 @@ class CampaignStepExecutor
         if ($normalized === 'message') {
             if ($recipientId === '') {
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
+            }
+
+            if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_NEW_CHATS)) {
+                return $deferred;
             }
 
             $startResult = $this->executeWithProviderFallback(
@@ -179,6 +188,37 @@ class CampaignStepExecutor
         return [
             'status' => 'skipped',
             'payload' => ['reason' => 'unsupported_step_type', 'step_type' => $normalized],
+        ];
+    }
+
+    /**
+     * Reserve daily quota for the action; return a "deferred" result when
+     * the user's cap is reached so the lead retries this node tomorrow.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function deferIfOverDailyCap(int $userId, string $quotaAction): ?array
+    {
+        $limiter = app(UnipileDailyActionLimiter::class);
+        if ($limiter->tryConsume($userId, $quotaAction)) {
+            return null;
+        }
+
+        $resumeAt = $limiter->resumeAt();
+
+        Log::info('[Campaign] Daily quota reached — step deferred', [
+            'user_id' => $userId,
+            'quota' => $quotaAction,
+            'resume_at' => $resumeAt->toIso8601String(),
+        ]);
+
+        return [
+            'status' => 'deferred',
+            'next_run_at' => $resumeAt,
+            'payload' => [
+                'reason' => 'daily_'.$quotaAction.'_limit',
+                'limit' => $limiter->limitFor($quotaAction),
+            ],
         ];
     }
 

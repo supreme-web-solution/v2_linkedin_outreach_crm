@@ -106,26 +106,32 @@ class OutreachChannelRegistry
      */
     public static function conditionsByChannel(): array
     {
+        $messageReplied = [
+            ['key' => 'message_replied', 'label' => 'Message replied'],
+            ['key' => 'no_reply', 'label' => 'No reply'],
+        ];
+
         return [
             'linkedin' => [
                 ['key' => 'invite_accepted', 'label' => 'Invite accepted'],
                 ['key' => 'has_replied', 'label' => 'Has replied'],
+                ['key' => 'no_reply', 'label' => 'No reply'],
             ],
             'email' => [
                 ['key' => 'email_replied', 'label' => 'Email replied'],
                 ['key' => 'no_reply', 'label' => 'No reply'],
+                ['key' => 'email_opened', 'label' => 'Email opened'],
+                ['key' => 'email_bounced', 'label' => 'Email bounced'],
             ],
-            'whatsapp' => [
-                ['key' => 'message_replied', 'label' => 'Message replied'],
-            ],
+            'whatsapp' => $messageReplied,
             'instagram' => [
                 ['key' => 'message_replied', 'label' => 'DM replied'],
+                ['key' => 'no_reply', 'label' => 'No reply'],
             ],
-            'telegram' => [
-                ['key' => 'message_replied', 'label' => 'Message replied'],
-            ],
+            'telegram' => $messageReplied,
             'twitter' => [
                 ['key' => 'message_replied', 'label' => 'DM replied'],
+                ['key' => 'no_reply', 'label' => 'No reply'],
             ],
         ];
     }

@@ -36,7 +36,7 @@ class UnifiedInboxService
             ->where('user_id', $userId)
             ->where('provider', $provider)
             ->where('provider_chat_id', $chatId)
-            ->forOutreachInbox()
+            ->forUnifiedInbox()
             ->first();
 
         if ($existing) {
@@ -45,6 +45,12 @@ class UnifiedInboxService
 
         $attendeeIds = $this->extractAttendeeIds($payload);
         $outreachLead = $this->matchOutreachLead($userId, $provider, $attendeeIds, $payload);
+
+        // Unified Inbox is for outreach replies only — do not import every WhatsApp/IG DM.
+        if (! $outreachLead) {
+            return null;
+        }
+
         $contactName = $this->extractContactName($payload, $outreachLead);
 
         return V2Conversation::query()->create([

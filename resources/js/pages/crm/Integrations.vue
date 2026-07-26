@@ -3,6 +3,7 @@ import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, Mail, RefreshCw, Trash2 } from '@lucide/vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import PasswordInput from '@/components/PasswordInput.vue';
+import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { computed, nextTick, onMounted, ref } from 'vue';
 
@@ -304,22 +305,23 @@ function removeEsp(id: number, provider: string) {
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button
+                        <Button
                             v-if="!ch.connected"
                             type="button"
-                            class="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
+                            size="sm"
                             @click="handleChannelConnect(ch)"
                         >
                             {{ ch.status === 'disconnected' ? 'Reconnect' : 'Connect' }}
-                        </button>
+                        </Button>
                         <template v-else>
-                            <button
+                            <Button
                                 type="button"
-                                class="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted/50"
+                                variant="outline"
+                                size="sm"
                                 @click="handleChannelConnect(ch)"
                             >
                                 Reconnect
-                            </button>
+                            </Button>
                             <button
                                 type="button"
                                 class="text-xs text-red-600 hover:underline"
@@ -379,21 +381,21 @@ function removeEsp(id: number, provider: string) {
                         </div>
 
                         <div class="flex flex-wrap items-center gap-2">
-                            <button
+                            <Button
                                 type="button"
-                                class="inline-flex items-center gap-2 rounded-md bg-[#0077b5] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#005885] disabled:cursor-not-allowed disabled:opacity-50"
                                 :disabled="!sessionReady() || sessionForm.processing || !unipileConfigured"
                                 @click="connectUnipile"
                             >
                                 Connect LinkedIn (Messaging)
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                                 type="button"
-                                class="inline-flex items-center gap-1 rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-muted/50"
+                                variant="outline"
+                                size="sm"
                                 @click="verifyUnipile"
                             >
                                 <RefreshCw class="h-3 w-3" /> Verify connection
-                            </button>
+                            </Button>
                         </div>
 
                         <div class="rounded-lg border border-dashed border-border px-4 py-3">
@@ -402,14 +404,15 @@ function removeEsp(id: number, provider: string) {
                             </p>
                             <form method="POST" action="/integrations/unipile/hosted-auth" class="mt-2">
                                 <input type="hidden" name="_token" :value="csrfToken" />
-                                <button
+                                <Button
                                     type="submit"
-                                    class="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                                    variant="outline"
+                                    size="sm"
                                     :disabled="!unipileConfigured"
                                 >
                                     <ExternalLink class="h-3 w-3" />
                                     Connect via secure login
-                                </button>
+                                </Button>
                             </form>
                         </div>
 
@@ -463,14 +466,15 @@ function removeEsp(id: number, provider: string) {
                     <Mail class="h-4 w-4" />
                     <h2 class="text-sm font-semibold">Email service providers (ESP)</h2>
                 </div>
-                <button
+                <Button
                     v-if="hasOrg"
                     type="button"
-                    class="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted/50"
+                    variant="outline"
+                    size="sm"
                     @click="showEspForm = !showEspForm"
                 >
                     {{ showEspForm ? 'Cancel' : 'Add ESP' }}
-                </button>
+                </Button>
             </div>
 
             <div v-if="!hasOrg" class="p-6 text-center text-sm text-muted-foreground">
@@ -513,7 +517,7 @@ function removeEsp(id: number, provider: string) {
                         <span class="font-medium">Portal ID</span>
                         <input v-model="espForm.portal_id" type="text" class="rounded-lg border border-border bg-background px-3 py-2" />
                     </div>
-                    <button type="submit" class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground" :disabled="espForm.processing">Save integration</button>
+                    <Button type="submit" :disabled="espForm.processing">Save integration</Button>
                 </form>
 
                 <div v-if="!espIntegrations.length && !showEspForm" class="py-4 text-center text-sm text-muted-foreground">

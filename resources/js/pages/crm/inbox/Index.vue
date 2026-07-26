@@ -32,7 +32,7 @@ defineProps<{
         <div>
             <h1 class="text-xl font-semibold">Unified Inbox</h1>
                 <p class="mt-1 text-sm text-muted-foreground">
-                Outreach campaign threads only — grouped by platform and campaign. Call Manager conversations live separately under
+                Replies to your multi-channel outreach campaigns — grouped by platform. Not your full WhatsApp or LinkedIn inbox. Call Manager chats live under
                 <Link href="/calls" class="font-medium text-primary hover:underline">Call Manager</Link>.
             </p>
         </div>

@@ -10,6 +10,7 @@ use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
 use App\V2\Outreach\OutreachActivityLogger;
 use App\V2\Outreach\OutreachChannelRegistry;
+use App\V2\Outreach\OutreachWebhookProgressService;
 use Illuminate\Support\Arr;
 
 class UnifiedInboxReplyService
@@ -56,6 +57,12 @@ class UnifiedInboxReplyService
         $campaign = $campaignId > 0 ? V2OutreachCampaign::query()->find($campaignId) : null;
 
         if ($lead && $campaign) {
+            app(OutreachWebhookProgressService::class)->recordInboundReply(
+                $lead,
+                $campaign,
+                (string) $conversation->provider,
+                $inboundBody,
+            );
             $this->pauseOutreachOnReply($conversation, $lead, $campaign, $inboundBody);
         }
 
@@ -109,24 +116,12 @@ class UnifiedInboxReplyService
         );
 
         $provider = (string) $conversation->provider;
-        $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
-        $channelState[$provider] = array_merge(
-            is_array($channelState[$provider] ?? null) ? $channelState[$provider] : [],
-            [
-                'replied' => true,
-                'replied_at' => now()->toIso8601String(),
-                'last_inbound_preview' => mb_substr($inboundBody, 0, 200),
-            ]
-        );
-
         $progressMeta = is_array($progress->meta) ? $progress->meta : [];
         $progressMeta['paused_reason'] = 'inbound_reply';
         $progressMeta['paused_at'] = now()->toIso8601String();
         $progressMeta['paused_channel'] = $provider;
 
         $progress->forceFill([
-            'acceptance_status' => true,
-            'channel_state' => $channelState,
             'next_run_at' => null,
             'meta' => $progressMeta,
         ])->save();

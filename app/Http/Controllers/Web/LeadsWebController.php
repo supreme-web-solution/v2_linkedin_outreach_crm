@@ -14,6 +14,11 @@ use App\Models\User;
 use App\Models\V2IntegrationAccount;
 use App\Models\V2Lead;
 use App\Models\V2LeadSource;
+use App\Models\V2OutreachImportLead;
+use App\Models\V2OutreachImportList;
+use App\V2\Outreach\OutreachImportListService;
+use App\V2\Services\DashboardStatsService;
+use App\V2\Services\EmailEnrichmentLimiter;
 use App\V2\Services\UnipileProfileEmailService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -25,7 +30,7 @@ use Inertia\Response;
 
 class LeadsWebController extends Controller
 {
-    public function index(): Response
+    public function index(DashboardStatsService $dashboardStats, OutreachImportListService $importListService): Response
     {
         $userId = Auth::id();
 
@@ -59,15 +64,32 @@ class LeadsWebController extends Controller
 
         $lists = $audiences->concat($snLists)->sortBy('list_name')->values();
 
+        $importLists = collect($importListService->listsForUser($userId))
+            ->map(fn (array $list) => [
+                'id' => $list['id'],
+                'list_name' => $list['list_name'],
+                'list_hash' => $list['list_hash'],
+                'total_leads' => $list['total_leads'],
+                'source' => $list['source'],
+                'src' => 'csv',
+                'created_at' => $list['created_at'],
+            ])
+            ->sortBy('list_name')
+            ->values();
+
         $stats = [
-            'total_lists' => $lists->count(),
+            'total_lists' => $lists->count() + $importLists->count(),
             'audience_lists' => $audiences->count(),
             'sn_lists' => $snLists->count(),
-            'total_leads' => (int) ($audiences->sum('total_leads') + $snLists->sum('total_leads')),
+            'import_lists' => $importLists->count(),
+            'total_leads' => $dashboardStats->leadCountForUser($userId),
+            'linkedin_leads' => $dashboardStats->linkedinLeadCountForUser($userId),
+            'imported_leads' => $dashboardStats->importedLeadCountForUser($userId),
         ];
 
         return Inertia::render('crm/Leads/Index', [
             'lists' => $lists,
+            'importLists' => $importLists,
             'stats' => $stats,
         ]);
     }
@@ -81,8 +103,41 @@ class LeadsWebController extends Controller
         $listName = 'Leads';
         $counts = [];
         $listRecordId = null;
+        $leads = null;
 
-        if ($src === 'aud') {
+        if ($src === 'csv') {
+            $importList = V2OutreachImportList::query()
+                ->where('list_hash', $listId)
+                ->where('user_id', Auth::id())
+                ->firstOrFail();
+            $listName = $importList->name ?: 'Imported list';
+            $listRecordId = $importList->id;
+
+            $query = V2OutreachImportLead::query()->where('import_list_id', $importList->id);
+            if ($search !== '') {
+                $query->where(function ($q) use ($search) {
+                    $q->where('full_name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%")
+                        ->orWhere('linkedin_id', 'like', "%{$search}%")
+                        ->orWhere('instagram_handle', 'like', "%{$search}%")
+                        ->orWhere('telegram_handle', 'like', "%{$search}%")
+                        ->orWhere('twitter_handle', 'like', "%{$search}%");
+                });
+            }
+
+            $leads = $query->latest('id')->paginate(20)->appends($request->query())
+                ->through(fn (V2OutreachImportLead $row) => [
+                    'id' => $row->id,
+                    'full_name' => $row->full_name,
+                    'email' => $row->email,
+                    'phone' => $row->phone,
+                    'profile_url' => $row->profile_url,
+                    'instagram_handle' => $row->instagram_handle,
+                    'telegram_handle' => $row->telegram_handle,
+                    'twitter_handle' => $row->twitter_handle,
+                ]);
+        } elseif ($src === 'aud') {
             $audience = Audience::where('audience_id', $listId)->where('user_id', Auth::id())->first();
             $listName = $audience?->audience_name ?: 'Audience';
 
@@ -122,7 +177,7 @@ class LeadsWebController extends Controller
                 ->through(fn (SnLead $row) => $this->transformSnLead($row));
         }
 
-        return Inertia::render('crm/Leads/Show', [
+        return Inertia::render($src === 'csv' ? 'crm/Leads/ImportShow' : 'crm/Leads/Show', [
             'leads' => $leads,
             'listId' => (string) $listId,
             'listRecordId' => $listRecordId,
@@ -131,8 +186,8 @@ class LeadsWebController extends Controller
             'emailFilter' => $emailFilter,
             'search' => $search,
             'counts' => $counts,
-            'dailyLimit' => $this->dailyLimitPayload(),
-            'pendingCount' => $src === 'aud' ? $this->getPendingEmailFetchCount(Auth::id()) : 0,
+            'dailyLimit' => $src === 'csv' ? null : $this->dailyLimitPayload(),
+            'pendingCount' => $src === 'aud' ? app(EmailEnrichmentLimiter::class)->pendingJobCount(Auth::id()) : 0,
         ]);
     }
 
@@ -140,13 +195,15 @@ class LeadsWebController extends Controller
     {
         $data = $request->validate([
             'list_name' => ['required', 'string', 'max:255'],
-            'src' => ['required', 'in:aud,sn'],
+            'src' => ['required', 'in:aud,sn,csv'],
         ]);
 
         if ($data['src'] === 'aud') {
             Audience::where('id', $id)->where('user_id', Auth::id())->update(['audience_name' => $data['list_name']]);
-        } else {
+        } elseif ($data['src'] === 'sn') {
             SnLeadList::where('id', $id)->where('user_id', Auth::id())->update(['name' => $data['list_name']]);
+        } else {
+            V2OutreachImportList::where('id', $id)->where('user_id', Auth::id())->update(['name' => $data['list_name']]);
         }
 
         return back()->with('success', 'List renamed successfully.');
@@ -161,6 +218,12 @@ class LeadsWebController extends Controller
             if ($audience) {
                 AudienceList::where('audience_id', $listId)->delete();
                 $audience->delete();
+            }
+        } elseif ($src === 'csv') {
+            $importList = V2OutreachImportList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
+            if ($importList) {
+                V2OutreachImportLead::where('import_list_id', $importList->id)->delete();
+                $importList->delete();
             }
         } else {
             $list = SnLeadList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
@@ -194,6 +257,11 @@ class LeadsWebController extends Controller
 
         if ($src === 'aud') {
             AudienceList::where('id', $leadId)->delete();
+        } elseif ($src === 'csv') {
+            V2OutreachImportLead::query()
+                ->where('id', $leadId)
+                ->whereHas('importList', fn ($q) => $q->where('user_id', Auth::id()))
+                ->delete();
         } else {
             $lead = SnLead::query()->find($leadId);
             if ($lead && SnLeadList::query()->where('list_hash', $lead->sn_list_id)->where('user_id', Auth::id())->exists()) {
@@ -234,13 +302,18 @@ class LeadsWebController extends Controller
     public function removeLeadBulk(Request $request): RedirectResponse
     {
         $data = $request->validate([
-            'src' => ['required', 'in:aud,sn'],
+            'src' => ['required', 'in:aud,sn,csv'],
             'ids' => ['required', 'array', 'min:1'],
             'ids.*' => ['integer'],
         ]);
 
         if ($data['src'] === 'aud') {
             AudienceList::whereIn('id', $data['ids'])->delete();
+        } elseif ($data['src'] === 'csv') {
+            V2OutreachImportLead::query()
+                ->whereIn('id', $data['ids'])
+                ->whereHas('importList', fn ($q) => $q->where('user_id', Auth::id()))
+                ->delete();
         } else {
             SnLeadsCompany::whereIn('sn_lead_id', $data['ids'])->delete();
             SnLead::whereIn('id', $data['ids'])->delete();
@@ -253,7 +326,25 @@ class LeadsWebController extends Controller
     {
         $src = $request->query('src', 'aud');
 
-        if ($src === 'sn') {
+        if ($src === 'csv') {
+            $importList = V2OutreachImportList::query()
+                ->where('list_hash', $listId)
+                ->where('user_id', Auth::id())
+                ->firstOrFail();
+
+            $rows = V2OutreachImportLead::query()
+                ->where('import_list_id', $importList->id)
+                ->get()
+                ->map(fn (V2OutreachImportLead $r) => [
+                    'full_name' => $r->full_name,
+                    'email' => $r->email,
+                    'phone' => $r->phone,
+                    'linkedin_url' => $r->profile_url,
+                    'instagram' => $r->instagram_handle,
+                    'telegram' => $r->telegram_handle,
+                    'twitter' => $r->twitter_handle,
+                ]);
+        } elseif ($src === 'sn') {
             $rows = SnLead::where('sn_list_id', $listId)
                 ->leftJoin('sn_leads_companies as c', 'c.sn_lead_id', '=', 'sn_leads.id')
                 ->get([
@@ -341,7 +432,7 @@ class LeadsWebController extends Controller
             return response()->json(['status' => 'error', 'message' => "Daily email scraping limit reached ({$dailyLimit} profiles/day)."], 429);
         }
 
-        $pendingCount = $this->getPendingEmailFetchCount($user->id);
+        $pendingCount = app(EmailEnrichmentLimiter::class)->pendingJobCount($user->id);
         if ($pendingCount >= 5) {
             return response()->json([
                 'status' => 'error',
@@ -469,29 +560,34 @@ class LeadsWebController extends Controller
             return response()->json(['status' => 'error', 'message' => 'All selected profiles already have emails or have been attempted.'], 400);
         }
 
-        $this->checkAndResetDailyLimit($user);
-        $user->refresh();
         $profileCount = $needing->count();
-        $dailyLimit = (int) config('services.email_scraping.daily_limit_per_user', 100);
+        $capacity = app(EmailEnrichmentLimiter::class)->queueCapacity($user, $profileCount);
 
-        if ($user->daily_profile_email_scraping_count + $profileCount > $dailyLimit) {
-            $remaining = max(0, $dailyLimit - $user->daily_profile_email_scraping_count);
-
+        if (! $capacity['allowed']) {
             return response()->json([
                 'status' => 'error',
-                'message' => "Daily limit reached. You can scrape {$remaining} more profiles today.",
-                'daily_limit_reached' => true,
-                'remaining' => $remaining,
-            ], 400);
+                'message' => $capacity['message'],
+                'daily_limit_reached' => $capacity['remaining_daily'] <= 0,
+                'remaining' => $capacity['remaining_daily'],
+                'pending_count' => $capacity['pending_jobs'],
+            ], $capacity['pending_jobs'] >= 5 ? 429 : 400);
         }
 
+        $idsToQueue = $needing->pluck('id')->take($capacity['max_queue_now'])->values()->all();
+
         try {
-            FetchAudienceEmailBatchJob::dispatch($needing->pluck('id')->toArray(), $user->id);
+            FetchAudienceEmailBatchJob::dispatch($idsToQueue, $user->id);
+
+            $queued = count($idsToQueue);
+            $message = $queued < $profileCount
+                ? "Queued {$queued} of {$profileCount} profile(s) today (daily limit). Remaining profiles can be queued tomorrow."
+                : "Queued email lookup for {$queued} profile(s). Each profile is checked one at a time with a short delay.";
 
             return response()->json([
                 'status' => 'success',
-                'message' => "Batch email fetch queued for {$profileCount} profile(s).",
-                'profile_count' => $profileCount,
+                'message' => $message,
+                'profile_count' => $queued,
+                'skipped' => $profileCount - $queued,
             ]);
         } catch (\Throwable $th) {
             Log::error('Failed to dispatch batch email fetch job', ['error' => $th->getMessage()]);
@@ -524,7 +620,7 @@ class LeadsWebController extends Controller
 
     public function getPendingCount(): JsonResponse
     {
-        return response()->json(['status' => 'success', 'pending_count' => $this->getPendingEmailFetchCount(Auth::id())]);
+        return response()->json(['status' => 'success', 'pending_count' => app(EmailEnrichmentLimiter::class)->pendingJobCount(Auth::id())]);
     }
 
     private function applyEmailFilter($query, string $filter): void
@@ -660,24 +756,5 @@ class LeadsWebController extends Controller
             ]);
         }
     }
-
-    private function getPendingEmailFetchCount(int $userId): int
-    {
-        $userAudienceIds = Audience::where('user_id', $userId)->pluck('audience_id')->toArray();
-        if (empty($userAudienceIds)) {
-            return 0;
-        }
-
-        $stuckCutoff = now()->subMinutes(10);
-
-        AudienceList::whereIn('audience_id', $userAudienceIds)
-            ->whereIn('email_fetch_status', ['pending', 'processing'])
-            ->where(fn ($q) => $q->where('email_fetch_attempted_at', '<', $stuckCutoff)->orWhereNull('email_fetch_attempted_at'))
-            ->update(['email_fetch_status' => null, 'email_fetch_attempted_at' => null]);
-
-        return AudienceList::whereIn('audience_id', $userAudienceIds)
-            ->whereIn('email_fetch_status', ['pending', 'processing'])
-            ->where('email_fetch_attempted_at', '>=', $stuckCutoff)
-            ->count();
-    }
 }
+
