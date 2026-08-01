@@ -280,10 +280,18 @@ function removeEsp(id: number, provider: string) {
             <AlertCircle class="h-4 w-4 shrink-0" />
             {{ connectedChannels?.find(c => c.channel === channelConnectionError)?.label ?? channelConnectionError }} connection failed. Please try again.
         </div>
-        <div v-if="linkedinChannel && disconnectedAccounts().length" class="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
-            <AlertCircle class="h-4 w-4 shrink-0" />
-            LinkedIn is disconnected. Open <strong>LinkedIn advanced setup</strong> below to paste a fresh <code class="rounded bg-white/70 px-1">li_at</code> cookie, or use the browser extension on LinkedIn and click <strong>Detect &amp; save LinkedIn session</strong>.
-        </div>
+        <p
+            v-if="linkedinChannel && disconnectedAccounts().length"
+            class="flex items-start gap-2 text-xs text-muted-foreground"
+        >
+            <AlertCircle class="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+            <span>
+                LinkedIn session expired.
+                Open <strong class="font-medium text-foreground">LinkedIn advanced setup</strong> below to paste a fresh
+                <code class="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">li_at</code>,
+                or use the extension’s <strong class="font-medium text-foreground">Detect &amp; save LinkedIn session</strong>.
+            </span>
+        </p>
 
         <!-- Multi-channel outreach -->
         <section v-if="connectedChannels?.length" class="rounded-xl border border-border bg-card shadow-sm">

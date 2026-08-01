@@ -11,7 +11,8 @@ return new class extends Migration
         Schema::create('sn_leads_lists', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
-            $table->bigInteger('list_hash');
+            // String keys (e.g. search-1-audience-name); legacy installs may still be bigint until alter migration.
+            $table->string('list_hash', 64);
             $table->unsignedBigInteger('user_id');
             $table->timestamps();
             $table->index('user_id');
@@ -31,7 +32,7 @@ return new class extends Migration
             $table->string('degree', 15)->nullable();
             $table->string('object_urn', 50)->nullable();
             $table->text('jobs')->nullable();
-            $table->unsignedBigInteger('sn_list_id');
+            $table->string('sn_list_id', 64);
             $table->timestamps();
             $table->index('lid');
             $table->index('sn_list_id');
