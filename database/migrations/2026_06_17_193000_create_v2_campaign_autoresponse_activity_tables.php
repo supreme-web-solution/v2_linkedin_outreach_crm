@@ -60,7 +60,7 @@ return new class extends Migration
             $table->json('meta')->nullable();
             $table->timestamps();
 
-            $table->index(['organization_id', 'module', 'created_at']);
+            $table->index(['organization_id', 'module', 'created_at'], 'v2_user_act_org_mod_created_idx');
         });
     }
 

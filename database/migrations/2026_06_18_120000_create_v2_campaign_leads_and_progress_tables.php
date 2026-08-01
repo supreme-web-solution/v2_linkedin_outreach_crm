@@ -39,8 +39,8 @@ return new class extends Migration
             $table->timestamp('next_run_at')->nullable(); // when to run the next step (after delay)
             $table->timestamps();
 
-            $table->unique(['campaign_id', 'campaign_lead_id']);
-            $table->index(['campaign_id', 'run_status', 'next_run_at']);
+            $table->unique(['campaign_id', 'campaign_lead_id'], 'v2_clp_campaign_lead_unique');
+            $table->index(['campaign_id', 'run_status', 'next_run_at'], 'v2_clp_run_next_idx');
         });
     }
 

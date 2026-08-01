@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('list_name')->nullable();
             $table->timestamps();
 
-            $table->unique(['campaign_id', 'list_hash', 'list_src']);
+            $table->unique(['campaign_id', 'list_hash', 'list_src'], 'v2_campaign_lists_unique');
         });
 
         Schema::table('v2_campaign_leads', function (Blueprint $table) {

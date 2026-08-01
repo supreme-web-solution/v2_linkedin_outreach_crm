@@ -49,7 +49,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->unique(['outreach_campaign_id', 'source_list_src', 'source_record_id'], 'v2_outreach_leads_source_unique');
-            $table->index(['outreach_campaign_id', 'status']);
+            $table->index(['outreach_campaign_id', 'status'], 'v2_oleads_campaign_status_idx');
         });
 
         Schema::create('v2_outreach_lead_progress', function (Blueprint $table) {
@@ -67,7 +67,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->unique(['outreach_campaign_id', 'outreach_lead_id'], 'v2_outreach_progress_unique');
-            $table->index(['outreach_campaign_id', 'run_status', 'next_run_at']);
+            $table->index(['outreach_campaign_id', 'run_status', 'next_run_at'], 'v2_olp_run_next_idx');
         });
 
         Schema::create('v2_outreach_runs', function (Blueprint $table) {
@@ -95,7 +95,7 @@ return new class extends Migration
             $table->timestamp('executed_at');
             $table->timestamps();
 
-            $table->index(['outreach_campaign_id', 'executed_at']);
+            $table->index(['outreach_campaign_id', 'executed_at'], 'v2_one_campaign_exec_idx');
         });
     }
 
