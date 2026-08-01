@@ -71,6 +71,14 @@ return [
         'daily_limit_per_user' => env('DAILY_EMAIL_SCRAPING_LIMIT', 100),
     ],
 
+    'fullenrich' => [
+        'api_key' => env('FULLENRICH_API_KEY'),
+        'base_url' => env('FULLENRICH_BASE_URL', 'https://app.fullenrich.com/api/v2'),
+        'poll_timeout_seconds' => (int) env('FULLENRICH_POLL_TIMEOUT_SECONDS', 90),
+        'poll_interval_seconds' => (int) env('FULLENRICH_POLL_INTERVAL_SECONDS', 3),
+        'request_timeout_seconds' => (int) env('FULLENRICH_REQUEST_TIMEOUT_SECONDS', 30),
+    ],
+
     'competitor_followers' => [
         'company_posts_limit' => env('COMPETITOR_POSTS_LIMIT', 15),
         'page_size' => env('COMPETITOR_PAGE_SIZE', 100),
@@ -96,6 +104,8 @@ return [
         // Random pause between paginated harvest calls (competitor engagers)
         'harvest_page_delay_min_ms' => (int) env('UNIPILE_HARVEST_PAGE_DELAY_MIN_MS', 800),
         'harvest_page_delay_max_ms' => (int) env('UNIPILE_HARVEST_PAGE_DELAY_MAX_MS', 2500),
+        // Lead readiness: max contacts verified per "Prepare batch" click
+        'contact_prep_batch_size' => (int) env('OUTREACH_CONTACT_PREP_BATCH_SIZE', 25),
     ],
 
     'unipile' => [
@@ -124,6 +134,7 @@ return [
             'list_chats'        => env('UNIPILE_ENDPOINT_LIST_CHATS', '/chats'),
             'list_messages'     => env('UNIPILE_ENDPOINT_LIST_MESSAGES', '/chats/%s/messages'),
             'send_email'        => env('UNIPILE_ENDPOINT_SEND_EMAIL', '/emails'),
+            'list_emails'       => env('UNIPILE_ENDPOINT_LIST_EMAILS', '/emails'),
             'list_calendars'    => env('UNIPILE_ENDPOINT_LIST_CALENDARS', '/calendars'),
             'calendar_events'   => env('UNIPILE_ENDPOINT_CALENDAR_EVENTS', '/calendars/%s/events'),
             'calendar_event'    => env('UNIPILE_ENDPOINT_CALENDAR_EVENT', '/calendars/%s/events/%s'),

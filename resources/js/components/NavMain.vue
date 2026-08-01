@@ -89,6 +89,10 @@ function subRowClass(active: boolean): string {
     return cn('h-9 rounded-lg text-[13px] font-medium transition-colors', active ? activeSubRow : inactiveSubRow);
 }
 
+function badgeLabel(count: number): string {
+    return count > 99 ? '99+' : String(count);
+}
+
 function iconWrapClass(active: boolean, size = 'size-8'): string {
     return cn(
         'flex shrink-0 items-center justify-center rounded-lg transition-colors',
@@ -128,8 +132,15 @@ function iconWrapClass(active: boolean, size = 'size-8'): string {
                                     <NavSketchIcon :icon="item.icon" class="size-[18px] [&_svg]:size-[18px] [&_svg]:stroke-[2]" />
                                 </span>
                                 <NavTruncatedLabel :text="item.title" label-class="flex-1" />
+                                <span
+                                    v-if="item.badge && item.badge > 0"
+                                    class="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground"
+                                >
+                                    {{ badgeLabel(item.badge) }}
+                                </span>
                                 <ChevronRight
                                     class="ml-auto size-4 shrink-0 text-sidebar-foreground/50 transition-transform group-data-[state=open]/collapsible:rotate-90"
+                                    :class="item.badge && item.badge > 0 ? 'ml-0' : ''"
                                 />
                             </SidebarMenuButton>
                         </CollapsibleTrigger>
@@ -153,6 +164,12 @@ function iconWrapClass(active: boolean, size = 'size-8'): string {
                                                 />
                                             </span>
                                             <NavTruncatedLabel :text="child.title" label-class="flex-1" />
+                                            <span
+                                                v-if="child.badge && child.badge > 0"
+                                                class="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground"
+                                            >
+                                                {{ badgeLabel(child.badge) }}
+                                            </span>
                                         </Link>
                                     </SidebarMenuSubButton>
                                 </SidebarMenuSubItem>
@@ -173,6 +190,12 @@ function iconWrapClass(active: boolean, size = 'size-8'): string {
                                 <NavSketchIcon :icon="item.icon" class="size-[18px] [&_svg]:size-[18px] [&_svg]:stroke-[2]" />
                             </span>
                             <NavTruncatedLabel :text="item.title" label-class="flex-1" />
+                            <span
+                                v-if="item.badge && item.badge > 0"
+                                class="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold text-primary-foreground"
+                            >
+                                {{ badgeLabel(item.badge) }}
+                            </span>
                         </Link>
                     </SidebarMenuButton>
                 </SidebarMenuItem>

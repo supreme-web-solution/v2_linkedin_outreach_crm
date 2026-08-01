@@ -118,7 +118,7 @@ const canSend = computed(() => {
 });
 
 const sendButtonTitle = computed(() =>
-    props.call.has_conversation ? 'Send via Unipile' : 'Start chat & send opening message',
+    props.call.has_conversation ? 'Send message' : 'Start chat & send opening message',
 );
 
 const messageHasCalendarPlaceholder = computed(() => editForm.pending_message?.includes('{calendar_url}') ?? false);

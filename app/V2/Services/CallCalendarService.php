@@ -9,6 +9,7 @@ use App\Models\V2IntegrationAccount;
 use App\Models\V2UserActivity;
 use App\V2\Integrations\Unipile\UnipileException;
 use App\V2\Integrations\Unipile\UnipileProvider;
+use App\V2\Outreach\OutreachChannelRegistry;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Arr;
@@ -79,32 +80,104 @@ class CallCalendarService
     }
 
     /**
-     * @return array{account: V2IntegrationAccount, unipile_account_id: string}|null
+     * @return list<array{provider: string, label: string, email: string|null}>
      */
-    public function resolveCalendarAccount(int $userId): ?array
+    public function listConnectedCalendarAccounts(int $userId): array
     {
         $accounts = V2IntegrationAccount::query()
             ->where('user_id', $userId)
             ->where('status', 'active')
             ->whereIn('provider', ['google_calendar', 'outlook_calendar', 'email'])
-            ->latest('id')
+            ->orderBy('id')
             ->get();
 
+        $byProvider = [];
+
         foreach ($accounts as $account) {
+            $provider = $this->mapAccountToCalendarProvider($account);
+            if ($provider === null) {
+                continue;
+            }
+
             $unipileId = $account->getUnipileAccountId();
             if (!$unipileId) {
                 continue;
             }
 
-            $hosted = strtoupper((string) Arr::get($account->meta ?? [], 'unipile_type', Arr::get($account->meta ?? [], 'unipile_provider', '')));
-            if ($account->provider === 'email' && !in_array($hosted, ['GOOGLE_OAUTH', 'GOOGLE', 'OUTLOOK', 'MICROSOFT'], true)) {
+            $existing = $byProvider[$provider] ?? null;
+            if ($existing === null || ($existing->provider === 'email' && $account->provider !== 'email')) {
+                $byProvider[$provider] = $account;
+            }
+        }
+
+        $result = [];
+        foreach (OutreachChannelRegistry::calendarProviders() as $provider) {
+            $account = $byProvider[$provider] ?? null;
+            if ($account === null) {
                 continue;
             }
 
-            return [
-                'account' => $account,
-                'unipile_account_id' => $unipileId,
+            $email = trim((string) Arr::get($account->meta ?? [], 'email', ''));
+
+            $result[] = [
+                'provider' => $provider,
+                'label' => OutreachChannelRegistry::channelLabel($provider),
+                'email' => $email !== '' ? $email : null,
             ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * @return array<string, list<array{id: string, name: string, primary: bool}>>
+     */
+    public function listCalendarsGroupedByProvider(int $userId): array
+    {
+        $grouped = [];
+
+        foreach ($this->listConnectedCalendarAccounts($userId) as $row) {
+            $provider = (string) $row['provider'];
+            $grouped[$provider] = $this->listCalendarsForUser($userId, $provider);
+        }
+
+        return $grouped;
+    }
+
+    /**
+     * @return array{account: V2IntegrationAccount, unipile_account_id: string}|null
+     */
+    public function resolveCalendarAccount(int $userId, ?string $preferredProvider = null): ?array
+    {
+        $preferredProvider = trim((string) ($preferredProvider ?? ''));
+        $calendarProviders = OutreachChannelRegistry::calendarProviders();
+        $accounts = V2IntegrationAccount::query()
+            ->where('user_id', $userId)
+            ->where('status', 'active')
+            ->whereIn('provider', array_merge($calendarProviders, ['email']))
+            ->latest('id')
+            ->get();
+
+        if ($preferredProvider !== '') {
+            foreach ($accounts as $account) {
+                if (!$this->accountMatchesCalendarProvider($account, $preferredProvider)) {
+                    continue;
+                }
+
+                $resolved = $this->resolvedCalendarAccountRow($account);
+                if ($resolved !== null) {
+                    return $resolved;
+                }
+            }
+
+            return null;
+        }
+
+        foreach ($accounts as $account) {
+            $resolved = $this->resolvedCalendarAccountRow($account);
+            if ($resolved !== null) {
+                return $resolved;
+            }
         }
 
         return null;
@@ -113,9 +186,9 @@ class CallCalendarService
     /**
      * @return list<array{id: string, name: string, primary: bool}>
      */
-    public function listCalendarsForUser(int $userId): array
+    public function listCalendarsForUser(int $userId, ?string $preferredProvider = null): array
     {
-        $resolved = $this->resolveCalendarAccount($userId);
+        $resolved = $this->resolveCalendarAccount($userId, $preferredProvider);
         if (!$resolved) {
             return [];
         }
@@ -509,14 +582,15 @@ class CallCalendarService
             return null;
         }
 
-        $resolved = $this->resolveCalendarAccount($user->id);
+        $preferredProvider = trim((string) ($settings['calendar_provider'] ?? ''));
+        $resolved = $this->resolveCalendarAccount($user->id, $preferredProvider !== '' ? $preferredProvider : null);
         if (!$resolved) {
             return null;
         }
 
         $calendarId = trim((string) ($settings['calendar_id'] ?? ''));
         if ($calendarId === '') {
-            $calendarId = $this->resolvePrimaryCalendarId($user->id, $resolved['unipile_account_id']);
+            $calendarId = $this->resolvePrimaryCalendarId($user->id, $resolved['unipile_account_id'], $preferredProvider !== '' ? $preferredProvider : null);
         }
 
         if ($calendarId === '') {
@@ -664,15 +738,16 @@ class CallCalendarService
             return null;
         }
 
-        $resolved = $this->resolveCalendarAccount($user->id);
+        $settings = app(CallOrchestrationService::class)->settingsFor($user);
+        $preferredProvider = trim((string) ($settings['calendar_provider'] ?? ''));
+        $resolved = $this->resolveCalendarAccount($user->id, $preferredProvider !== '' ? $preferredProvider : null);
         if (!$resolved) {
             return null;
         }
 
-        $settings = app(CallOrchestrationService::class)->settingsFor($user);
         $calendarId = trim((string) ($meta['calendar_id'] ?? $settings['calendar_id'] ?? ''));
         if ($calendarId === '') {
-            $calendarId = $this->resolvePrimaryCalendarId($user->id, $resolved['unipile_account_id']);
+            $calendarId = $this->resolvePrimaryCalendarId($user->id, $resolved['unipile_account_id'], $preferredProvider !== '' ? $preferredProvider : null);
         }
         if ($calendarId === '') {
             return null;
@@ -789,15 +864,16 @@ class CallCalendarService
      */
     private function busyIntervalsForUser(User $user, CarbonInterface $rangeStart, CarbonInterface $rangeEnd, string $timezone): array
     {
-        $resolved = $this->resolveCalendarAccount($user->id);
+        $settings = app(CallOrchestrationService::class)->settingsFor($user);
+        $preferredProvider = trim((string) ($settings['calendar_provider'] ?? ''));
+        $resolved = $this->resolveCalendarAccount($user->id, $preferredProvider !== '' ? $preferredProvider : null);
         if (!$resolved) {
             return [];
         }
 
-        $settings = app(CallOrchestrationService::class)->settingsFor($user);
         $calendarId = trim((string) ($settings['calendar_id'] ?? ''));
         if ($calendarId === '') {
-            $calendarId = $this->resolvePrimaryCalendarId($user->id, $resolved['unipile_account_id']);
+            $calendarId = $this->resolvePrimaryCalendarId($user->id, $resolved['unipile_account_id'], $preferredProvider !== '' ? $preferredProvider : null);
         }
         if ($calendarId === '') {
             return [];
@@ -861,9 +937,9 @@ class CallCalendarService
         return false;
     }
 
-    private function resolvePrimaryCalendarId(int $userId, string $unipileAccountId): string
+    private function resolvePrimaryCalendarId(int $userId, string $unipileAccountId, ?string $preferredProvider = null): string
     {
-        $calendars = $this->listCalendarsForUser($userId);
+        $calendars = $this->listCalendarsForUser($userId, $preferredProvider);
 
         foreach ($calendars as $calendar) {
             if ($calendar['primary']) {
@@ -992,5 +1068,52 @@ class CallCalendarService
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function mapAccountToCalendarProvider(V2IntegrationAccount $account): ?string
+    {
+        if (in_array($account->provider, ['google_calendar', 'outlook_calendar'], true)) {
+            return OutreachChannelRegistry::isEnabled($account->provider) ? $account->provider : null;
+        }
+
+        if ($account->provider !== 'email') {
+            return null;
+        }
+
+        $hosted = strtoupper((string) Arr::get($account->meta ?? [], 'unipile_type', Arr::get($account->meta ?? [], 'unipile_provider', '')));
+        if (in_array($hosted, ['OUTLOOK', 'MICROSOFT'], true)) {
+            return OutreachChannelRegistry::isEnabled('outlook_calendar') ? 'outlook_calendar' : null;
+        }
+
+        if (in_array($hosted, ['GOOGLE_OAUTH', 'GOOGLE', 'GMAIL'], true)) {
+            return OutreachChannelRegistry::isEnabled('google_calendar') ? 'google_calendar' : null;
+        }
+
+        return null;
+    }
+
+    private function accountMatchesCalendarProvider(V2IntegrationAccount $account, string $provider): bool
+    {
+        return $this->mapAccountToCalendarProvider($account) === $provider;
+    }
+
+    /**
+     * @return array{account: V2IntegrationAccount, unipile_account_id: string}|null
+     */
+    private function resolvedCalendarAccountRow(V2IntegrationAccount $account): ?array
+    {
+        $unipileId = $account->getUnipileAccountId();
+        if (!$unipileId) {
+            return null;
+        }
+
+        if ($this->mapAccountToCalendarProvider($account) === null) {
+            return null;
+        }
+
+        return [
+            'account' => $account,
+            'unipile_account_id' => $unipileId,
+        ];
     }
 }

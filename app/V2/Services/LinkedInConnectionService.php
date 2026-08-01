@@ -339,7 +339,7 @@ class LinkedInConnectionService
 
                 'status' => $account->status,
 
-                'message' => 'No Unipile account id on record.',
+                'message' => 'No LinkedIn account id on record.',
 
             ];
 
@@ -381,7 +381,7 @@ class LinkedInConnectionService
 
                 'status' => 'active',
 
-                'message' => 'LinkedIn is connected on Unipile.',
+                'message' => 'LinkedIn is connected.',
 
             ];
 
@@ -399,7 +399,7 @@ class LinkedInConnectionService
 
                     'status' => 'disconnected',
 
-                    'message' => 'LinkedIn is disconnected on Unipile. Reconnect with a fresh li_at cookie.',
+                    'message' => 'LinkedIn is disconnected. Reconnect with a fresh li_at cookie.',
 
                 ];
 

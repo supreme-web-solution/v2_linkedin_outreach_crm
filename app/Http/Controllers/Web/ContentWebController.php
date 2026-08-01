@@ -173,13 +173,60 @@ class ContentWebController extends Controller
             ->where('organization_id', $user->current_organization_id)
             ->findOrFail($id);
 
-        if ($post->status === 'published') {
-            return back()->withErrors(['post' => 'Published posts cannot be deleted.']);
-        }
-
         $post->delete();
 
         return redirect()->route('content')->with('success', 'Post deleted.');
+    }
+
+    public function bulkDestroy(Request $request): RedirectResponse
+    {
+        $user = auth()->user();
+        $orgId = (int) $user->current_organization_id;
+
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:100'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $ids = array_values(array_unique(array_map('intval', $data['ids'])));
+
+        $deleted = V2ContentPost::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $orgId)
+            ->whereIn('id', $ids)
+            ->delete();
+
+        if ($deleted === 0) {
+            return back()->withErrors(['post' => 'No matching posts to delete.']);
+        }
+
+        $message = $deleted === 1 ? '1 post deleted.' : "{$deleted} posts deleted.";
+
+        return redirect()->route('content')->with('success', $message);
+    }
+
+    public function duplicate(int $id): RedirectResponse
+    {
+        $user = auth()->user();
+        $source = V2ContentPost::where('user_id', $user->id)
+            ->where('organization_id', $user->current_organization_id)
+            ->findOrFail($id);
+
+        $copy = V2ContentPost::create([
+            'user_id' => $user->id,
+            'organization_id' => (int) $user->current_organization_id,
+            'provider' => $source->provider ?: 'linkedin',
+            'content' => $source->content,
+            'status' => 'draft',
+            'scheduled_at' => null,
+            'published_at' => null,
+            'meta' => array_merge(is_array($source->meta) ? $source->meta : [], [
+                'duplicated_from' => $source->id,
+                'duplicated_at' => now()->toIso8601String(),
+            ]),
+        ]);
+
+        return redirect()->route('content')->with('success', 'Post duplicated as draft.');
     }
 
     public function publish(int $id): RedirectResponse

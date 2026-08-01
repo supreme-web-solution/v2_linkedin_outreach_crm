@@ -6,13 +6,16 @@ use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\V2\Integrations\ProviderManager;
 use App\V2\Integrations\Unipile\UnipileProvider;
+use App\V2\Outreach\OutreachSendProof;
 use App\V2\Outreach\OutreachSequenceResolver;
+use App\V2\Services\UnifiedInboxService;
 use Illuminate\Support\Facades\Log;
 
 class EmailChannelExecutor implements ChannelExecutorInterface
 {
     public function __construct(
         private readonly ProviderManager $providerManager,
+        private readonly UnifiedInboxService $unifiedInbox,
         private readonly OutreachSequenceResolver $resolver = new OutreachSequenceResolver(),
     ) {}
 
@@ -51,13 +54,53 @@ class EmailChannelExecutor implements ChannelExecutorInterface
             $providerKey = $this->providerManager->defaultProvider();
             /** @var UnipileProvider $concrete */
             $concrete = $this->providerManager->get($providerKey, UnipileProvider::class);
+            $subject = $content['subject'] ?: 'Hello';
+            $body = $content['body'] ?: 'Hi there,';
             $response = $concrete->sendEmail([
                 'to' => [['identifier' => $email]],
-                'subject' => $content['subject'] ?: 'Hello',
-                'body' => $content['body'] ?: 'Hi there,',
+                'subject' => $subject,
+                'body' => $body,
             ], $context);
 
-            return ['status' => 'completed', 'payload' => ['response' => $response]];
+            $responseArray = is_array($response) ? $response : [];
+            $proof = OutreachSendProof::fromResponse($responseArray);
+
+            $conversation = $this->unifiedInbox->recordOutboundEmail(
+                (int) $campaign->user_id,
+                (int) $campaign->organization_id,
+                $lead,
+                $email,
+                $responseArray,
+                $subject,
+                $body,
+            );
+
+            if ($conversation === null) {
+                return [
+                    'status' => 'failed',
+                    'error_message' => 'Email could not be linked to inbox — treat as not sent.',
+                ];
+            }
+
+            if ($proof['provider_message_id'] === '') {
+                return [
+                    'status' => 'awaiting_send_confirmation',
+                    'payload' => [
+                        'response' => $responseArray,
+                        'conversation_id' => $conversation->id,
+                    ],
+                ];
+            }
+
+            return [
+                'status' => 'completed',
+                'payload' => [
+                    'response' => $responseArray,
+                    'provider_message_id' => $proof['provider_message_id'],
+                    'conversation_id' => $conversation->id,
+                    'confirmed_sent' => true,
+                ],
+            ];
         } catch (\Throwable $e) {
             Log::error('[Outreach] Email action failed', ['error' => $e->getMessage()]);
 

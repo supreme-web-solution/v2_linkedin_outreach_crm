@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
     multiple?: boolean;
     placeholder?: string;
     searchPlaceholder?: string;
+    noOptionsText?: string;
     emptyText?: string;
     disabled?: boolean;
     allowClear?: boolean;
@@ -24,6 +25,7 @@ const props = withDefaults(defineProps<{
     placeholder: 'Select…',
     searchPlaceholder: 'Search…',
     emptyText: 'No matches',
+    noOptionsText: '',
     disabled: false,
     allowClear: false,
     clearLabel: 'Clear selection',
@@ -193,7 +195,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick));
 
             <ul class="overflow-y-auto py-1" :class="panelMaxHeightClass">
                 <li v-if="!filteredOptions.length" class="px-3 py-6 text-center text-xs text-muted-foreground">
-                    {{ emptyText }}
+                    {{ props.options.length === 0 && noOptionsText ? noOptionsText : emptyText }}
                 </li>
                 <li v-for="option in filteredOptions" :key="option.value">
                     <button

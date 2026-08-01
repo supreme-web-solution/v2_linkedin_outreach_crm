@@ -198,6 +198,7 @@ const friendlyFlashError = computed(() => {
 
     if (raw.length > 280
         || raw.includes('Unipile API error')
+        || raw.includes('Messaging error')
         || raw.includes('"schema"')
         || raw.includes('errors/')
         || raw.includes('HTTP 4')
@@ -279,7 +280,7 @@ function removeEsp(id: number, provider: string) {
             <AlertCircle class="h-4 w-4 shrink-0" />
             {{ connectedChannels?.find(c => c.channel === channelConnectionError)?.label ?? channelConnectionError }} connection failed. Please try again.
         </div>
-        <div v-if="disconnectedAccounts().length" class="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+        <div v-if="linkedinChannel && disconnectedAccounts().length" class="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
             <AlertCircle class="h-4 w-4 shrink-0" />
             LinkedIn is disconnected. Open <strong>LinkedIn advanced setup</strong> below to paste a fresh <code class="rounded bg-white/70 px-1">li_at</code> cookie, or use the browser extension on LinkedIn and click <strong>Detect &amp; save LinkedIn session</strong>.
         </div>
@@ -336,7 +337,7 @@ function removeEsp(id: number, provider: string) {
         </section>
 
         <!-- LinkedIn advanced (cookie / secure login) — collapsed by default -->
-        <Collapsible v-model:open="linkedinAdvancedOpen">
+        <Collapsible v-if="linkedinChannel" v-model:open="linkedinAdvancedOpen">
             <section id="linkedin-advanced" class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                 <CollapsibleTrigger class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted/30">
                     <div class="flex min-w-0 items-center gap-3">

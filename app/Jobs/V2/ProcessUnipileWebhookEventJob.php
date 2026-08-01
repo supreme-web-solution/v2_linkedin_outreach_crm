@@ -49,6 +49,12 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
         }
 
         $payload = is_array($event->payload) ? $event->payload : [];
+        if ($this->shouldSkipDisabledChannel($payload)) {
+            $event->forceFill(['processed_at' => now()])->save();
+
+            return;
+        }
+
         $eventType = $event->event_type;
         $knownEventTypes = [
             'message.received',
@@ -81,6 +87,9 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             'account.reconnected',
             'account.connected',
             'account.error',
+            'account.creation.success',
+            'account.add',
+            'account.status.running',
             'email.opened',
             'email.replied',
             'email.bounced',
@@ -154,6 +163,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                     }
 
                 if ($conversation) {
+                    $messageAt = $this->extractMessageTimestamp($payload);
                     V2Message::query()->updateOrCreate(
                         [
                             'conversation_id' => $conversation->id,
@@ -163,7 +173,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                             'direction' => 'inbound',
                             'body' => $body !== '' ? $body : '[Attachment]',
                             'attachments' => $attachments !== [] ? $attachments : null,
-                            'received_at' => now(),
+                            'received_at' => $messageAt,
                             'meta' => array_filter([
                                 'source' => 'unipile_webhook',
                                 'event_id' => $event->event_id,
@@ -173,7 +183,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                     );
 
                     $conversation->forceFill([
-                        'last_message_at' => now(),
+                        'last_message_at' => $messageAt,
                     ])->save();
 
                     if ($conversation->isInboxThread()) {
@@ -247,6 +257,11 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
 
             if ($chatId !== '' && trim($body) !== '') {
                 $this->persistOutboundMessage($event, $payload, $chatId, $body, $providerMessageId, $persistence, $unifiedInbox);
+            }
+
+            if ($chatId !== '' && $event->user_id) {
+                app(\App\V2\Outreach\OutreachWebhookProgressService::class)
+                    ->confirmOutboundSendFromWebhook((int) $event->user_id, $chatId, $providerMessageId !== '' ? $providerMessageId : null);
             }
 
             $this->recordWebhookActivity(
@@ -368,6 +383,10 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             app(\App\V2\Outreach\OutreachWebhookProgressService::class)
                 ->handleEmailTrackingEvent((int) $event->user_id, $eventType, $payload);
 
+            if (in_array($eventType, ['email.replied', 'mail.received'], true)) {
+                $unifiedInbox->handleInboundEmailWebhook((int) $event->user_id, $payload);
+            }
+
             $this->recordWebhookActivity(
                 (int) $event->user_id,
                 'webhook.email.tracking',
@@ -376,7 +395,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             );
         }
 
-        if (in_array($eventType, ['account.disconnected', 'account.reconnected', 'account.connected', 'account.error'], true) && $event->user_id) {
+        if (in_array($eventType, ['account.disconnected', 'account.reconnected', 'account.connected', 'account.error', 'account.creation.success', 'account.add', 'account.status.running'], true) && $event->user_id) {
             $statusMap = [
                 'account.reconnected' => 'reconnected',
                 'account.disconnected' => 'disconnected',
@@ -387,7 +406,13 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             $providerRaw = (string) (Arr::get($payload, 'data.provider') ?? Arr::get($payload, 'provider') ?? 'LINKEDIN');
             $provider = OutreachChannelRegistry::integrationProviderForUnipileType($providerRaw)
                 ?? strtolower($providerRaw);
-            $normalizedStatus = in_array($eventType, ['account.connected', 'account.reconnected'], true) ? 'active' : ($statusMap[$eventType] ?? 'unknown');
+            $normalizedStatus = in_array($eventType, [
+                'account.connected',
+                'account.reconnected',
+                'account.creation.success',
+                'account.add',
+                'account.status.running',
+            ], true) ? 'active' : ($statusMap[$eventType] ?? 'unknown');
 
             if ($accountId !== '') {
                 $organizationId = (int) (User::query()->where('id', $event->user_id)->value('current_organization_id') ?? 0);
@@ -542,6 +567,8 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             return;
         }
 
+        $messageAt = $this->extractMessageTimestamp($payload);
+
         $existing = null;
         if ($providerMessageId !== '') {
             $existing = V2Message::query()
@@ -566,7 +593,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                 'direction' => 'outbound',
                 'body' => $body,
                 'provider_message_id' => $providerMessageId !== '' ? $providerMessageId : $existing->provider_message_id,
-                'sent_at' => $existing->sent_at ?? now(),
+                'sent_at' => $messageAt,
                 'meta' => $meta + [
                     'source' => 'unipile_webhook',
                     'event_id' => $event->event_id,
@@ -578,7 +605,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                 'provider_message_id' => $providerMessageId !== '' ? $providerMessageId : null,
                 'direction' => 'outbound',
                 'body' => $body,
-                'sent_at' => now(),
+                'sent_at' => $messageAt,
                 'meta' => [
                     'source' => 'unipile_webhook',
                     'event_id' => $event->event_id,
@@ -587,7 +614,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
         }
 
         $conversation->forceFill([
-            'last_message_at' => now(),
+            'last_message_at' => $messageAt,
             'status' => 'active',
         ])->save();
     }
@@ -656,6 +683,44 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             ?? Arr::get($payload, 'body')
             ?? ''
         ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function shouldSkipDisabledChannel(array $payload): bool
+    {
+        $providerRaw = (string) (Arr::get($payload, 'data.provider') ?? Arr::get($payload, 'provider') ?? Arr::get($payload, 'data.account_type') ?? Arr::get($payload, 'account_type') ?? '');
+        if ($providerRaw === '') {
+            return false;
+        }
+
+        $channelKey = OutreachChannelRegistry::channelKeyForUnipileType($providerRaw);
+        if ($channelKey === null) {
+            return false;
+        }
+
+        return ! OutreachChannelRegistry::isEnabled($channelKey);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function extractMessageTimestamp(array $payload): \Illuminate\Support\Carbon
+    {
+        $raw = Arr::get($payload, 'timestamp')
+            ?? Arr::get($payload, 'data.timestamp')
+            ?? Arr::get($payload, 'data.date')
+            ?? Arr::get($payload, 'date');
+
+        if ($raw !== null && $raw !== '') {
+            try {
+                return \Illuminate\Support\Carbon::parse((string) $raw)->toMutable();
+            } catch (\Throwable) {
+            }
+        }
+
+        return \Illuminate\Support\Carbon::now();
     }
 
     /**

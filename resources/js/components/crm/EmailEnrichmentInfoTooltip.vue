@@ -17,14 +17,14 @@ withDefaults(defineProps<{
             <button
                 type="button"
                 class="inline-flex rounded-md p-0.5 text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
-                aria-label="About email enrichment"
+                aria-label="About contact enrichment"
             >
                 <Info class="h-4 w-4" />
             </button>
         </TooltipTrigger>
         <TooltipContent :side="side" :align="align" class="max-w-[18rem] text-xs leading-relaxed">
-            Email lookup follows LinkedIn’s rules. We can only retrieve an address when the member has chosen to share it in their Contact Info — usually with connections.
-            If they haven’t shared it, no email is returned. This is not guessing or third-party data.
+            We search the LinkedIn profile for work email, phone, and social links first.
+            If anything is still missing, additional verified lookups run automatically until we find a match or exhaust available sources.
         </TooltipContent>
     </Tooltip>
 </template>

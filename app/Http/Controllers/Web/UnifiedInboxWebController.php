@@ -14,6 +14,9 @@ use App\V2\Outreach\InboxAttachmentSupport;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Services\OpenAIContentService;
 use App\V2\Services\OutreachChannelInboxSettingsService;
+use App\V2\Services\EmailAddressQuality;
+use App\V2\Services\EmailBodyFormatter;
+use App\V2\Services\InboxUnreadService;
 use App\V2\Services\UnifiedInboxService;
 use App\V2\Integrations\Unipile\UnipileProvider;
 use Illuminate\Http\JsonResponse;
@@ -27,14 +30,14 @@ use Inertia\Response;
 
 class UnifiedInboxWebController extends Controller
 {
-    /** @var array<int, string> */
-    private const PLATFORMS = ['linkedin', 'whatsapp', 'instagram', 'telegram', 'twitter', 'email'];
-
     private const CONVERSATIONS_PER_PAGE = 20;
 
     public function __construct(
         private readonly UnifiedInboxService $inbox,
+        private readonly InboxUnreadService $unread,
         private readonly OutreachChannelInboxSettingsService $channelSettings,
+        private readonly EmailBodyFormatter $emailBodyFormatter,
+        private readonly EmailAddressQuality $emailQuality,
     ) {
     }
 
@@ -43,8 +46,12 @@ class UnifiedInboxWebController extends Controller
         /** @var User $user */
         $user = auth()->user();
 
-        $platforms = [];
-        foreach (self::PLATFORMS as $platform) {
+        $platforms = OutreachChannelRegistry::inboxPlatforms();
+
+        $unreadByPlatform = $this->unread->unreadCountsByPlatform($user->id, $platforms);
+
+        $platformCards = [];
+        foreach ($platforms as $platform) {
             $config = OutreachChannelRegistry::channels()[$platform] ?? [];
             $count = V2Conversation::query()
                 ->where('user_id', $user->id)
@@ -59,23 +66,24 @@ class UnifiedInboxWebController extends Controller
                 ->where('created_at', '>=', now()->subDays(7))
                 ->count();
 
-            $platforms[] = [
+            $platformCards[] = [
                 'key' => $platform,
                 'label' => (string) ($config['label'] ?? ucfirst($platform)),
                 'color' => (string) ($config['color'] ?? '#64748b'),
                 'connected' => (bool) V2IntegrationAccount::activeUnipileAccountIdForProvider($user->id, $platform),
                 'conversations_count' => $count,
                 'recent_inbound_count' => $recentInbound,
+                'unread_count' => $unreadByPlatform[$platform] ?? 0,
                 'href' => route('inbox.platform', $platform),
             ];
         }
 
         return Inertia::render('crm/inbox/Index', [
-            'platforms' => $platforms,
+            'platforms' => $platformCards,
         ]);
     }
 
-    public function platform(Request $request, string $platform): Response
+    public function platform(Request $request, string $platform): Response|RedirectResponse
     {
         $this->channelSettings->assertInboxChannel($platform);
 
@@ -84,6 +92,17 @@ class UnifiedInboxWebController extends Controller
         $search = trim((string) $request->query('search', ''));
         $campaignFilter = (int) $request->query('campaign', 0);
         $selectedId = (int) $request->query('id', 0);
+
+        if ($platform === 'email') {
+            $this->inbox->syncEmailInboxForUser($user->id);
+        }
+
+        if ($selectedId <= 0 && $search === '' && $campaignFilter <= 0) {
+            $firstUnread = $this->unread->firstUnreadConversationId($user->id, $platform);
+            if ($firstUnread !== null) {
+                return redirect()->route('inbox.show', [$platform, $firstUnread]);
+            }
+        }
 
         $conversations = $this->paginateConversations($user, $platform, $request);
 
@@ -100,6 +119,9 @@ class UnifiedInboxWebController extends Controller
 
             if ($thread) {
                 $this->inbox->syncMessagesFromProvider($thread);
+                $this->inbox->dedupeConversationMessages($thread);
+                $thread->refresh();
+                $this->unread->markAsRead($thread);
                 $thread->refresh();
                 $selected = $this->serializeThread($thread);
                 $messages = $this->serializeMessages($thread);
@@ -118,6 +140,7 @@ class UnifiedInboxWebController extends Controller
             'selected' => $selected,
             'messages' => $messages,
             'outreachContext' => $outreachContext,
+            'unread_count' => $this->unread->unreadCountForUser($user->id, $platform),
             'aiConfigured' => app(OpenAIContentService::class)->isConfigured(),
             'supportsAttachments' => InboxAttachmentSupport::supportsAttachments($platform),
             'filters' => [
@@ -143,6 +166,9 @@ class UnifiedInboxWebController extends Controller
             ->firstOrFail();
 
         $this->inbox->syncMessagesFromProvider($thread);
+        $this->inbox->dedupeConversationMessages($thread);
+        $thread->refresh();
+        $this->unread->markAsRead($thread);
         $thread->refresh();
 
         $config = OutreachChannelRegistry::channels()[$platform] ?? [];
@@ -157,6 +183,7 @@ class UnifiedInboxWebController extends Controller
             'selected' => $this->serializeThread($thread),
             'messages' => $this->serializeMessages($thread),
             'outreachContext' => $outreachContext,
+            'unread_count' => $this->unread->unreadCountForUser($user->id, $platform),
             'aiConfigured' => app(OpenAIContentService::class)->isConfigured(),
             'supportsAttachments' => InboxAttachmentSupport::supportsAttachments($platform),
             'filters' => [
@@ -181,6 +208,9 @@ class UnifiedInboxWebController extends Controller
             ->firstOrFail();
 
         $this->inbox->syncMessagesFromProvider($thread);
+        $this->inbox->dedupeConversationMessages($thread);
+        $thread->refresh();
+        $this->unread->markAsRead($thread);
         $thread->refresh();
 
         $outreachContext = $this->buildOutreachContext($thread, $user);
@@ -192,6 +222,7 @@ class UnifiedInboxWebController extends Controller
             ),
             'selected' => $this->serializeThread($thread),
             'outreachContext' => $outreachContext,
+            'unread_count' => $this->unread->unreadCountForUser($user->id, $platform),
         ]);
     }
 
@@ -228,7 +259,62 @@ class UnifiedInboxWebController extends Controller
             return back()->with('error', $e->getMessage());
         }
 
-        return back()->with('success', 'Message sent via Unipile.');
+        return back()->with('success', 'Message sent.');
+    }
+
+    public function destroy(string $platform, int $id): RedirectResponse
+    {
+        $this->channelSettings->assertInboxChannel($platform);
+
+        /** @var User $user */
+        $user = auth()->user();
+
+        $conversation = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->forInboxPlatform($platform)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $name = $this->prospectName($conversation) ?? 'Conversation';
+        $conversation->delete();
+
+        return redirect()
+            ->route('inbox.platform', $platform)
+            ->with('success', "{$name} removed from your inbox.");
+    }
+
+    public function destroyMessage(string $platform, int $id, int $messageId): RedirectResponse
+    {
+        $this->channelSettings->assertInboxChannel($platform);
+
+        /** @var User $user */
+        $user = auth()->user();
+
+        $conversation = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->forInboxPlatform($platform)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $message = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('id', $messageId)
+            ->firstOrFail();
+
+        $message->delete();
+
+        $latest = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->orderByDesc('received_at')
+            ->orderByDesc('sent_at')
+            ->orderByDesc('created_at')
+            ->first();
+
+        $conversation->forceFill([
+            'last_message_at' => ($latest?->received_at ?? $latest?->sent_at ?? $latest?->created_at),
+        ])->save();
+
+        return back()->with('success', 'Message removed.');
     }
 
     public function attachment(
@@ -334,6 +420,9 @@ class UnifiedInboxWebController extends Controller
                 'status' => $lead->status,
                 'phone' => $lead->phone,
                 'email' => $lead->email,
+                'email_quality' => $provider === 'email'
+                    ? $this->emailQuality->assess($lead->email)
+                    : null,
             ] : null,
             'progress' => $progress ? [
                 'paused_reason' => Arr::get($progress->meta ?? [], 'paused_reason'),
@@ -413,6 +502,16 @@ class UnifiedInboxWebController extends Controller
             ->value('body');
 
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $prospectEmail = trim((string) (
+            Arr::get($meta, 'prospect_email')
+            ?? ($conversation->provider === 'email' ? $conversation->provider_chat_id : '')
+            ?? ''
+        ));
+        $formattedPreview = $preview
+            ? ($conversation->provider === 'email'
+                ? $this->emailBodyFormatter->preview((string) $preview)
+                : mb_substr((string) $preview, 0, 120))
+            : null;
 
         return [
             'id' => $conversation->id,
@@ -420,13 +519,18 @@ class UnifiedInboxWebController extends Controller
             'channel_label' => Arr::get($meta, 'channel_label') ?: OutreachChannelRegistry::channelLabel((string) $conversation->provider),
             'prospect_name' => $this->prospectName($conversation),
             'prospect_headline' => Arr::get($meta, 'prospect_headline'),
+            'prospect_email' => $prospectEmail !== '' ? $prospectEmail : null,
+            'email_quality' => $conversation->provider === 'email'
+                ? $this->emailQuality->assess($prospectEmail)
+                : null,
             'status' => $conversation->status,
             'last_message_at' => $conversation->last_message_at?->toIso8601String(),
             'messages_count' => (int) ($conversation->messages_count ?? 0),
-            'last_message_preview' => $preview ? mb_substr((string) $preview, 0, 120) : null,
+            'last_message_preview' => $formattedPreview,
             'outreach_campaign_id' => Arr::get($meta, 'outreach_campaign_id'),
             'outreach_campaign_name' => $this->campaignName((int) (Arr::get($meta, 'outreach_campaign_id') ?? 0)),
             'outreach_lead_id' => Arr::get($meta, 'outreach_lead_id'),
+            'is_unread' => $this->unread->isUnread($conversation),
         ];
     }
 
@@ -438,12 +542,19 @@ class UnifiedInboxWebController extends Controller
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
         $provider = (string) $conversation->provider;
 
+        $prospectEmail = trim((string) (
+            Arr::get($meta, 'prospect_email')
+            ?? ($provider === 'email' ? $conversation->provider_chat_id : '')
+            ?? ''
+        ));
+
         return [
             'id' => $conversation->id,
             'provider' => $provider,
             'channel_label' => Arr::get($meta, 'channel_label') ?: OutreachChannelRegistry::channelLabel($provider),
             'provider_chat_id' => $conversation->provider_chat_id,
             'prospect_name' => $this->prospectName($conversation),
+            'prospect_email' => $prospectEmail !== '' ? $prospectEmail : null,
             'prospect_headline' => Arr::get($meta, 'prospect_headline'),
             'status' => $conversation->status,
             'last_message_at' => $conversation->last_message_at?->toIso8601String(),
@@ -462,15 +573,22 @@ class UnifiedInboxWebController extends Controller
 
         return V2Message::query()
             ->where('conversation_id', $conversation->id)
-            ->orderBy('created_at')
+            ->orderByRaw('COALESCE(received_at, sent_at, created_at) ASC')
             ->orderBy('id')
             ->get()
             ->filter(fn (V2Message $message) => ! $normalizer->isReactionAnnouncementText((string) ($message->body ?? '')))
-            ->map(fn (V2Message $message) => [
+            ->map(function (V2Message $message) use ($conversation, $normalizer) {
+                $rawBody = (string) ($message->body ?? '');
+                $formatted = $conversation->provider === 'email'
+                    ? $this->emailBodyFormatter->format($rawBody)
+                    : null;
+
+                return [
                 'id' => $message->id,
                 'provider_message_id' => $message->provider_message_id,
                 'direction' => $message->direction,
-                'body' => (string) ($message->body ?? ''),
+                'body' => $rawBody,
+                'formatted' => $formatted,
                 'at' => ($message->received_at ?? $message->sent_at ?? $message->created_at)?->toIso8601String(),
                 'source' => Arr::get($message->meta ?? [], 'source'),
                 'attachments' => collect(is_array($message->attachments) ? $message->attachments : [])
@@ -500,7 +618,9 @@ class UnifiedInboxWebController extends Controller
                     ])
                     ->values()
                     ->all(),
-            ])
+                ];
+            })
+            ->values()
             ->all();
     }
 

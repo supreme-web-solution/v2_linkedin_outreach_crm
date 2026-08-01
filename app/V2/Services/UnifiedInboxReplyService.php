@@ -19,14 +19,15 @@ class UnifiedInboxReplyService
     private const RECENT_MESSAGES_FOR_AI = 5;
 
     /** @var array<int, string> */
-    public const INBOX_CHANNELS = [
-        'linkedin',
-        'whatsapp',
-        'instagram',
-        'telegram',
-        'twitter',
-        'email',
-    ];
+    public const INBOX_CHANNELS = [];
+
+    /**
+     * @return array<int, string>
+     */
+    public static function inboxChannels(): array
+    {
+        return OutreachChannelRegistry::inboxPlatforms();
+    }
 
     public function __construct(
         private readonly UnifiedInboxService $inbox,

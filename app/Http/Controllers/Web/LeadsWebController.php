@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Web;
 use App\Http\Controllers\Controller;
 use App\Jobs\FetchAudienceEmailBatchJob;
 use App\Jobs\FetchAudienceEmailJob;
+use App\Jobs\FetchSnEmailBatchJob;
 use App\Models\Audience;
 use App\Models\AudienceList;
 use App\Models\SnLead;
@@ -17,9 +18,11 @@ use App\Models\V2LeadSource;
 use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
 use App\V2\Outreach\OutreachImportListService;
+use App\V2\Outreach\OutreachContactEnrichmentService;
+use App\V2\Outreach\OutreachLeadContactResolver;
+use App\V2\Outreach\OutreachLeadReadinessService;
 use App\V2\Services\DashboardStatsService;
 use App\V2\Services\EmailEnrichmentLimiter;
-use App\V2\Services\UnipileProfileEmailService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -130,12 +133,8 @@ class LeadsWebController extends Controller
                 ->through(fn (V2OutreachImportLead $row) => [
                     'id' => $row->id,
                     'full_name' => $row->full_name,
-                    'email' => $row->email,
-                    'phone' => $row->phone,
                     'profile_url' => $row->profile_url,
-                    'instagram_handle' => $row->instagram_handle,
-                    'telegram_handle' => $row->telegram_handle,
-                    'twitter_handle' => $row->twitter_handle,
+                    'contacts' => $this->contactsFromImportLead($row),
                 ]);
         } elseif ($src === 'aud') {
             $audience = Audience::where('audience_id', $listId)->where('user_id', Auth::id())->first();
@@ -153,8 +152,12 @@ class LeadsWebController extends Controller
             }
             $this->applyEmailFilter($query, $emailFilter);
 
+            $overlays = app(OutreachLeadContactResolver::class)->overlaysForLists((int) Auth::id(), [
+                ['list_hash' => $listId, 'list_src' => 'aud'],
+            ]);
+
             $leads = $query->latest()->paginate(20)->appends($request->query())
-                ->through(fn (AudienceList $row) => $this->transformAudLead($row));
+                ->through(fn (AudienceList $row) => $this->transformAudLead($row, $overlays));
 
             $counts = $this->emailFilterCounts($listId);
         } else {
@@ -162,7 +165,7 @@ class LeadsWebController extends Controller
             $listName = $list?->name ?: 'Sales Navigator';
             $listRecordId = $list?->id;
 
-            $query = SnLead::where('sn_list_id', $listId);
+            $query = SnLead::where('sn_list_id', $listId)->with('company');
             if ($search !== '') {
                 $query->where(function ($q) use ($search) {
                     $q->where('first_name', 'like', "%{$search}%")
@@ -173,9 +176,25 @@ class LeadsWebController extends Controller
                 });
             }
 
+            $overlays = app(OutreachLeadContactResolver::class)->overlaysForLists((int) Auth::id(), [
+                ['list_hash' => $listId, 'list_src' => 'sn'],
+            ]);
+
             $leads = $query->latest()->paginate(20)->appends($request->query())
-                ->through(fn (SnLead $row) => $this->transformSnLead($row));
+                ->through(fn (SnLead $row) => $this->transformSnLead($row, $overlays));
         }
+
+        $pendingCount = in_array($src, ['aud', 'sn'], true)
+            ? app(EmailEnrichmentLimiter::class)->pendingJobCount(Auth::id())
+            : 0;
+
+        $contactStats = in_array($src, ['aud', 'sn'], true)
+            ? $this->contactStatsForList($listId, $src, (int) Auth::id(), $pendingCount)
+            : null;
+
+        $importEnrichmentStats = $src === 'csv'
+            ? app(OutreachLeadReadinessService::class)->enrichmentStatsForImportList($listId, (int) Auth::id())
+            : null;
 
         return Inertia::render($src === 'csv' ? 'crm/Leads/ImportShow' : 'crm/Leads/Show', [
             'leads' => $leads,
@@ -186,8 +205,10 @@ class LeadsWebController extends Controller
             'emailFilter' => $emailFilter,
             'search' => $search,
             'counts' => $counts,
+            'contactStats' => $contactStats,
+            'importEnrichmentStats' => $importEnrichmentStats,
             'dailyLimit' => $src === 'csv' ? null : $this->dailyLimitPayload(),
-            'pendingCount' => $src === 'aud' ? app(EmailEnrichmentLimiter::class)->pendingJobCount(Auth::id()) : 0,
+            'pendingCount' => $pendingCount,
         ]);
     }
 
@@ -249,6 +270,62 @@ class LeadsWebController extends Controller
         }
 
         return redirect()->route('leads')->with('success', 'Lead list removed successfully.');
+    }
+
+    public function removeListsBulk(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'lists' => ['required', 'array', 'min:1'],
+            'lists.*.list_hash' => ['required', 'string'],
+            'lists.*.src' => ['required', 'in:aud,sn,csv'],
+        ]);
+
+        $removed = 0;
+
+        foreach ($data['lists'] as $list) {
+            $listId = (string) $list['list_hash'];
+            $src = (string) $list['src'];
+
+            if ($src === 'aud') {
+                $audience = Audience::where('audience_id', $listId)->where('user_id', Auth::id())->first();
+                if ($audience) {
+                    AudienceList::where('audience_id', $listId)->delete();
+                    $audience->delete();
+                    $removed++;
+                }
+            } elseif ($src === 'csv') {
+                $importList = V2OutreachImportList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
+                if ($importList) {
+                    V2OutreachImportLead::where('import_list_id', $importList->id)->delete();
+                    $importList->delete();
+                    $removed++;
+                }
+            } else {
+                $listModel = SnLeadList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
+                if ($listModel) {
+                    $snLids = SnLead::where('sn_list_id', $listId)->pluck('sn_lid')->filter()->values();
+                    $leadIds = SnLead::where('sn_list_id', $listId)->pluck('id');
+                    SnLeadsCompany::whereIn('sn_lead_id', $leadIds)->delete();
+                    SnLead::where('sn_list_id', $listId)->delete();
+                    if ($snLids->isNotEmpty()) {
+                        $v2LeadIds = V2Lead::query()
+                            ->where('user_id', Auth::id())
+                            ->whereIn('provider_profile_id', $snLids)
+                            ->pluck('id');
+                        if ($v2LeadIds->isNotEmpty()) {
+                            V2LeadSource::query()
+                                ->where('source_external_id', $listId)
+                                ->whereIn('lead_id', $v2LeadIds)
+                                ->delete();
+                        }
+                    }
+                    $listModel->delete();
+                    $removed++;
+                }
+            }
+        }
+
+        return back()->with('success', "{$removed} list(s) removed.");
     }
 
     public function removeLead(Request $request, int $leadId): RedirectResponse
@@ -383,12 +460,23 @@ class LeadsWebController extends Controller
 
     public function fetchEmail(Request $request, string $listId): JsonResponse
     {
-        if ($request->query('src', 'aud') === 'sn') {
-            return $this->fetchSnLeadEmail($request, $listId);
+        return $this->enrich($request, $listId);
+    }
+
+    public function enrich(Request $request, string $listId): JsonResponse
+    {
+        $src = $request->query('src', 'aud');
+
+        if ($src === 'sn') {
+            return $this->enrichSnLead($request, $listId);
         }
 
-        if ($request->query('src', 'aud') !== 'aud') {
-            return response()->json(['status' => 'error', 'message' => 'Email fetching is only available for audience or Sales Navigator leads.'], 400);
+        if ($src === 'csv') {
+            return $this->enrichImportLead($request, $listId);
+        }
+
+        if ($src !== 'aud') {
+            return response()->json(['status' => 'error', 'message' => 'Enrichment is only available for audience, Sales Navigator, or imported leads.'], 400);
         }
 
         /** @var \App\Models\User $user */
@@ -409,10 +497,10 @@ class LeadsWebController extends Controller
 
         if (! empty($item->email_fetch_attempted_at)) {
             if ($item->email_fetch_status === 'pending') {
-                return response()->json(['status' => 'error', 'message' => 'Email fetch is already in progress.', 'already_pending' => true], 409);
+                return response()->json(['status' => 'error', 'message' => 'Enrichment is already in progress.', 'already_pending' => true], 409);
             }
             if ($item->email_fetch_status === 'completed' && empty($item->con_email)) {
-                return response()->json(['status' => 'error', 'message' => 'Email fetch already attempted. No email found.', 'already_completed' => true], 409);
+                return response()->json(['status' => 'error', 'message' => 'Enrichment already attempted. No work email found.', 'already_completed' => true], 409);
             }
         }
 
@@ -421,7 +509,7 @@ class LeadsWebController extends Controller
             $publicIdentifier = $m[1];
         }
         if (empty($publicIdentifier)) {
-            return response()->json(['status' => 'error', 'message' => 'Profile identifier not found. Cannot fetch email.'], 400);
+            return response()->json(['status' => 'error', 'message' => 'Profile identifier not found. Cannot enrich.'], 400);
         }
 
         $this->checkAndResetDailyLimit($user);
@@ -429,14 +517,14 @@ class LeadsWebController extends Controller
 
         $dailyLimit = (int) config('services.email_scraping.daily_limit_per_user', 100);
         if ($user->daily_profile_email_scraping_count >= $dailyLimit) {
-            return response()->json(['status' => 'error', 'message' => "Daily email scraping limit reached ({$dailyLimit} profiles/day)."], 429);
+            return response()->json(['status' => 'error', 'message' => "Daily enrichment limit reached ({$dailyLimit} profiles/day)."], 429);
         }
 
         $pendingCount = app(EmailEnrichmentLimiter::class)->pendingJobCount($user->id);
         if ($pendingCount >= 5) {
             return response()->json([
                 'status' => 'error',
-                'message' => "You have {$pendingCount} email scraping jobs in progress. Please wait before starting more.",
+                'message' => "You have {$pendingCount} enrichment jobs in progress. Please wait before starting more.",
                 'concurrent_limit_reached' => true,
                 'pending_count' => $pendingCount,
             ], 429);
@@ -447,15 +535,15 @@ class LeadsWebController extends Controller
         try {
             FetchAudienceEmailJob::dispatch($item->id, $publicIdentifier);
 
-            return response()->json(['status' => 'success', 'message' => 'Email fetch job queued.', 'pending' => true]);
+            return response()->json(['status' => 'success', 'message' => 'Enrichment job queued.', 'pending' => true]);
         } catch (\Throwable $th) {
-            Log::error('Failed to dispatch email fetch job', ['audience_list_id' => $item->id, 'error' => $th->getMessage()]);
+            Log::error('Failed to dispatch enrichment job', ['audience_list_id' => $item->id, 'error' => $th->getMessage()]);
 
-            return response()->json(['status' => 'error', 'message' => 'Failed to fetch email: '.$th->getMessage()], 500);
+            return response()->json(['status' => 'error', 'message' => 'Failed to enrich: '.$th->getMessage()], 500);
         }
     }
 
-    private function fetchSnLeadEmail(Request $request, string $listId): JsonResponse
+    private function enrichSnLead(Request $request, string $listId): JsonResponse
     {
         /** @var User $user */
         $user = Auth::user();
@@ -478,13 +566,27 @@ class LeadsWebController extends Controller
             return response()->json(['status' => 'success', 'message' => 'Email already exists', 'email' => $lead->email]);
         }
 
-        $identifier = trim((string) ($lead->lid ?: $lead->sn_lid ?: ''));
-        if ($identifier === '') {
-            return response()->json(['status' => 'error', 'message' => 'Profile identifier not found. Cannot fetch email.'], 400);
+        if (! empty($lead->email_fetch_attempted_at)) {
+            if (in_array($lead->email_fetch_status, ['pending', 'processing'], true)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Enrichment is already in progress.',
+                    'already_pending' => true,
+                ], 409);
+            }
+
+            if ($lead->email_fetch_status === 'completed' && empty($lead->email)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Enrichment already attempted. No work email found.',
+                    'already_completed' => true,
+                ], 409);
+            }
         }
 
-        if (! V2IntegrationAccount::activeUnipileAccountId($user->id)) {
-            return response()->json(['status' => 'error', 'message' => 'Connect LinkedIn via Integrations first.'], 422);
+        $identifier = trim((string) ($lead->lid ?: $lead->sn_lid ?: ''));
+        if ($identifier === '') {
+            return response()->json(['status' => 'error', 'message' => 'Profile identifier not found. Cannot enrich.'], 400);
         }
 
         $this->checkAndResetDailyLimit($user);
@@ -492,72 +594,134 @@ class LeadsWebController extends Controller
 
         $dailyLimit = (int) config('services.email_scraping.daily_limit_per_user', 100);
         if ($user->daily_profile_email_scraping_count >= $dailyLimit) {
-            return response()->json(['status' => 'error', 'message' => "Daily email lookup limit reached ({$dailyLimit} profiles/day)."], 429);
+            return response()->json(['status' => 'error', 'message' => "Daily enrichment limit reached ({$dailyLimit} profiles/day)."], 429);
         }
 
+        $pendingCount = app(EmailEnrichmentLimiter::class)->pendingJobCount($user->id);
+        if ($pendingCount >= 5) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "You have {$pendingCount} enrichment jobs in progress. Please wait before starting more.",
+                'concurrent_limit_reached' => true,
+                'pending_count' => $pendingCount,
+            ], 429);
+        }
+
+        $lead->update(['email_fetch_attempted_at' => now(), 'email_fetch_status' => 'processing']);
+
         try {
-            $email = app(UnipileProfileEmailService::class)->fetchEmailForUser($user, $identifier);
+            $enrichmentService = app(\App\V2\Services\LeadEnrichmentService::class);
+            $persister = app(\App\V2\Services\LeadEnrichmentPersister::class);
+            $lead->loadMissing('company');
+            $result = $enrichmentService->enrich($user, $enrichmentService->inputFromSnLead($lead));
+            $persister->persistSnLead($lead, $result, $user->id);
         } catch (\Throwable $th) {
-            Log::error('Failed to fetch SN lead email via Unipile', [
+            $lead->update(['email_fetch_status' => 'failed']);
+
+            Log::error('Failed to enrich SN lead', [
                 'sn_lead_id' => $lead->id,
                 'identifier' => $identifier,
                 'error' => $th->getMessage(),
             ]);
 
-            return response()->json(['status' => 'error', 'message' => 'Failed to fetch email: '.$th->getMessage()], 500);
+            return response()->json(['status' => 'error', 'message' => 'Failed to enrich: '.$th->getMessage()], 500);
         }
 
         $user->increment('daily_profile_email_scraping_count');
+        $lead->refresh();
 
-        if ($email) {
-            $lead->forceFill(['email' => $email])->save();
+        if ($result->hasAnyContact()) {
+            $lead->refresh();
+            $verify = app(\App\V2\Outreach\OutreachContactEnrichmentService::class)->verifyContactsForRow($user, [
+                'src' => 'sn',
+                'list_hash' => $listId,
+                'record_id' => $lead->id,
+                'phone' => $lead->phone,
+                'whatsapp_provider_id' => $lead->whatsapp_provider_id,
+                'instagram_handle' => $lead->instagram_handle,
+                'instagram_provider_id' => $lead->instagram_provider_id,
+                'telegram_handle' => $lead->telegram_handle,
+                'telegram_provider_id' => $lead->telegram_provider_id,
+                'twitter_handle' => $lead->twitter_handle,
+                'twitter_provider_id' => $lead->twitter_provider_id,
+                'linkedin_key' => trim((string) ($lead->lid ?: $lead->sn_lid ?: '')),
+            ]);
+            $lead->refresh();
 
-            V2Lead::query()
-                ->where('user_id', $user->id)
-                ->where(function ($query) use ($lead, $identifier) {
-                    $query->where('public_identifier', $identifier)
-                        ->orWhere('provider_profile_id', $identifier)
-                        ->orWhere('provider_profile_id', $lead->sn_lid);
-                })
-                ->update(['email' => $email]);
+            $extras = [];
+            if ($verify['whatsapp_verified']) {
+                $extras[] = 'WhatsApp verified';
+            }
+            if ($verify['handles_resolved'] > 0) {
+                $extras[] = $verify['handles_resolved'].' social handle(s) resolved';
+            }
 
             return response()->json([
                 'status' => 'success',
-                'message' => 'Email found via LinkedIn profile.',
-                'email' => $email,
+                'message' => 'Contact details enriched.'.($result->email ? ' Email found.' : '').($result->phone ? ' Phone found.' : '')
+                    .($extras !== [] ? ' '.implode('. ', $extras).'.' : ''),
+                'email' => $lead->email,
+                'sources' => $result->sources,
             ]);
         }
 
         return response()->json([
-            'status' => 'error',
-            'message' => 'No email on this LinkedIn profile (member has not shared one).',
-            'already_completed' => true,
-        ], 404);
+            'status' => 'success',
+            'message' => 'Enrichment complete. No work email or phone was found for this profile.',
+            'email' => null,
+            'completed' => true,
+        ]);
     }
 
     public function fetchEmailBatch(Request $request, string $listId): JsonResponse
     {
-        if ($request->query('src', 'aud') !== 'aud') {
-            return response()->json(['status' => 'error', 'message' => 'Batch email fetching only supported for audience leads.'], 400);
+        return $this->enrichBatch($request, $listId);
+    }
+
+    public function enrichBatch(Request $request, string $listId): JsonResponse
+    {
+        $src = $request->query('src', 'aud');
+
+        if ($src === 'sn') {
+            return $this->enrichSnBatch($request, $listId);
+        }
+
+        if ($src === 'csv') {
+            return $this->enrichImportBatch($request, $listId);
+        }
+
+        if ($src !== 'aud') {
+            return response()->json(['status' => 'error', 'message' => 'Batch enrichment only supported for audience, Sales Navigator, or imported leads.'], 400);
         }
 
         /** @var \App\Models\User $user */
         $user = Auth::user();
         $audience = Audience::where('user_id', $user->id)->where('audience_id', $listId)->firstOrFail();
 
+        $readiness = app(OutreachLeadReadinessService::class);
+
         $request->validate([
-            'audience_list_ids' => 'required|array|min:1|max:50',
+            'auto_batch' => 'sometimes|boolean',
+            'audience_list_ids' => 'required_unless:auto_batch,true|array|min:1|max:50',
             'audience_list_ids.*' => 'required|integer|exists:audience_lists,id',
         ]);
 
-        $items = AudienceList::whereIn('id', $request->input('audience_list_ids'))
+        $audienceListIds = $request->boolean('auto_batch')
+            ? $readiness->nextAudienceListIdsForEmailFetch($audience->audience_id, 25)
+            : $request->input('audience_list_ids', []);
+
+        if ($audienceListIds === []) {
+            return response()->json(['status' => 'error', 'message' => 'No contacts left to enrich in this list.'], 400);
+        }
+
+        $items = AudienceList::whereIn('id', $audienceListIds)
             ->where('audience_id', $audience->audience_id)
             ->get();
 
         $needing = $items->filter(fn ($i) => empty($i->con_email) && empty($i->email_fetch_attempted_at));
 
         if ($needing->isEmpty()) {
-            return response()->json(['status' => 'error', 'message' => 'All selected profiles already have emails or have been attempted.'], 400);
+            return response()->json(['status' => 'error', 'message' => 'All selected profiles are already enriched or in progress.'], 400);
         }
 
         $profileCount = $needing->count();
@@ -575,13 +739,17 @@ class LeadsWebController extends Controller
 
         $idsToQueue = $needing->pluck('id')->take($capacity['max_queue_now'])->values()->all();
 
+        AudienceList::query()
+            ->whereIn('id', $idsToQueue)
+            ->update(['email_fetch_attempted_at' => now(), 'email_fetch_status' => 'pending']);
+
         try {
             FetchAudienceEmailBatchJob::dispatch($idsToQueue, $user->id);
 
             $queued = count($idsToQueue);
             $message = $queued < $profileCount
-                ? "Queued {$queued} of {$profileCount} profile(s) today (daily limit). Remaining profiles can be queued tomorrow."
-                : "Queued email lookup for {$queued} profile(s). Each profile is checked one at a time with a short delay.";
+                ? "Queued {$queued} of {$profileCount} profile(s) for enrichment today (daily limit). Remaining profiles can be queued tomorrow."
+                : "Queued enrichment for {$queued} profile(s).";
 
             return response()->json([
                 'status' => 'success',
@@ -590,10 +758,241 @@ class LeadsWebController extends Controller
                 'skipped' => $profileCount - $queued,
             ]);
         } catch (\Throwable $th) {
-            Log::error('Failed to dispatch batch email fetch job', ['error' => $th->getMessage()]);
+            Log::error('Failed to dispatch batch enrichment job', ['error' => $th->getMessage()]);
 
-            return response()->json(['status' => 'error', 'message' => 'Failed to fetch emails: '.$th->getMessage()], 500);
+            return response()->json(['status' => 'error', 'message' => 'Failed to enrich: '.$th->getMessage()], 500);
         }
+    }
+
+    private function enrichSnBatch(Request $request, string $listId): JsonResponse
+    {
+        /** @var User $user */
+        $user = Auth::user();
+
+        SnLeadList::query()
+            ->where('list_hash', $listId)
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+
+        $readiness = app(OutreachLeadReadinessService::class);
+
+        $request->validate([
+            'auto_batch' => 'sometimes|boolean',
+            'lead_ids' => 'required_unless:auto_batch,true|array|min:1|max:50',
+            'lead_ids.*' => 'required|integer|exists:sn_leads,id',
+        ]);
+
+        $leadIds = $request->boolean('auto_batch')
+            ? $readiness->nextSnLeadIdsForEmailFetch($listId, 25)
+            : $request->input('lead_ids', []);
+
+        if ($leadIds === []) {
+            return response()->json(['status' => 'error', 'message' => 'No contacts left to enrich in this list.'], 400);
+        }
+
+        $items = SnLead::query()
+            ->whereIn('id', $leadIds)
+            ->where('sn_list_id', $listId)
+            ->get();
+
+        $needing = $items->filter(function (SnLead $lead) {
+            if (! empty($lead->email)) {
+                return false;
+            }
+
+            if (in_array($lead->email_fetch_status, ['pending', 'processing'], true)) {
+                return false;
+            }
+
+            if ($lead->email_fetch_status === 'completed') {
+                return false;
+            }
+
+            if (empty($lead->email_fetch_status) && ! empty($lead->phone_fetch_attempted_at)) {
+                return false;
+            }
+
+            return true;
+        });
+
+        if ($needing->isEmpty()) {
+            return response()->json(['status' => 'error', 'message' => 'All selected profiles are already enriched or in progress.'], 400);
+        }
+
+        $profileCount = $needing->count();
+        $capacity = app(EmailEnrichmentLimiter::class)->queueCapacity($user, $profileCount);
+
+        if (! $capacity['allowed']) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $capacity['message'],
+                'daily_limit_reached' => $capacity['remaining_daily'] <= 0,
+                'remaining' => $capacity['remaining_daily'],
+                'pending_count' => $capacity['pending_jobs'],
+            ], $capacity['pending_jobs'] >= 5 ? 429 : 400);
+        }
+
+        $idsToQueue = $needing->pluck('id')->take($capacity['max_queue_now'])->values()->all();
+
+        SnLead::query()
+            ->whereIn('id', $idsToQueue)
+            ->update(['email_fetch_attempted_at' => now(), 'email_fetch_status' => 'pending']);
+
+        try {
+            FetchSnEmailBatchJob::dispatch($idsToQueue, $user->id, $listId);
+
+            $queued = count($idsToQueue);
+            $message = $queued < $profileCount
+                ? "Queued {$queued} of {$profileCount} profile(s) for enrichment today (daily limit). Remaining profiles can be queued tomorrow."
+                : "Queued enrichment for {$queued} profile(s).";
+
+            return response()->json([
+                'status' => 'success',
+                'message' => $message,
+                'profile_count' => $queued,
+                'skipped' => $profileCount - $queued,
+            ]);
+        } catch (\Throwable $th) {
+            Log::error('Failed to dispatch SN batch enrichment job', ['error' => $th->getMessage()]);
+
+            return response()->json(['status' => 'error', 'message' => 'Failed to enrich: '.$th->getMessage()], 500);
+        }
+    }
+
+    private function enrichImportLead(Request $request, string $listId): JsonResponse
+    {
+        /** @var User $user */
+        $user = Auth::user();
+
+        $importList = V2OutreachImportList::query()
+            ->where('list_hash', $listId)
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+
+        $request->validate([
+            'import_lead_id' => ['required', 'integer'],
+        ]);
+
+        $leadId = (int) $request->integer('import_lead_id');
+
+        V2OutreachImportLead::query()
+            ->where('id', $leadId)
+            ->where('import_list_id', $importList->id)
+            ->firstOrFail();
+
+        $readiness = app(OutreachLeadReadinessService::class);
+        $rows = $readiness->collectLeadRows([['list_hash' => $listId, 'list_src' => 'csv']], $user->id);
+        $row = collect($rows)->firstWhere('record_id', $leadId);
+
+        if (! is_array($row)) {
+            return response()->json(['status' => 'error', 'message' => 'Contact not found in this list.'], 404);
+        }
+
+        $result = app(OutreachContactEnrichmentService::class)->verifyContactsForRow($user, $row);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => $this->importEnrichmentMessage($result, 1),
+            'result' => $result,
+        ]);
+    }
+
+    private function enrichImportBatch(Request $request, string $listId): JsonResponse
+    {
+        /** @var User $user */
+        $user = Auth::user();
+
+        $importList = V2OutreachImportList::query()
+            ->where('list_hash', $listId)
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+
+        $readiness = app(OutreachLeadReadinessService::class);
+
+        $request->validate([
+            'auto_batch' => ['sometimes', 'boolean'],
+            'import_lead_ids' => ['required_unless:auto_batch,true', 'array', 'min:1', 'max:25'],
+            'import_lead_ids.*' => ['required', 'integer'],
+        ]);
+
+        $leadIds = $request->boolean('auto_batch')
+            ? $readiness->nextImportLeadIdsForEnrichment($importList->id, 25)
+            : array_map('intval', $request->input('import_lead_ids', []));
+
+        if ($leadIds === []) {
+            return response()->json(['status' => 'error', 'message' => 'No contacts left to enrich in this list.'], 400);
+        }
+
+        $rows = $readiness->collectLeadRows([['list_hash' => $listId, 'list_src' => 'csv']], $user->id);
+        $byId = collect($rows)->keyBy('record_id');
+
+        $service = app(OutreachContactEnrichmentService::class);
+        $totals = [
+            'whatsapp_verified' => 0,
+            'handles_resolved' => 0,
+            'handles_failed' => 0,
+            'handles_skipped' => 0,
+            'processed' => 0,
+        ];
+
+        foreach ($leadIds as $index => $leadId) {
+            $row = $byId->get($leadId);
+            if (! is_array($row)) {
+                continue;
+            }
+
+            if ($index > 0) {
+                usleep(300_000);
+            }
+
+            $result = $service->verifyContactsForRow($user, $row);
+            $totals['whatsapp_verified'] += $result['whatsapp_verified'] ? 1 : 0;
+            $totals['handles_resolved'] += (int) ($result['handles_resolved'] ?? 0);
+            $totals['handles_failed'] += (int) ($result['handles_failed'] ?? 0);
+            $totals['handles_skipped'] += (int) ($result['handles_skipped'] ?? 0);
+            $totals['processed']++;
+        }
+
+        if ($totals['processed'] === 0) {
+            return response()->json(['status' => 'error', 'message' => 'No eligible contacts in selection.'], 400);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => $this->importEnrichmentMessage($totals, $totals['processed']),
+            'result' => $totals,
+        ]);
+    }
+
+    /**
+     * @param  array<string, int|bool>  $result
+     */
+    private function importEnrichmentMessage(array $result, int $count): string
+    {
+        $parts = [];
+
+        $wa = (int) ($result['whatsapp_verified'] ?? 0);
+        if ($wa > 0) {
+            $parts[] = "{$wa} WhatsApp".($wa === 1 ? '' : ' numbers').' verified';
+        }
+
+        $resolved = (int) ($result['handles_resolved'] ?? 0);
+        if ($resolved > 0) {
+            $parts[] = "{$resolved} social handle".($resolved === 1 ? '' : 's').' resolved';
+        }
+
+        $failed = (int) ($result['handles_failed'] ?? 0);
+        if ($failed > 0) {
+            $parts[] = "{$failed} could not be resolved";
+        }
+
+        if ($parts === []) {
+            return $count === 1
+                ? 'Nothing to enrich for this contact — add a phone or social handle first, or connect channels under Integrations.'
+                : 'No contacts were enriched — add phones or social handles, or connect channels under Integrations.';
+        }
+
+        return ucfirst(implode('. ', $parts)).'.';
     }
 
     public function checkEmail(string $listId, int $audienceListId): JsonResponse
@@ -615,7 +1014,18 @@ class LeadsWebController extends Controller
 
     public function getDailyLimit(): JsonResponse
     {
-        return response()->json($this->dailyLimitPayload());
+        $payload = app(\App\V2\Services\DailyEnrichmentQuotaService::class)->payloadForUser(Auth::user());
+
+        return response()->json($payload ?? [
+            'daily_limit' => (int) config('services.email_scraping.daily_limit_per_user', 100),
+            'used' => 0,
+            'remaining' => (int) config('services.email_scraping.daily_limit_per_user', 100),
+            'effective_remaining' => (int) config('services.email_scraping.daily_limit_per_user', 100),
+            'in_flight' => 0,
+            'can_scrape' => true,
+            'percent' => 0,
+            'reset_date' => null,
+        ]);
     }
 
     public function getPendingCount(): JsonResponse
@@ -666,16 +1076,36 @@ class LeadsWebController extends Controller
     }
 
     /**
+     * @param  array<string, array<string, mixed>>  $overlays
      * @return array<string,mixed>
      */
-    private function transformAudLead(AudienceList $row): array
+    private function transformAudLead(AudienceList $row, array $overlays = []): array
     {
         $name = trim(($row->con_first_name ?? '').' '.($row->con_last_name ?? ''));
+        $resolver = app(OutreachLeadContactResolver::class);
+        $profileId = trim((string) ($row->con_public_identifier ?: $row->con_id ?: ''));
+        $linkedinKey = $resolver->normalizeLinkedinKey($profileId);
+        $contacts = $this->mergedContacts($resolver->mergeRow([
+            'email' => trim((string) ($row->con_email ?? '')),
+            'phone' => trim((string) ($row->con_phone ?? '')),
+            'whatsapp_provider_id' => trim((string) ($row->whatsapp_provider_id ?? '')),
+            'whatsapp_verify_status' => '',
+            'instagram_handle' => '',
+            'instagram_provider_id' => '',
+            'telegram_handle' => '',
+            'telegram_provider_id' => '',
+            'twitter_handle' => '',
+            'twitter_provider_id' => '',
+            'email_fetch_status' => (string) ($row->email_fetch_status ?? ''),
+            'phone_fetch_status' => (string) ($row->phone_fetch_status ?? ''),
+            'phone_fetch_attempted' => ! empty($row->phone_fetch_attempted_at),
+        ], $overlays[strtolower($linkedinKey)] ?? null));
+        $company = $this->companyPayload($row->con_company_name, $row->con_company_url);
 
         return [
             'id' => $row->id,
             'name' => $name !== '' ? $name : 'Unknown',
-            'email' => $row->con_email,
+            'email' => $contacts['email'],
             'headline' => $row->con_job_title,
             'location' => $row->con_location,
             'profileid' => $row->con_id,
@@ -686,21 +1116,56 @@ class LeadsWebController extends Controller
             'network_distance' => $row->con_distance,
             'email_fetch_status' => $row->email_fetch_status,
             'email_fetch_attempted_at' => optional($row->email_fetch_attempted_at)->toIso8601String(),
+            'contacts' => $contacts,
+            'company_name' => $company['company_name'],
+            'company_domain' => $company['company_domain'],
+            'company_logo_url' => $company['company_logo_url'],
             'source' => 'aud',
         ];
     }
 
     /**
+     * @param  array<string, array<string, mixed>>  $overlays
      * @return array<string,mixed>
      */
-    private function transformSnLead(SnLead $row): array
+    private function transformSnLead(SnLead $row, array $overlays = []): array
     {
         $name = trim(($row->first_name ?? '').' '.($row->last_name ?? ''));
+        $resolver = app(OutreachLeadContactResolver::class);
+        $profileId = trim((string) ($row->lid ?? ''));
+        $linkedinKey = $resolver->normalizeLinkedinKey($profileId ?: $row->sn_lid);
+        $emailFetchStatus = (string) ($row->email_fetch_status ?? '');
+        $emailFetchAttemptedAt = $row->email_fetch_attempted_at;
+        if ($emailFetchStatus === '' && ! empty($row->phone_fetch_attempted_at) && trim((string) ($row->email ?? '')) === '') {
+            $emailFetchStatus = 'completed';
+            $emailFetchAttemptedAt = $emailFetchAttemptedAt ?? $row->phone_fetch_attempted_at;
+        }
+        $contacts = $this->mergedContacts($resolver->mergeRow([
+            'email' => trim((string) ($row->email ?? '')),
+            'phone' => trim((string) ($row->phone ?? '')),
+            'whatsapp_provider_id' => trim((string) ($row->whatsapp_provider_id ?? '')),
+            'whatsapp_verify_status' => '',
+            'instagram_handle' => trim((string) ($row->instagram_handle ?? '')),
+            'instagram_provider_id' => trim((string) ($row->instagram_provider_id ?? '')),
+            'telegram_handle' => trim((string) ($row->telegram_handle ?? '')),
+            'telegram_provider_id' => trim((string) ($row->telegram_provider_id ?? '')),
+            'twitter_handle' => trim((string) ($row->twitter_handle ?? '')),
+            'twitter_provider_id' => trim((string) ($row->twitter_provider_id ?? '')),
+            'email_fetch_status' => $emailFetchStatus,
+            'phone_fetch_status' => (string) ($row->phone_fetch_status ?? ''),
+            'phone_fetch_attempted' => ! empty($row->phone_fetch_attempted_at),
+        ], $overlays[strtolower($linkedinKey)] ?? null));
+        $snCompany = $row->relationLoaded('company') ? $row->company : null;
+        $company = $this->companyPayload(
+            $snCompany?->company_name,
+            $snCompany?->company_website,
+            $snCompany?->company_logo,
+        );
 
         return [
             'id' => $row->id,
             'name' => $name !== '' ? $name : 'Unknown',
-            'email' => $row->email,
+            'email' => $contacts['email'],
             'headline' => $row->headline,
             'location' => $row->geolocation,
             'profileid' => $row->lid,
@@ -708,10 +1173,164 @@ class LeadsWebController extends Controller
             'profile_url' => $row->lid ? 'https://www.linkedin.com/in/'.$row->lid : null,
             'network_distance' => $row->degree,
             'outreach_status' => $row->outreach_status ?? 'new',
-            'email_fetch_status' => null,
-            'email_fetch_attempted_at' => null,
+            'email_fetch_status' => $emailFetchStatus !== '' ? $emailFetchStatus : null,
+            'email_fetch_attempted_at' => optional($emailFetchAttemptedAt)->toIso8601String(),
+            'contacts' => $contacts,
+            'company_name' => $company['company_name'],
+            'company_domain' => $company['company_domain'],
+            'company_logo_url' => $company['company_logo_url'],
             'source' => 'sn',
         ];
+    }
+
+    /**
+     * @return array<string, string|null>
+     */
+    private function contactsFromImportLead(V2OutreachImportLead $row): array
+    {
+        return $this->mergedContacts([
+            'email' => trim((string) ($row->email ?? '')),
+            'phone' => trim((string) ($row->phone ?? '')),
+            'whatsapp_provider_id' => trim((string) ($row->whatsapp_provider_id ?? '')),
+            'whatsapp_verify_status' => trim((string) ($row->whatsapp_verify_status ?? '')),
+            'instagram_handle' => trim((string) ($row->instagram_handle ?? '')),
+            'instagram_provider_id' => trim((string) ($row->instagram_provider_id ?? '')),
+            'telegram_handle' => trim((string) ($row->telegram_handle ?? '')),
+            'telegram_provider_id' => trim((string) ($row->telegram_provider_id ?? '')),
+            'twitter_handle' => trim((string) ($row->twitter_handle ?? '')),
+            'twitter_provider_id' => trim((string) ($row->twitter_provider_id ?? '')),
+            'email_fetch_status' => '',
+            'phone_fetch_status' => '',
+        ]);
+    }
+
+    /**
+     * @param  array<string, string>  $merged
+     * @return array<string, string|null>
+     */
+    private function mergedContacts(array $merged): array
+    {
+        return [
+            'email' => ($merged['email'] ?? '') !== '' ? $merged['email'] : null,
+            'phone' => ($merged['phone'] ?? '') !== '' ? $merged['phone'] : null,
+            'whatsapp_provider_id' => ($merged['whatsapp_provider_id'] ?? '') !== '' ? $merged['whatsapp_provider_id'] : null,
+            'whatsapp_verify_status' => ($merged['whatsapp_verify_status'] ?? '') !== '' ? $merged['whatsapp_verify_status'] : null,
+            'instagram_handle' => ($merged['instagram_handle'] ?? '') !== '' ? $merged['instagram_handle'] : null,
+            'instagram_provider_id' => ($merged['instagram_provider_id'] ?? '') !== '' ? $merged['instagram_provider_id'] : null,
+            'telegram_handle' => ($merged['telegram_handle'] ?? '') !== '' ? $merged['telegram_handle'] : null,
+            'telegram_provider_id' => ($merged['telegram_provider_id'] ?? '') !== '' ? $merged['telegram_provider_id'] : null,
+            'twitter_handle' => ($merged['twitter_handle'] ?? '') !== '' ? $merged['twitter_handle'] : null,
+            'twitter_provider_id' => ($merged['twitter_provider_id'] ?? '') !== '' ? $merged['twitter_provider_id'] : null,
+            'email_fetch_status' => ($merged['email_fetch_status'] ?? '') !== '' ? $merged['email_fetch_status'] : null,
+            'phone_fetch_attempted' => (bool) ($merged['phone_fetch_attempted'] ?? false),
+            'phone_fetch_status' => ($merged['phone_fetch_attempted'] ?? false) && ($merged['phone_fetch_status'] ?? '') !== ''
+                ? $merged['phone_fetch_status']
+                : null,
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function contactStatsForList(string $listId, string $src, int $userId, int $queuePending): array
+    {
+        $rows = app(OutreachLeadReadinessService::class)->collectLeadRows(
+            [['list_hash' => $listId, 'list_src' => $src]],
+            $userId,
+        );
+
+        $total = count($rows);
+        $emailsFound = 0;
+        $phonesFound = 0;
+        $emailPending = 0;
+        $phonePending = 0;
+        $emailSearched = 0;
+        $phoneSearched = 0;
+
+        foreach ($rows as $row) {
+            if (($row['email'] ?? '') !== '') {
+                $emailsFound++;
+            }
+            if (($row['phone'] ?? '') !== '') {
+                $phonesFound++;
+            }
+            if (in_array($row['email_fetch_status'] ?? '', ['pending', 'processing'], true)) {
+                $emailPending++;
+            }
+            if (in_array($row['phone_fetch_status'] ?? '', ['pending', 'processing'], true)) {
+                $phonePending++;
+            }
+            if ($row['email_fetch_attempted'] ?? false) {
+                $emailSearched++;
+            }
+            if ($row['phone_fetch_attempted'] ?? false) {
+                $phoneSearched++;
+            }
+        }
+
+        $emailPending = max($emailPending, $queuePending);
+        $processed = min($total, $emailSearched + $emailPending);
+        $fetchable = app(OutreachLeadReadinessService::class)->countEmailFetchableRows($rows, $src);
+
+        return [
+            'total' => $total,
+            'running' => $emailPending > 0 || $phonePending > 0,
+            'processed' => $processed,
+            'fetchable' => $fetchable,
+            'emails' => [
+                'found' => $emailsFound,
+                'total' => $total,
+                'pending' => $emailPending,
+                'searched' => $emailSearched,
+                'fill_percent' => $total > 0 ? (int) round($emailsFound / $total * 100) : 0,
+                'hit_rate' => $emailSearched > 0 ? (int) round($emailsFound / $emailSearched * 100) : 0,
+            ],
+            'phones' => [
+                'found' => $phonesFound,
+                'total' => $total,
+                'pending' => $phonePending,
+                'searched' => $phoneSearched,
+                'fill_percent' => $total > 0 ? (int) round($phonesFound / $total * 100) : 0,
+                'hit_rate' => $phoneSearched > 0 ? (int) round($phonesFound / $phoneSearched * 100) : 0,
+            ],
+        ];
+    }
+
+    /**
+     * @return array{company_name: ?string, company_domain: ?string, company_logo_url: ?string}
+     */
+    private function companyPayload(?string $name, ?string $website, ?string $logo = null): array
+    {
+        $domain = $this->domainFromUrl($website ?? '');
+        if ($domain === '' && $name !== null && str_contains($name, '.')) {
+            $domain = $this->domainFromUrl($name);
+        }
+        $logoUrl = $logo ?: ($domain !== '' ? 'https://www.google.com/s2/favicons?domain='.$domain.'&sz=64' : null);
+
+        return [
+            'company_name' => $name ?: null,
+            'company_domain' => $domain ?: null,
+            'company_logo_url' => $logoUrl,
+        ];
+    }
+
+    private function domainFromUrl(?string $value): string
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (! str_contains($value, '://') && str_contains($value, '.')) {
+            $value = 'https://'.$value;
+        }
+
+        $host = parse_url($value, PHP_URL_HOST);
+        if (! is_string($host) || $host === '') {
+            return '';
+        }
+
+        return strtolower(preg_replace('/^www\./', '', $host) ?? '');
     }
 
     /**

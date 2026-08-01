@@ -185,10 +185,10 @@ class ConversationsWebController extends Controller
 
         if ($callId) {
             return redirect()->route('calls.show', $callId)
-                ->with('success', 'Message queued via Unipile.');
+                ->with('success', 'Message queued.');
         }
 
-        return back()->with('success', 'Message queued via Unipile.');
+        return back()->with('success', 'Message queued.');
     }
 
     public function trackCall(int $id): RedirectResponse

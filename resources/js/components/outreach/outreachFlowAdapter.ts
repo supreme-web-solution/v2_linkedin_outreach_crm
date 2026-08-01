@@ -91,7 +91,7 @@ export function nodeModelToFlow(steps: OutreachStep[]): { nodes: Node[]; edges: 
         id: START_NODE_ID,
         type: 'outreachStart',
         position: { x: MAIN_X, y: 0 },
-        data: { step: { key: 0, type: 'action', label: 'Start', channel: 'linkedin', action: 'start' } },
+        data: { step: { key: 0, type: 'action', label: 'Start', channel: '', action: 'start' } },
         selectable: false,
     });
 

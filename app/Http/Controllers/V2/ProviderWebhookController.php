@@ -21,6 +21,13 @@ class ProviderWebhookController extends Controller
 
     public function unipile(Request $request): JsonResponse
     {
+        \Illuminate\Support\Facades\Log::info('[Unipile webhook] callback received', [
+            'path' => $request->path(),
+            'query' => $request->query(),
+            'event_type' => $request->input('type') ?? $request->input('event'),
+            'account_id' => $request->input('account_id'),
+        ]);
+
         $provider = $this->providerManager->webhook('unipile');
         $rawBody = (string) $request->getContent();
 

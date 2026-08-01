@@ -2,20 +2,26 @@
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import BulkEnrichButton from '@/components/crm/BulkEnrichButton.vue';
 import EmailEnrichmentInfoTooltip from '@/components/crm/EmailEnrichmentInfoTooltip.vue';
+import { refreshDailyEnrichmentQuota } from '@/composables/useDailyEnrichmentQuota';
+import LeadContactTags, { type LeadContacts } from '@/components/crm/LeadContactTags.vue';
+import LeadEnrichmentField from '@/components/crm/LeadEnrichmentField.vue';
+import LeadEnrichmentStatCard from '@/components/crm/LeadEnrichmentStatCard.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
+import ListPagination from '@/components/crm/ListPagination.vue';
 import {
     ArrowLeft,
     Download,
     ExternalLink,
     Loader2,
     Mail,
-    MailCheck,
+    Phone,
     RefreshCw,
     Search,
     Trash2,
 } from '@lucide/vue';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 defineOptions({
     layout: {
@@ -39,7 +45,29 @@ interface Lead {
     outreach_status: string | null;
     email_fetch_status: string | null;
     email_fetch_attempted_at: string | null;
+    contacts: LeadContacts;
+    company_name: string | null;
+    company_domain: string | null;
+    company_logo_url: string | null;
     source: 'aud' | 'sn';
+}
+
+interface ContactStatBucket {
+    found: number;
+    total: number;
+    pending: number;
+    searched: number;
+    fill_percent: number;
+    hit_rate: number;
+}
+
+interface ContactStats {
+    total: number;
+    running: boolean;
+    processed: number;
+    fetchable: number;
+    emails: ContactStatBucket;
+    phones: ContactStatBucket;
 }
 
 interface DailyLimit {
@@ -58,6 +86,7 @@ const props = defineProps<{
         last_page: number;
         prev_page_url: string | null;
         next_page_url: string | null;
+        links?: Array<{ url: string | null; label: string; active: boolean }>;
     };
     listId: string;
     listRecordId: number | null;
@@ -66,14 +95,17 @@ const props = defineProps<{
     emailFilter: string;
     search: string;
     counts: Record<string, number>;
+    contactStats: ContactStats | null;
     dailyLimit: DailyLimit | null;
     pendingCount: number;
 }>();
 
+const MAX_CONCURRENT_ENRICHMENTS = 5;
+
 const searchTerm = ref(props.search ?? '');
 const selected = ref<Set<number>>(new Set());
 const busy = ref(false);
-const fetchingId = ref<number | null>(null);
+const enrichingIds = ref<Set<number>>(new Set());
 const flash = ref('');
 const flashError = ref('');
 
@@ -93,7 +125,54 @@ const statusOptions = [
     { value: 'not_interested', label: 'Not interested' },
 ];
 
-const hasPending = computed(() => props.leads.data.some((l) => ['pending', 'processing'].includes(l.email_fetch_status ?? '')));
+const hasPending = computed(() =>
+    enrichingIds.value.size > 0
+    || props.pendingCount > 0
+    || props.leads.data.some((l) => ['pending', 'processing'].includes(l.email_fetch_status ?? '')),
+);
+
+const inFlightEnrichments = computed(() =>
+    Math.max(props.pendingCount, enrichingIds.value.size),
+);
+
+function isLeadEnriching(lead: Lead): boolean {
+    return enrichingIds.value.has(lead.id)
+        || ['pending', 'processing'].includes(lead.email_fetch_status ?? '');
+}
+
+function canStartEnrich(excludeLeadId?: number): boolean {
+    if (props.dailyLimit && !props.dailyLimit.can_scrape) {
+        return false;
+    }
+    const localCount = excludeLeadId
+        ? [...enrichingIds.value].filter((id) => id !== excludeLeadId).length
+        : enrichingIds.value.size;
+
+    return Math.max(props.pendingCount, localCount) < MAX_CONCURRENT_ENRICHMENTS;
+}
+
+watch(
+    () => props.leads.data.map((l) => ({ id: l.id, status: l.email_fetch_status })),
+    (rows) => {
+        const next = new Set(enrichingIds.value);
+        let changed = false;
+
+        for (const row of rows) {
+            if (!next.has(row.id)) {
+                continue;
+            }
+            if (row.status === 'completed' || row.status === 'failed') {
+                next.delete(row.id);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            enrichingIds.value = next;
+        }
+    },
+    { deep: true },
+);
 
 function xsrf(): string {
     return decodeURIComponent(document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN='))?.split('=')[1] ?? '');
@@ -140,47 +219,118 @@ function setFlash(msg: string, error = false) {
     }, 5000);
 }
 
-async function fetchEmail(lead: Lead) {
-    fetchingId.value = lead.id;
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleLeadsReload() {
+    if (reloadTimer) {
+        clearTimeout(reloadTimer);
+    }
+    reloadTimer = setTimeout(() => {
+        router.reload({
+            only: ['leads', 'counts', 'contactStats', 'dailyLimit', 'pendingCount'],
+            preserveScroll: true,
+        });
+        void refreshDailyEnrichmentQuota();
+    }, 400);
+}
+
+function removeEnrichingId(id: number) {
+    const next = new Set(enrichingIds.value);
+    next.delete(id);
+    enrichingIds.value = next;
+}
+
+async function pollEnrichmentResult(audienceListId: number): Promise<'found' | 'not_found' | 'timeout'> {
+    for (let attempt = 0; attempt < 50; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1000 : 2000));
+
+        const res = await fetch(`/leads/${props.listId}/check-email/${audienceListId}?src=aud`, {
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'same-origin',
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (data.has_email) {
+            return 'found';
+        }
+        if (data.email_fetch_completed) {
+            return 'not_found';
+        }
+    }
+
+    return 'timeout';
+}
+
+async function enrichLead(lead: Lead) {
+    if (isLeadEnriching(lead)) {
+        return;
+    }
+
+    if (!canStartEnrich()) {
+        setFlash(
+            `You have ${inFlightEnrichments.value} enrichment${inFlightEnrichments.value === 1 ? '' : 's'} running. Max ${MAX_CONCURRENT_ENRICHMENTS} at a time — wait for one to finish.`,
+            true,
+        );
+        return;
+    }
+
+    enrichingIds.value = new Set(enrichingIds.value).add(lead.id);
+
     try {
         const body = props.src === 'sn'
             ? { lead_id: lead.id }
             : { audience_list_id: lead.id };
-        const res = await fetch(`/leads/${props.listId}/fetch-email?src=${props.src}`, {
+        const res = await fetch(`/leads/${props.listId}/enrich?src=${props.src}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': xsrf(), Accept: 'application/json' },
             body: JSON.stringify(body),
         });
         const data = await res.json();
-        if (res.ok) {
-            setFlash(data.message);
-            router.reload({ only: ['leads', 'counts', 'dailyLimit', 'pendingCount'] });
-        } else {
-            setFlash(data.message || 'Failed to fetch email.', true);
+
+        if (!res.ok) {
+            setFlash(data.message || 'Failed to enrich.', true);
+            removeEnrichingId(lead.id);
+            return;
+        }
+
+        setFlash(data.message);
+        scheduleLeadsReload();
+        void refreshDailyEnrichmentQuota();
+
+        if (props.src === 'aud' && !data.email) {
+            await pollEnrichmentResult(lead.id);
+            scheduleLeadsReload();
         }
     } catch {
         setFlash('Network error.', true);
+        removeEnrichingId(lead.id);
     } finally {
-        fetchingId.value = null;
+        removeEnrichingId(lead.id);
     }
 }
 
-async function fetchBatch() {
-    if (selected.value.size === 0) return;
+const canBulkEnrich = computed(() => (props.contactStats?.fetchable ?? 0) > 0 && canStartEnrich());
+
+async function enrichNextBatch() {
+    if (!canBulkEnrich.value || busy.value) {
+        return;
+    }
+
     busy.value = true;
+
     try {
-        const res = await fetch(`/leads/${props.listId}/fetch-email-batch?src=aud`, {
+        const res = await fetch(`/leads/${props.listId}/enrich-batch?src=${props.src}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': xsrf(), Accept: 'application/json' },
-            body: JSON.stringify({ audience_list_ids: Array.from(selected.value) }),
+            body: JSON.stringify({ auto_batch: true }),
         });
         const data = await res.json();
         if (res.ok) {
             setFlash(data.message);
-            selected.value = new Set();
-            router.reload({ only: ['leads', 'counts', 'dailyLimit', 'pendingCount'] });
+            scheduleLeadsReload();
+            void refreshDailyEnrichmentQuota();
         } else {
-            setFlash(data.message || 'Failed to fetch emails.', true);
+            setFlash(data.message || 'Failed to enrich leads.', true);
         }
     } catch {
         setFlash('Network error.', true);
@@ -246,13 +396,25 @@ let poll: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
     poll = setInterval(() => {
         if (hasPending.value) {
-            router.reload({ only: ['leads', 'counts', 'dailyLimit', 'pendingCount'] });
+            scheduleLeadsReload();
         }
-    }, 15000);
+    }, 5000);
 });
 onBeforeUnmount(() => {
-    if (poll) clearInterval(poll);
+    if (poll) {
+        clearInterval(poll);
+    }
+    if (reloadTimer) {
+        clearTimeout(reloadTimer);
+    }
 });
+
+function leadContacts(lead: Lead): LeadContacts {
+    return {
+        ...lead.contacts,
+        email_fetch_status: lead.contacts.email_fetch_status ?? lead.email_fetch_status,
+    };
+}
 
 function distanceLabel(d: string | null): string {
     if (!d) return '';
@@ -277,14 +439,14 @@ function distanceLabel(d: string | null): string {
                     </LinkedInPageHeading>
                 </div>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
                 <AppToolbarButton variant="success" :disabled="busy" @click="exportCsv">
                     <Download class="h-4 w-4" /> Export CSV
                 </AppToolbarButton>
                 <AppToolbarButton variant="dangerGradient" @click="deleteList">
                     <Trash2 class="h-4 w-4" /> Delete list
                 </AppToolbarButton>
-                <AppToolbarButton variant="info" @click="router.reload({ only: ['leads', 'counts', 'dailyLimit', 'pendingCount'] })">
+                <AppToolbarButton variant="info" @click="router.reload({ only: ['leads', 'counts', 'contactStats', 'dailyLimit', 'pendingCount'] })">
                     <RefreshCw class="h-4 w-4" /> Refresh
                 </AppToolbarButton>
             </div>
@@ -293,19 +455,58 @@ function distanceLabel(d: string | null): string {
         <p v-if="flash" class="rounded-lg bg-green-100 px-4 py-2 text-sm text-green-800 dark:bg-green-900/30 dark:text-green-300">{{ flash }}</p>
         <p v-if="flashError" class="rounded-lg bg-red-100 px-4 py-2 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-300">{{ flashError }}</p>
 
-        <!-- Daily limit -->
-        <div v-if="dailyLimit" class="rounded-xl border border-border bg-card p-4">
-            <div class="mb-1 flex items-center justify-between text-sm">
-                <span class="inline-flex items-center gap-1.5 font-medium">
-                    Daily email enrichment
-                    <EmailEnrichmentInfoTooltip side="right" />
-                </span>
-                <span class="text-muted-foreground">{{ dailyLimit.used }} / {{ dailyLimit.daily_limit }} used · {{ dailyLimit.remaining }} left</span>
+        <!-- Enrichment stats -->
+        <div v-if="contactStats" class="space-y-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Contact enrichment</p>
+                    <p class="mt-0.5 text-sm text-muted-foreground">
+                        {{ contactStats.total.toLocaleString() }} leads
+                    </p>
+                </div>
+                <div v-if="inFlightEnrichments > 0" class="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium">
+                    <Loader2 class="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    Enriching
+                    <span class="rounded-full bg-muted px-2 py-0.5 tabular-nums text-foreground">
+                        {{ inFlightEnrichments }}/{{ MAX_CONCURRENT_ENRICHMENTS }}
+                    </span>
+                </div>
+                <div v-else-if="contactStats.running" class="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium">
+                    <Loader2 class="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    Running
+                    <span class="rounded-full bg-muted px-2 py-0.5 tabular-nums text-foreground">
+                        {{ contactStats.processed }}/{{ contactStats.total }}
+                    </span>
+                </div>
+                <BulkEnrichButton
+                    v-if="canBulkEnrich || busy"
+                    :loading="busy"
+                    :disabled="!canBulkEnrich"
+                    :remaining="contactStats.fetchable"
+                    @click="enrichNextBatch"
+                />
             </div>
-            <div class="h-2 overflow-hidden rounded-full bg-muted">
-                <div class="h-full rounded-full bg-gradient-to-b from-blue-500 to-blue-600 transition-all" :style="{ width: `${Math.min(100, (dailyLimit.used / dailyLimit.daily_limit) * 100)}%` }"></div>
+
+            <div class="grid gap-3 md:grid-cols-2">
+                <LeadEnrichmentStatCard
+                    :icon="Mail"
+                    label="Work emails"
+                    :found="contactStats.emails.found"
+                    :total="contactStats.emails.total"
+                    :fill-percent="contactStats.emails.fill_percent"
+                    :hit-rate="contactStats.emails.searched > 0 ? contactStats.emails.hit_rate : contactStats.emails.fill_percent"
+                    source-label="LinkedIn"
+                />
+                <LeadEnrichmentStatCard
+                    :icon="Phone"
+                    label="Mobile phones"
+                    :found="contactStats.phones.found"
+                    :total="contactStats.phones.total"
+                    :fill-percent="contactStats.phones.fill_percent"
+                    :hit-rate="contactStats.phones.searched > 0 ? contactStats.phones.hit_rate : contactStats.phones.fill_percent"
+                    source-label="LinkedIn"
+                />
             </div>
-            <p v-if="src === 'aud' && pendingCount > 0" class="mt-2 text-xs text-amber-600">{{ pendingCount }} email fetch job(s) in progress…</p>
         </div>
 
         <!-- Filters + search -->
@@ -331,9 +532,6 @@ function distanceLabel(d: string | null): string {
         <!-- Bulk bar -->
         <div v-if="selected.size > 0" class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
             <span class="font-medium">{{ selected.size }} selected</span>
-            <button v-if="src === 'aud'" type="button" :disabled="busy" class="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 disabled:opacity-60" @click="fetchBatch">
-                <Loader2 v-if="busy" class="h-3.5 w-3.5 animate-spin" /><Mail v-else class="h-3.5 w-3.5" /> Fetch emails
-            </button>
             <button type="button" class="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-b from-red-500 to-red-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm shadow-red-950/20 ring-1 ring-inset ring-white/15 hover:from-red-500 hover:to-red-700 disabled:opacity-60" @click="deleteSelected">
                 <Trash2 class="h-3.5 w-3.5" /> Delete
             </button>
@@ -347,88 +545,127 @@ function distanceLabel(d: string | null): string {
         </div>
 
         <!-- Table -->
-        <div v-else class="overflow-x-auto rounded-xl border border-border bg-card">
-            <table class="w-full text-sm">
-                <thead class="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-                    <tr>
-                        <th class="w-10 px-4 py-3">
-                            <button type="button" @click="toggleAll">
-                                <AppSelectionCheckbox :checked="allSelected" />
-                            </button>
-                        </th>
-                        <th class="px-4 py-3 font-medium">Name</th>
-                        <th class="px-4 py-3 font-medium">Headline</th>
-                        <th class="px-4 py-3 font-medium">Location</th>
-                        <th class="px-4 py-3 font-medium">
-                            <span v-if="src === 'aud'" class="inline-flex items-center gap-1.5">
-                                Email
-                                <EmailEnrichmentInfoTooltip side="top" align="start" />
-                            </span>
-                            <span v-else>Email</span>
-                        </th>
-                        <th v-if="src === 'sn'" class="px-4 py-3 font-medium">Status</th>
-                        <th class="px-4 py-3 text-right font-medium">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-border">
-                    <tr v-for="lead in leads.data" :key="lead.id" class="hover:bg-muted/30">
-                        <td class="px-4 py-3">
-                            <button type="button" @click="toggle(lead.id)">
-                                <AppSelectionCheckbox :checked="selected.has(lead.id)" />
-                            </button>
-                        </td>
-                        <td class="px-4 py-3">
-                            <div class="flex items-center gap-2">
-                                <span class="font-medium text-foreground">{{ lead.name }}</span>
-                                <span v-if="lead.network_distance" class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{{ distanceLabel(lead.network_distance) }}</span>
-                            </div>
-                        </td>
-                        <td class="max-w-[260px] truncate px-4 py-3 text-muted-foreground">{{ lead.headline || '—' }}</td>
-                        <td class="px-4 py-3 text-muted-foreground">{{ lead.location || '—' }}</td>
-                        <td class="px-4 py-3">
-                            <span v-if="lead.email" class="inline-flex items-center gap-1.5 text-green-600">
-                                <MailCheck class="h-4 w-4" /> {{ lead.email }}
-                            </span>
-                            <span v-else-if="['pending', 'processing'].includes(lead.email_fetch_status ?? '')" class="inline-flex items-center gap-1.5 text-amber-600">
-                                <Loader2 class="h-3.5 w-3.5 animate-spin" /> Fetching…
-                            </span>
-                            <span v-else-if="lead.email_fetch_status === 'completed'" class="text-xs text-muted-foreground">Not found</span>
-                            <button
-                                v-else
-                                type="button"
-                                :disabled="fetchingId === lead.id || (dailyLimit ? !dailyLimit.can_scrape : false)"
-                                class="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50"
-                                @click="fetchEmail(lead)"
-                            >
-                                <Loader2 v-if="fetchingId === lead.id" class="h-3.5 w-3.5 animate-spin" /><Mail v-else class="h-3.5 w-3.5" /> Fetch
-                            </button>
-                        </td>
-                        <td v-if="src === 'sn'" class="px-4 py-3">
-                            <select
-                                class="rounded-md border border-border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
-                                :value="lead.outreach_status || 'new'"
-                                @change="updateLeadStatus(lead, ($event.target as HTMLSelectElement).value)"
-                            >
-                                <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                            </select>
-                        </td>
-                        <td class="px-4 py-3">
-                            <div class="flex items-center justify-end gap-1">
-                                <a v-if="lead.profile_url" :href="lead.profile_url" target="_blank" rel="noopener noreferrer" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="View profile"><ExternalLink class="h-4 w-4" /></a>
-                                <button type="button" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-red-500" title="Delete" @click="deleteLead(lead)"><Trash2 class="h-4 w-4" /></button>
-                            </div>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-
-        <div v-if="leads.data.length" class="flex items-center justify-between text-sm text-muted-foreground">
-            <span>Page {{ leads.current_page }} of {{ leads.last_page }}</span>
-            <div class="flex gap-2">
-                <Link v-if="leads.prev_page_url" :href="leads.prev_page_url" class="rounded border border-border px-3 py-1 hover:bg-muted" preserve-scroll>Prev</Link>
-                <Link v-if="leads.next_page_url" :href="leads.next_page_url" class="rounded border border-border px-3 py-1 hover:bg-muted" preserve-scroll>Next</Link>
+        <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b border-border text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                            <th class="w-10 px-3 py-3">
+                                <button type="button" @click="toggleAll">
+                                    <AppSelectionCheckbox :checked="allSelected" />
+                                </button>
+                            </th>
+                            <th class="px-4 py-3">Contact</th>
+                            <th class="px-4 py-3">Company</th>
+                            <th class="px-4 py-3">Phone</th>
+                            <th class="px-4 py-3">
+                                <span class="inline-flex items-center gap-1.5">
+                                    Work email
+                                    <EmailEnrichmentInfoTooltip side="top" align="start" />
+                                </span>
+                            </th>
+                            <th class="px-4 py-3">Channels</th>
+                            <th v-if="src === 'sn'" class="px-4 py-3">Status</th>
+                            <th class="w-20 px-3 py-3" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr
+                            v-for="lead in leads.data"
+                            :key="lead.id"
+                            class="group border-b border-border/70 transition-colors last:border-b-0 hover:bg-muted/20"
+                            :class="selected.has(lead.id) ? 'bg-muted/30 ring-1 ring-inset ring-primary/15' : ''"
+                        >
+                            <td class="relative px-3 py-4">
+                                <span
+                                    v-if="selected.has(lead.id)"
+                                    class="absolute inset-y-0 left-0 w-0.5 bg-primary"
+                                />
+                                <button type="button" @click="toggle(lead.id)">
+                                    <AppSelectionCheckbox :checked="selected.has(lead.id)" />
+                                </button>
+                            </td>
+                            <td class="px-4 py-4">
+                                <div class="min-w-[180px]">
+                                    <div class="flex items-center gap-2">
+                                        <a
+                                            v-if="lead.profile_url"
+                                            :href="lead.profile_url"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            class="font-semibold text-foreground hover:underline"
+                                        >
+                                            {{ lead.name }}
+                                        </a>
+                                        <p v-else class="font-semibold text-foreground">{{ lead.name }}</p>
+                                        <span v-if="lead.network_distance" class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{{ distanceLabel(lead.network_distance) }}</span>
+                                    </div>
+                                    <p v-if="lead.headline" class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{{ lead.headline }}</p>
+                                    <p v-else-if="lead.location" class="mt-0.5 text-xs text-muted-foreground">{{ lead.location }}</p>
+                                </div>
+                            </td>
+                            <td class="px-4 py-4">
+                                <div v-if="lead.company_domain || lead.company_name" class="flex min-w-[140px] items-center gap-2.5">
+                                    <img
+                                        v-if="lead.company_logo_url"
+                                        :src="lead.company_logo_url"
+                                        :alt="lead.company_name || lead.company_domain || 'Company'"
+                                        class="h-7 w-7 shrink-0 rounded-md border border-border bg-white object-contain p-0.5"
+                                        loading="lazy"
+                                    />
+                                    <div v-else class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] font-semibold uppercase text-muted-foreground">
+                                        {{ (lead.company_name || lead.company_domain || '?').slice(0, 1) }}
+                                    </div>
+                                    <span class="truncate text-sm text-foreground" :title="lead.company_domain || lead.company_name || ''">
+                                        {{ lead.company_domain || lead.company_name }}
+                                    </span>
+                                </div>
+                                <span v-else class="text-sm text-muted-foreground/50">—</span>
+                            </td>
+                            <td class="px-4 py-4">
+                                <LeadEnrichmentField
+                                    type="phone"
+                                    :value="lead.contacts.phone"
+                                    :fetch-status="isLeadEnriching(lead) ? 'processing' : lead.contacts.phone_fetch_status"
+                                    :fetch-attempted="lead.contacts.phone_fetch_attempted === true"
+                                    :fetching="isLeadEnriching(lead)"
+                                />
+                            </td>
+                            <td class="px-4 py-4">
+                                <LeadEnrichmentField
+                                    type="email"
+                                    :value="lead.email"
+                                    :fetch-status="isLeadEnriching(lead) ? 'processing' : lead.email_fetch_status"
+                                    :fetch-attempted="!!lead.email_fetch_attempted_at"
+                                    :fetching="isLeadEnriching(lead)"
+                                    :can-fetch="true"
+                                    :fetch-disabled="!canStartEnrich(lead.id) || (dailyLimit ? !dailyLimit.can_scrape : false)"
+                                    @fetch="enrichLead(lead)"
+                                />
+                            </td>
+                            <td class="px-4 py-4">
+                                <LeadContactTags :contacts="leadContacts(lead)" :show-email="false" />
+                            </td>
+                            <td v-if="src === 'sn'" class="px-4 py-4">
+                                <select
+                                    class="rounded-md border border-border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
+                                    :value="lead.outreach_status || 'new'"
+                                    @change="updateLeadStatus(lead, ($event.target as HTMLSelectElement).value)"
+                                >
+                                    <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                                </select>
+                            </td>
+                            <td class="px-3 py-4">
+                                <div class="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                                    <a v-if="lead.profile_url" :href="lead.profile_url" target="_blank" rel="noopener noreferrer" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="View profile"><ExternalLink class="h-4 w-4" /></a>
+                                    <button type="button" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-red-500" title="Delete" @click="deleteLead(lead)"><Trash2 class="h-4 w-4" /></button>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
+            <ListPagination v-if="leads.data.length" :paginator="leads" label="leads" />
         </div>
     </div>
 </template>

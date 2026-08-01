@@ -8,8 +8,13 @@ use App\Models\V2OutreachImportList;
 
 class OutreachLeadReadinessService
 {
-    /** @var array<string, string> */
-    private const MESSAGING_CHANNELS = ['whatsapp', 'instagram', 'telegram', 'twitter'];
+    /**
+     * @return array<int, string>
+     */
+    private function enabledMessagingChannels(): array
+    {
+        return OutreachChannelRegistry::enabledMessagingChannels();
+    }
 
     public function __construct(
         private readonly OutreachLeadContactResolver $contactResolver,
@@ -21,7 +26,7 @@ class OutreachLeadReadinessService
      */
     public function requiredChannels(array $nodeModel): array
     {
-        return OutreachChannelRegistry::requiredChannelsForNodes($nodeModel);
+        return OutreachChannelRegistry::contactRequiredChannelsForNodes($nodeModel);
     }
 
     /**
@@ -60,12 +65,199 @@ class OutreachLeadReadinessService
             'channels' => $channelStats,
             'email_fetch' => $this->emailFetchStats($rows, $audienceListsSelected),
             'phone_fetch' => $this->phoneFetchStats($rows, $leadLists),
-            'whatsapp_verify' => $this->whatsAppVerifyStats($rows),
+            'whatsapp_verify' => $this->whatsAppVerifyStats($rows, $required),
             'handle_resolve' => $this->handleResolveStats($rows, $required),
+            'contact_prep' => $this->contactPrepStats($rows, $required, $audienceListsSelected, $leadLists, $userId),
             'warnings' => $warnings,
             'can_launch' => $total > 0,
             'should_confirm_launch' => $willSkipAny > 0 && $total > 0,
         ];
+    }
+
+    /**
+     * Enrichment stats for an imported CSV list (WhatsApp verify + social handle resolve).
+     *
+     * @return array<string, mixed>
+     */
+    public function enrichmentStatsForImportList(string $listHash, int $userId): array
+    {
+        $leadLists = [['list_hash' => $listHash, 'list_src' => 'csv']];
+        $rows = $this->collectLeadRows($leadLists, $userId);
+        $required = array_values(array_unique(array_merge(
+            ['whatsapp'],
+            OutreachChannelRegistry::enabledSocialHandleChannels(),
+        )));
+
+        $whatsapp = $this->whatsAppVerifyStats($rows, $required);
+        $handles = $this->handleResolveStats($rows, $required);
+
+        $fetchable = $this->countImportLeadsNeedingEnrichment($rows);
+
+        return [
+            'total' => count($rows),
+            'whatsapp_verify' => $whatsapp,
+            'handle_resolve' => $handles,
+            'can_enrich' => $fetchable > 0,
+            'fetchable' => $fetchable,
+        ];
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    public function nextImportLeadIdsForEnrichment(int $importListId, int $limit = 25): array
+    {
+        $query = \App\Models\V2OutreachImportLead::query()
+            ->where('import_list_id', $importListId)
+            ->where(function ($q) {
+                $q->where(function ($phone) {
+                    $phone->whereNotNull('phone')
+                        ->where('phone', '!=', '')
+                        ->where(function ($wa) {
+                            $wa->whereNull('whatsapp_provider_id')->orWhere('whatsapp_provider_id', '');
+                        });
+                });
+
+                foreach (OutreachChannelRegistry::enabledSocialHandleChannels() as $channel) {
+                    $handleCol = "{$channel}_handle";
+                    $providerCol = "{$channel}_provider_id";
+                    $q->orWhere(function ($handle) use ($handleCol, $providerCol) {
+                        $handle->whereNotNull($handleCol)
+                            ->where($handleCol, '!=', '')
+                            ->where(function ($provider) use ($providerCol) {
+                                $provider->whereNull($providerCol)->orWhere($providerCol, '');
+                            });
+                    });
+                }
+            })
+            ->orderBy('id')
+            ->limit($limit);
+
+        return $query->pluck('id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $rows
+     */
+    public function countImportLeadsNeedingEnrichment(array $rows): int
+    {
+        $count = 0;
+        foreach ($rows as $row) {
+            if ($this->importLeadRowNeedsEnrichment($row)) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    public function importLeadRowNeedsEnrichment(array $row): bool
+    {
+        $phone = trim((string) ($row['phone'] ?? ''));
+        if ($phone !== '' && trim((string) ($row['whatsapp_provider_id'] ?? '')) === '') {
+            return true;
+        }
+
+        foreach (OutreachChannelRegistry::enabledSocialHandleChannels() as $channel) {
+            $handle = trim((string) ($row["{$channel}_handle"] ?? ''));
+            if ($handle !== '' && trim((string) ($row["{$channel}_provider_id"] ?? '')) === '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    public function nextAudienceListIdsForEmailFetch(string $audienceId, int $limit = 25): array
+    {
+        return AudienceList::query()
+            ->where('audience_id', $audienceId)
+            ->where(function ($q) {
+                $q->whereNull('con_email')->orWhere('con_email', '');
+            })
+            ->whereNull('email_fetch_attempted_at')
+            ->orderBy('id')
+            ->limit($limit)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    public function nextSnLeadIdsForEmailFetch(string $listHash, int $limit = 25): array
+    {
+        return SnLead::query()
+            ->where('sn_list_id', $listHash)
+            ->where(function ($q) {
+                $q->whereNull('email')->orWhere('email', '');
+            })
+            ->where(function ($q) {
+                $q->whereNull('email_fetch_status')
+                    ->orWhereNotIn('email_fetch_status', ['pending', 'processing', 'completed']);
+            })
+            ->where(function ($q) {
+                $q->whereNotNull('email_fetch_status')
+                    ->where('email_fetch_status', '!=', '')
+                    ->orWhereNull('phone_fetch_attempted_at');
+            })
+            ->orderBy('id')
+            ->limit($limit)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $rows
+     */
+    public function countEmailFetchableRows(array $rows, string $src): int
+    {
+        $count = 0;
+        foreach ($rows as $row) {
+            if ($this->emailFetchRowNeedsEnrichment($row, $src)) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    public function emailFetchRowNeedsEnrichment(array $row, string $src): bool
+    {
+        if (($row['email'] ?? '') !== '') {
+            return false;
+        }
+
+        if (in_array($row['email_fetch_status'] ?? '', ['pending', 'processing'], true)) {
+            return false;
+        }
+
+        if ($row['email_fetch_attempted'] ?? false) {
+            return false;
+        }
+
+        if ($src === 'sn') {
+            if (($row['email_fetch_status'] ?? '') === 'completed') {
+                return false;
+            }
+
+            if (($row['email_fetch_status'] ?? '') === '' && ($row['phone_fetch_attempted'] ?? false)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -233,7 +425,7 @@ class OutreachLeadReadinessService
             'percent' => $total > 0 ? (int) round(($ready / $total) * 100) : 0,
             'field_label' => $meta['field_label'],
             'help' => $meta['help'],
-            'is_messaging' => in_array($channel, self::MESSAGING_CHANNELS, true),
+            'is_messaging' => in_array($channel, $this->enabledMessagingChannels(), true),
         ];
     }
 
@@ -402,8 +594,17 @@ class OutreachLeadReadinessService
      * @param  array<int, array<string, mixed>>  $rows
      * @return array<string, mixed>
      */
-    private function whatsAppVerifyStats(array $rows): array
+    private function whatsAppVerifyStats(array $rows, array $required = []): array
     {
+        if ($required !== [] && ! in_array('whatsapp', $required, true)) {
+            return [
+                'with_phone' => 0,
+                'verified' => 0,
+                'needs_verify' => 0,
+                'can_verify' => false,
+            ];
+        }
+
         $withPhone = 0;
         $verified = 0;
         $needsVerify = 0;
@@ -436,7 +637,7 @@ class OutreachLeadReadinessService
     private function handleResolveStats(array $rows, array $required): array
     {
         $needsResolve = 0;
-        $channels = array_intersect(['instagram', 'telegram', 'twitter'], $required);
+        $channels = array_intersect(OutreachChannelRegistry::enabledSocialHandleChannels(), $required);
 
         foreach ($rows as $row) {
             foreach ($channels as $channel) {
@@ -452,6 +653,43 @@ class OutreachLeadReadinessService
             'needs_resolve' => $needsResolve,
             'can_resolve' => $needsResolve > 0,
             'channels' => array_values($channels),
+        ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $rows
+     * @param  array<int, string>  $required
+     * @param  array<int, array{list_hash: string, list_src: string}>  $leadLists
+     * @return array<string, mixed>
+     */
+    private function contactPrepStats(array $rows, array $required, bool $audienceListsSelected, array $leadLists, ?int $userId): array
+    {
+        $email = $this->emailFetchStats($rows, $audienceListsSelected);
+        $phone = $this->phoneFetchStats($rows, $leadLists);
+        $whatsapp = $this->whatsAppVerifyStats($rows, $required);
+        $handles = $this->handleResolveStats($rows, $required);
+
+        $emailRemaining = in_array('email', $required, true) ? ($email['fetchable'] ?? 0) : 0;
+        $phoneRemaining = (in_array('email', $required, true) || in_array('whatsapp', $required, true))
+            ? ($phone['fetchable'] ?? 0)
+            : 0;
+        $whatsappRemaining = in_array('whatsapp', $required, true) ? ($whatsapp['needs_verify'] ?? 0) : 0;
+
+        $remaining = $emailRemaining
+            + $phoneRemaining
+            + $whatsappRemaining
+            + ($handles['needs_resolve'] ?? 0);
+
+        $batchSize = max(1, min(50, (int) config('services.unipile_pacing.contact_prep_batch_size', 25)));
+
+        return [
+            'batch_size' => $batchSize,
+            'remaining_total' => $remaining,
+            'can_prepare' => $remaining > 0
+                || (in_array('email', $required, true) && (($email['pending'] ?? 0) > 0))
+                || ($phoneRemaining > 0 && ($phone['pending'] ?? 0) > 0),
+            'pending_async' => (in_array('email', $required, true) ? ($email['pending'] ?? 0) : 0)
+                + ($phoneRemaining > 0 ? ($phone['pending'] ?? 0) : 0),
         ];
     }
 
@@ -476,7 +714,7 @@ class OutreachLeadReadinessService
                 continue;
             }
 
-            if (in_array($channel, self::MESSAGING_CHANNELS, true)) {
+            if (in_array($channel, $this->enabledMessagingChannels(), true)) {
                 $warnings[] = sprintf(
                     '%d of %d leads are missing %s — %s steps will be skipped for them.',
                     $stats['missing'],

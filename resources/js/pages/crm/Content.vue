@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { AlertCircle, ChevronLeft, Clock, Edit2, FileText, Image as ImageIcon, Lightbulb, Loader2, PenLine, Rocket, Save, Send, Sparkles, Trash2, Type, Upload, Video, X } from '@lucide/vue';
+import { AlertCircle, ChevronLeft, Clock, Copy, Edit2, FileText, Image as ImageIcon, Lightbulb, Loader2, PenLine, Rocket, Save, Send, Sparkles, Trash2, Type, Upload, Video, X } from '@lucide/vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import ToggleField from '@/components/ToggleField.vue';
 import { INSPIRATION_DRAFT_KEY } from '@/lib/contentDraft';
@@ -45,6 +46,36 @@ const props = defineProps<{
 const page = usePage();
 const postSearch = ref(props.filters?.search ?? '');
 const postStatusFilter = ref(props.filters?.status ?? 'all');
+const selected = ref<Set<number>>(new Set());
+const bulkBusy = ref(false);
+
+const selectablePosts = computed(() => props.posts.data);
+const allSelected = computed(
+    () => selectablePosts.value.length > 0 && selectablePosts.value.every((p) => selected.value.has(p.id)),
+);
+const selectedCount = computed(() => selected.value.size);
+
+function toggleSelect(id: number) {
+    if (selected.value.has(id)) selected.value.delete(id);
+    else selected.value.add(id);
+    selected.value = new Set(selected.value);
+}
+
+function toggleSelectAll() {
+    if (allSelected.value) {
+        selected.value = new Set();
+        return;
+    }
+    selected.value = new Set(selectablePosts.value.map((p) => p.id));
+}
+
+watch(
+    () => props.posts.data.map((p) => p.id).join(','),
+    () => {
+        const visible = new Set(props.posts.data.map((p) => p.id));
+        selected.value = new Set([...selected.value].filter((id) => visible.has(id)));
+    },
+);
 
 function applyPostFilters() {
     router.get('/content', {
@@ -383,7 +414,33 @@ function publishNow(id: number) {
 
 function deletePost(id: number) {
     if (!confirm('Delete this post?')) return;
-    router.delete(`/content/${id}`);
+    router.delete(`/content/${id}`, {
+        preserveScroll: true,
+        onSuccess: () => {
+            selected.value.delete(id);
+            selected.value = new Set(selected.value);
+        },
+    });
+}
+
+function deleteSelected() {
+    if (selected.value.size === 0) return;
+    if (!confirm(`Delete ${selected.value.size} selected post(s)?`)) return;
+
+    bulkBusy.value = true;
+    router.post('/content/bulk-delete', { ids: Array.from(selected.value) }, {
+        preserveScroll: true,
+        onFinish: () => {
+            bulkBusy.value = false;
+        },
+        onSuccess: () => {
+            selected.value = new Set();
+        },
+    });
+}
+
+function duplicatePost(id: number) {
+    router.post(`/content/${id}/duplicate`, {}, { preserveScroll: true });
 }
 
 async function apiPost(url: string, body: Record<string, unknown>) {
@@ -542,10 +599,36 @@ async function rewrite(mode: 'shorten' | 'expand') {
                     </p>
                 </div>
 
-                <div v-else class="mt-4 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+                <div v-if="selectedCount > 0" class="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
+                    <span class="font-medium">{{ selectedCount }} selected</span>
+                    <button
+                        type="button"
+                        class="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                        :disabled="bulkBusy"
+                        @click="deleteSelected"
+                    >
+                        <Trash2 class="h-3.5 w-3.5" /> Delete selected
+                    </button>
+                    <button type="button" class="text-xs text-muted-foreground hover:text-foreground" @click="selected = new Set()">
+                        Clear
+                    </button>
+                </div>
+
+                <div v-if="posts.data.length" class="mt-4 overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                     <table class="w-full text-sm">
                         <thead class="border-b border-border bg-muted/40">
                             <tr>
+                                <th class="w-10 px-3 py-3">
+                                    <button
+                                        type="button"
+                                        class="rounded p-0.5 hover:bg-muted disabled:opacity-40"
+                                        :disabled="selectablePosts.length === 0"
+                                        title="Select all on this page"
+                                        @click="toggleSelectAll"
+                                    >
+                                        <AppSelectionCheckbox :checked="allSelected" />
+                                    </button>
+                                </th>
                                 <th class="px-4 py-3 text-left font-medium text-muted-foreground">Content</th>
                                 <th class="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
                                 <th class="px-4 py-3 text-left font-medium text-muted-foreground">Date</th>
@@ -553,7 +636,22 @@ async function rewrite(mode: 'shorten' | 'expand') {
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-border">
-                            <tr v-for="post in posts.data" :key="post.id" class="transition hover:bg-muted/30">
+                            <tr
+                                v-for="post in posts.data"
+                                :key="post.id"
+                                class="transition hover:bg-muted/30"
+                                :class="selected.has(post.id) ? 'bg-primary/[0.03]' : ''"
+                            >
+                                <td class="px-3 py-3">
+                                    <button
+                                        type="button"
+                                        class="rounded p-0.5 hover:bg-muted"
+                                        title="Select post"
+                                        @click="toggleSelect(post.id)"
+                                    >
+                                        <AppSelectionCheckbox :checked="selected.has(post.id)" />
+                                    </button>
+                                </td>
                                 <td class="max-w-lg px-4 py-3">
                                     <div class="font-medium text-foreground">{{ preview(post.content, 90) }}</div>
                                 </td>
@@ -563,10 +661,43 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                 <td class="px-4 py-3 text-xs text-muted-foreground">
                                     {{ fmtDate(post.scheduled_at || post.published_at || post.created_at) }}
                                 </td>
-                                <td class="px-4 py-3 text-right">
-                                    <button v-if="['draft','failed'].includes(post.status)" @click="openEdit(post)" class="rounded p-1.5 hover:bg-muted"><Edit2 class="h-4 w-4" /></button>
-                                    <button v-if="['draft','failed','scheduled'].includes(post.status)" @click="publishNow(post.id)" class="rounded p-1.5 text-blue-600 hover:bg-blue-50"><Send class="h-4 w-4" /></button>
-                                    <button v-if="post.status !== 'published'" @click="deletePost(post.id)" class="rounded p-1.5 text-red-500 hover:bg-red-50"><Trash2 class="h-4 w-4" /></button>
+                                <td class="px-4 py-3">
+                                    <div class="flex items-center justify-end gap-0.5">
+                                        <button
+                                            v-if="['draft','failed'].includes(post.status)"
+                                            type="button"
+                                            title="Edit"
+                                            class="rounded p-1.5 hover:bg-muted"
+                                            @click="openEdit(post)"
+                                        >
+                                            <Edit2 class="h-4 w-4" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            title="Duplicate as draft"
+                                            class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                            @click="duplicatePost(post.id)"
+                                        >
+                                            <Copy class="h-4 w-4" />
+                                        </button>
+                                        <button
+                                            v-if="['draft','failed','scheduled'].includes(post.status)"
+                                            type="button"
+                                            title="Publish now"
+                                            class="rounded p-1.5 text-blue-600 hover:bg-blue-50"
+                                            @click="publishNow(post.id)"
+                                        >
+                                            <Send class="h-4 w-4" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            title="Delete"
+                                            class="rounded p-1.5 text-red-500 hover:bg-red-50"
+                                            @click="deletePost(post.id)"
+                                        >
+                                            <Trash2 class="h-4 w-4" />
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         </tbody>
@@ -795,7 +926,7 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                 <AlertCircle class="h-4 w-4 shrink-0" /> LinkedIn not connected — publish will fail until you connect.
                             </div>
                             <div v-else class="text-xs text-muted-foreground">
-                                {{ form.action === 'publish' ? 'Will publish via Unipile when you confirm.' : form.action === 'schedule' ? 'Post will queue for the selected time.' : 'Saved as draft — publish anytime from your posts list.' }}
+                                {{ form.action === 'publish' ? 'Will publish to LinkedIn when you confirm.' : form.action === 'schedule' ? 'Post will queue for the selected time.' : 'Saved as draft — publish anytime from your posts list.' }}
                             </div>
                             <AppToolbarButton
                                 :variant="form.action === 'publish' ? 'default' : form.action === 'schedule' ? 'violet' : 'slate'"

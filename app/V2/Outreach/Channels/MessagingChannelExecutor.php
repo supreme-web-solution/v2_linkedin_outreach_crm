@@ -7,6 +7,7 @@ use App\Models\V2OutreachLead;
 use App\V2\Integrations\ProviderManager;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Outreach\OutreachLeadContactResolver;
+use App\V2\Outreach\OutreachSendProof;
 use App\V2\Outreach\OutreachSequenceResolver;
 use App\V2\Services\UnifiedInboxService;
 use Illuminate\Support\Facades\Log;
@@ -62,17 +63,54 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
                 'text' => $message ?: 'Hello',
             ], array_merge($context, ['channel' => $this->channelKey]));
 
-            $this->unifiedInbox->recordOutboundChat(
+            $responseArray = is_array($response) ? $response : [];
+            $proof = OutreachSendProof::fromResponse($responseArray);
+
+            if ($proof['chat_id'] === '' && $proof['provider_message_id'] === '') {
+                return [
+                    'status' => 'failed',
+                    'error_message' => 'Message was not confirmed as sent (missing chat/message id).',
+                ];
+            }
+
+            $conversation = $this->unifiedInbox->recordOutboundChat(
                 (int) $campaign->user_id,
                 (int) $campaign->organization_id,
                 $this->channelKey,
                 $lead,
                 $recipientId,
-                is_array($response) ? $response : [],
+                $responseArray,
                 $message ?: 'Hello',
             );
 
-            return ['status' => 'completed', 'payload' => ['response' => $response]];
+            if ($conversation === null) {
+                return [
+                    'status' => 'failed',
+                    'error_message' => 'Message could not be linked to inbox — treat as not sent.',
+                ];
+            }
+
+            if ($proof['provider_message_id'] === '') {
+                return [
+                    'status' => 'awaiting_send_confirmation',
+                    'payload' => [
+                        'response' => $responseArray,
+                        'chat_id' => $proof['chat_id'],
+                        'conversation_id' => $conversation->id,
+                    ],
+                ];
+            }
+
+            return [
+                'status' => 'completed',
+                'payload' => [
+                    'response' => $responseArray,
+                    'chat_id' => $proof['chat_id'],
+                    'provider_message_id' => $proof['provider_message_id'],
+                    'conversation_id' => $conversation->id,
+                    'confirmed_sent' => true,
+                ],
+            ];
         } catch (\Throwable $e) {
             $message = $e->getMessage();
             Log::error('[Outreach] Messaging action failed', [

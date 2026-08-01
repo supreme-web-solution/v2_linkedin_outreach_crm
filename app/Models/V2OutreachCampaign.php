@@ -173,13 +173,24 @@ class V2OutreachCampaign extends Model
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
                 ],
             ],
+            'instagram_only' => [
+                'label' => 'Instagram DM Sequence',
+                'description' => 'Instagram-only outreach. Import @handles via CSV, then Prepare contacts to resolve messaging IDs.',
+                'icon' => 'instagram',
+                'color' => 'pink',
+                'node_model' => [
+                    ['key' => 1, 'type' => 'action', 'channel' => 'instagram', 'action' => 'send_message', 'label' => 'Instagram Intro', 'config' => ['message' => 'Hey {{firstName}}! Quick note for you.']],
+                    ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
+                    ['key' => 3, 'type' => 'action', 'channel' => 'instagram', 'action' => 'send_message', 'label' => 'Instagram Follow-up', 'config' => ['message' => 'Hi {{firstName}}, bumping this in case you missed it.']],
+                    ['key' => 99, 'type' => 'end', 'label' => 'End'],
+                ],
+            ],
             'custom' => [
                 'label' => 'Custom Sequence',
-                'description' => 'Build your own multichannel outreach from scratch.',
+                'description' => 'Build your own multichannel outreach from scratch — add only the channels you need.',
                 'icon' => 'settings',
                 'color' => 'slate',
                 'node_model' => [
-                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
                 ],
             ],

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
-import { Bell, Calendar, ChevronRight, Clock, Loader2, Phone, Plus, Search, Send, Settings, Sparkles, Users } from '@lucide/vue';
+import { Bell, Calendar, ChevronRight, Clock, Loader2, Phone, Search, Send, Settings, Sparkles, Users } from '@lucide/vue';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import { Button } from '@/components/ui/button';
 import SearchableSelect from '@/components/crm/SearchableSelect.vue';
 import ToggleField from '@/components/ToggleField.vue';
+import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
+import { brandChannelLabel } from '@/lib/brandIcons';
 import {
     Dialog,
     DialogContent,
@@ -86,6 +88,7 @@ const props = defineProps<{
         auto_send_suggestions: boolean;
         reminder_hours_before: number[];
         calendar_id?: string;
+        calendar_provider?: string;
         call_duration_minutes?: number;
         use_unipile_calendar?: boolean;
         use_app_booking_link?: boolean;
@@ -97,15 +100,9 @@ const props = defineProps<{
     hasOrg: boolean;
     hasUnipile: boolean;
     hasCalendarIntegration?: boolean;
-    calendarOptions?: Array<{ id: string; name: string; primary: boolean }>;
+    calendarAccounts?: Array<{ provider: string; label: string; email: string | null }>;
+    calendarOptionsByProvider?: Record<string, Array<{ id: string; name: string; primary: boolean }>>;
     leadLists: LeadList[];
-    conversations: Array<{
-        id: number;
-        prospect_name: string | null;
-        prospect_headline: string | null;
-        provider_chat_id: string | null;
-        last_message_at: string | null;
-    }>;
     flows?: CallFlow[];
 }>();
 
@@ -115,7 +112,6 @@ const flashError = computed(() => (page.props.flash as { error?: string })?.erro
 
 const showCampaignModal = ref(false);
 const campaignWizardStep = ref(1);
-const showCreateModal = ref(false);
 const showSettingsModal = ref(false);
 const settingsWizardStep = ref(1);
 const showRemindersModal = ref(false);
@@ -147,12 +143,6 @@ const settingsStepDescription = computed(() => {
         return 'Sync booked calls to Google Calendar or Outlook and set availability windows.';
     }
     return 'Opening message template and AI reply behavior for new flows.';
-});
-
-const createForm = useForm({
-    conversation_id: '' as string | number,
-    prospect_name: '',
-    pending_message: '',
 });
 
 const campaignForm = useForm({
@@ -229,29 +219,6 @@ const leadListOptions = computed(() =>
     })),
 );
 
-function truncateText(text: string, max = 56) {
-    const trimmed = text.trim();
-    if (trimmed.length <= max) return trimmed;
-    return `${trimmed.slice(0, max - 1)}…`;
-}
-
-const conversationOptions = computed(() =>
-    props.conversations.map((c) => ({
-        value: String(c.id),
-        label: truncateText(c.prospect_name?.trim() || 'Unknown contact', 40),
-        sublabel: c.prospect_headline
-            ? truncateText(c.prospect_headline, 52)
-            : (c.last_message_at?.slice(0, 10) ?? undefined),
-    })),
-);
-
-const createConversationId = computed({
-    get: () => (createForm.conversation_id ? String(createForm.conversation_id) : ''),
-    set: (value: string) => {
-        createForm.conversation_id = value ? Number(value) : '';
-    },
-});
-
 function setActiveList(key: string) {
     activeListKey.value = key;
     syncActiveList();
@@ -270,14 +237,6 @@ function syncActiveList() {
     selectAllInList.value = sel?.selectAll ?? false;
     void loadLeads(1);
 }
-
-watch(() => createForm.conversation_id, (id) => {
-    if (!id) return;
-    const conv = props.conversations.find((c) => String(c.id) === String(id));
-    if (conv?.prospect_name) {
-        createForm.prospect_name = conv.prospect_name;
-    }
-});
 
 function resetCampaignModal() {
     campaignWizardStep.value = 1;
@@ -312,26 +271,6 @@ function goCampaignStep2() {
 
 function goCampaignStep1() {
     campaignWizardStep.value = 1;
-}
-
-function openCreateModal() {
-    createForm.reset();
-    showCreateModal.value = true;
-}
-
-function closeCreateModal() {
-    showCreateModal.value = false;
-    createForm.reset();
-}
-
-function submitCreate() {
-    createForm.transform((data) => ({
-        ...data,
-        conversation_id: data.conversation_id ? Number(data.conversation_id) : undefined,
-    })).post('/calls', {
-        preserveScroll: true,
-        onSuccess: () => closeCreateModal(),
-    });
 }
 
 async function loadLeads(pageNum = 1) {
@@ -484,9 +423,7 @@ function resolveOpeningMessage(override?: string) {
 }
 
 const campaignOpeningPreview = computed(() => resolveOpeningMessage(campaignForm.pending_message));
-const createOpeningPreview = computed(() => resolveOpeningMessage(createForm.pending_message));
 const showCampaignTemplatePreview = computed(() => !campaignForm.pending_message.trim());
-const showCreateTemplatePreview = computed(() => !createForm.pending_message.trim());
 
 const flows = computed(() => props.flows ?? []);
 
@@ -505,6 +442,7 @@ const settingsForm = useForm({
     auto_send_suggestions: props.settings.auto_send_suggestions,
     reminder_hours_before: props.settings.reminder_hours_before ?? [24, 1],
     calendar_id: props.settings.calendar_id ?? '',
+    calendar_provider: props.settings.calendar_provider ?? props.calendarAccounts?.[0]?.provider ?? '',
     call_duration_minutes: props.settings.call_duration_minutes ?? 30,
     use_unipile_calendar: props.settings.use_unipile_calendar ?? true,
     use_app_booking_link: props.settings.use_app_booking_link ?? true,
@@ -513,12 +451,32 @@ const settingsForm = useForm({
     booking_hours_end: props.settings.booking_hours_end ?? 17,
 });
 
-const calendarSelectOptions = computed(() =>
-    (props.calendarOptions ?? []).map((c) => ({
+const calendarAccountOptions = computed(() => props.calendarAccounts ?? []);
+
+const effectiveCalendarProvider = computed(() => {
+    const selected = settingsForm.calendar_provider?.trim();
+    if (selected && calendarAccountOptions.value.some((a) => a.provider === selected)) {
+        return selected;
+    }
+    return calendarAccountOptions.value[0]?.provider ?? '';
+});
+
+const calendarSelectOptions = computed(() => {
+    const provider = effectiveCalendarProvider.value;
+    const options = props.calendarOptionsByProvider?.[provider] ?? [];
+    return options.map((c) => ({
         value: c.id,
         label: c.primary ? `${c.name} (primary)` : c.name,
-    })),
-);
+    }));
+});
+
+function selectCalendarProvider(provider: string) {
+    if (settingsForm.calendar_provider === provider) {
+        return;
+    }
+    settingsForm.calendar_provider = provider;
+    settingsForm.calendar_id = '';
+}
 
 const settingsTemplatePreview = computed(() => {
     const template = settingsForm.booking_message?.trim()
@@ -551,6 +509,10 @@ function saveSettings() {
         settingsWizardStep.value = 1;
         settingsForm.setError('calendar_url', 'Add your Calendly or calendar link, or turn on in-app booking links.');
         return;
+    }
+
+    if (!settingsForm.calendar_provider && effectiveCalendarProvider.value) {
+        settingsForm.calendar_provider = effectiveCalendarProvider.value;
     }
 
     settingsForm.post('/calls/settings', {
@@ -666,9 +628,6 @@ watch(showUpcomingModal, (open) => {
                 <AppToolbarButton @click="openCampaignModal">
                     <Send class="h-4 w-4" /> Create &amp; start chats
                 </AppToolbarButton>
-                <AppToolbarButton variant="violet" @click="openCreateModal">
-                    <Plus class="h-4 w-4" /> Track one prospect
-                </AppToolbarButton>
                 <AppToolbarButton variant="slate" @click="showSettingsModal = true">
                     <Settings class="h-4 w-4" /> Settings
                 </AppToolbarButton>
@@ -699,7 +658,7 @@ watch(showUpcomingModal, (open) => {
         </div>
 
         <div v-else-if="!hasUnipile" class="rounded-xl border border-orange-500/30 bg-orange-500/10 p-4 text-sm text-orange-800 dark:text-orange-300">
-            Connect LinkedIn under <Link href="/integrations" class="font-medium underline">Integrations</Link> so Unipile can sync chats and send messages.
+            Connect LinkedIn under <Link href="/integrations" class="font-medium underline">Integrations</Link> to sync chats and send messages.
         </div>
 
         <div v-if="hasOrg && flows.length" class="rounded-xl border border-border bg-card shadow-sm">
@@ -812,13 +771,10 @@ watch(showUpcomingModal, (open) => {
         <div v-if="hasOrg && !stats.in_pipeline" class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-12 text-center">
             <Phone class="h-10 w-10 text-muted-foreground/40" />
             <p class="font-medium">No active call prospects</p>
-            <p class="max-w-md text-sm text-muted-foreground">Start from a lead list or track a single prospect. Replies sync via Unipile — AI drafts your next message in the pipeline.</p>
+            <p class="max-w-md text-sm text-muted-foreground">Start from a lead list with real LinkedIn profiles. Replies sync automatically — AI drafts your next message in the pipeline.</p>
             <div class="mt-2 flex flex-wrap justify-center gap-2">
                 <button type="button" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-primary-foreground" @click="openCampaignModal">
                     <Send class="h-4 w-4" /> Create &amp; start chats
-                </button>
-                <button type="button" class="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted/50" @click="openCreateModal">
-                    <Plus class="h-4 w-4" /> Track one prospect
                 </button>
             </div>
         </div>
@@ -1048,52 +1004,6 @@ watch(showUpcomingModal, (open) => {
         </DialogContent>
     </Dialog>
 
-    <!-- Track one prospect modal -->
-    <Dialog v-model:open="showCreateModal">
-        <DialogContent class="overflow-visible sm:max-w-lg">
-            <DialogHeader>
-                <DialogTitle>Track one prospect</DialogTitle>
-                <DialogDescription>Add a single prospect to the call pipeline — optionally link an existing conversation.</DialogDescription>
-            </DialogHeader>
-
-            <form class="grid min-w-0 gap-3 overflow-hidden" @submit.prevent="submitCreate">
-                <label class="grid min-w-0 gap-1 text-sm">
-                    <span class="font-medium">LinkedIn conversation (optional)</span>
-                    <SearchableSelect
-                        v-model="createConversationId"
-                        :options="conversationOptions"
-                        placeholder="None — track by name only"
-                        search-placeholder="Search conversations…"
-                        empty-text="No conversations match"
-                        allow-clear
-                        clear-label="None — track by name only"
-                    />
-                </label>
-                <label class="grid gap-1 text-sm">
-                    <span class="font-medium">Prospect name</span>
-                    <input v-model="createForm.prospect_name" type="text" class="rounded-lg border border-border bg-background px-3 py-2" placeholder="Jane Doe" />
-                </label>
-                <label class="grid gap-1 text-sm">
-                    <span class="font-medium">Opening message (optional)</span>
-                    <textarea v-model="createForm.pending_message" rows="3" class="rounded-lg border border-border bg-background px-3 py-2" placeholder="Leave blank to use your booking template from Settings" />
-                </label>
-
-                <div v-if="showCreateTemplatePreview" class="rounded-lg border border-dashed border-primary/30 bg-primary/5 px-3 py-2.5 text-sm">
-                    <p class="text-xs font-medium uppercase tracking-wide text-primary">Will use (from Settings template)</p>
-                    <p class="mt-1 whitespace-pre-wrap text-muted-foreground">{{ createOpeningPreview }}</p>
-                </div>
-
-                <DialogFooter class="gap-2 pt-2 sm:gap-0">
-                    <button type="button" class="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted/50" @click="closeCreateModal">Cancel</button>
-                    <button type="submit" class="rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50" :disabled="createForm.processing">
-                        <Loader2 v-if="createForm.processing" class="mr-2 inline h-4 w-4 animate-spin" />
-                        Add to pipeline
-                    </button>
-                </DialogFooter>
-            </form>
-        </DialogContent>
-    </Dialog>
-
     <!-- Settings modal -->
     <Dialog v-model:open="showSettingsModal">
         <DialogContent class="!flex h-[min(85vh,640px)] max-h-[90vh] flex-col overflow-hidden sm:max-w-lg">
@@ -1177,7 +1087,7 @@ watch(showUpcomingModal, (open) => {
                             <div class="flex items-start gap-2 rounded-lg border border-border bg-muted/20 p-3">
                                 <Calendar class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                                 <p class="text-xs text-muted-foreground">
-                                    Bookings create real calendar events via Unipile. Enable <strong>calendar event.created</strong> webhooks in Unipile so external bookings auto-update Call Manager.
+                                    Bookings create real calendar events on your connected Google or Outlook calendar so Call Manager stays in sync.
                                 </p>
                             </div>
 
@@ -1204,6 +1114,29 @@ watch(showUpcomingModal, (open) => {
                             </ToggleField>
 
                             <template v-if="settingsForm.use_unipile_calendar">
+                                <div v-if="calendarAccountOptions.length" class="grid gap-2">
+                                    <span class="text-sm font-medium">Calendar account</span>
+                                    <p class="text-xs text-muted-foreground">Choose which connected calendar Call Manager uses for bookings and availability.</p>
+                                    <div
+                                        class="grid gap-2"
+                                        :class="calendarAccountOptions.length > 1 ? 'sm:grid-cols-2' : 'max-w-md'"
+                                    >
+                                        <button
+                                            v-for="acct in calendarAccountOptions"
+                                            :key="acct.provider"
+                                            type="button"
+                                            class="flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-muted/40"
+                                            :class="effectiveCalendarProvider === acct.provider ? 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'border-border'"
+                                            @click="selectCalendarProvider(acct.provider)"
+                                        >
+                                            <OutreachChannelIcon :channel="acct.provider" :size="28" class="h-7 w-7" />
+                                            <div class="min-w-0">
+                                                <p class="text-sm font-medium">{{ acct.label || brandChannelLabel(acct.provider) }}</p>
+                                                <p v-if="acct.email" class="truncate text-xs text-muted-foreground">{{ acct.email }}</p>
+                                            </div>
+                                        </button>
+                                    </div>
+                                </div>
                                 <label class="grid gap-1 text-sm">
                                     <span class="font-medium">Target calendar</span>
                                     <select v-model="settingsForm.calendar_id" class="rounded-lg border border-border bg-background px-3 py-2">

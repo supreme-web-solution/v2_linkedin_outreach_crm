@@ -10,6 +10,9 @@ use App\Models\Audience;
 use App\Models\AudienceList;
 use App\Models\User;
 use App\Models\V2IntegrationAccount;
+use App\V2\Services\EmailEnrichmentLimiter;
+use App\V2\Outreach\OutreachLeadContactResolver;
+use App\V2\Web\AudienceListLeadPresenter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -187,7 +190,7 @@ class CompetitorFollowersWebController extends Controller
                 $query->whereNull('email_fetch_status')->whereNull('email_fetch_attempted_at');
                 break;
             case 'pending':
-                $query->where('email_fetch_status', 'pending');
+                $query->whereIn('email_fetch_status', ['pending', 'processing']);
                 break;
         }
 
@@ -202,7 +205,17 @@ class CompetitorFollowersWebController extends Controller
             });
         }
 
-        $list = $query->latest()->paginate(25)->appends($request->query());
+        $presenter = app(AudienceListLeadPresenter::class);
+        $overlays = app(OutreachLeadContactResolver::class)->overlaysForLists((int) $user->id, [
+            ['list_hash' => $audience->audience_id, 'list_src' => 'aud'],
+        ]);
+
+        $followers = $query->latest()->paginate(20)->appends($request->query())
+            ->through(fn (AudienceList $row) => $presenter->transformRow($row, $overlays));
+
+        $pendingCount = app(EmailEnrichmentLimiter::class)->pendingJobCount($user->id);
+        $counts = $presenter->emailFilterCounts($audience->audience_id);
+        $contactStats = $presenter->contactStatsForList($audience->audience_id, (int) $user->id, $pendingCount);
 
         $meta = json_decode($audience->source_meta, true) ?? [];
 
@@ -214,12 +227,12 @@ class CompetitorFollowersWebController extends Controller
                 'company_url' => $meta['company_url'] ?? null,
                 'followers_count' => AudienceList::where('audience_id', $audience->audience_id)->count(),
             ],
-            'list' => $list,
+            'followers' => $followers,
             'emailFilter' => $emailFilter,
-            'filters' => [
-                'search' => $search !== '' ? $search : null,
-            ],
-            'pendingEmailFetchCount' => $this->getPendingEmailFetchCount($user->id),
+            'search' => $search,
+            'counts' => $counts,
+            'contactStats' => $contactStats,
+            'pendingCount' => $pendingCount,
             'dailyLimit' => $this->dailyLimitPayload($user),
         ]);
     }
@@ -398,7 +411,7 @@ class CompetitorFollowersWebController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'message' => 'Email fetch job queued. Please wait while we fetch the email.',
+                'message' => 'Enrichment job queued.',
                 'pending' => true,
             ], 200);
         } catch (\Throwable $th) {
@@ -429,6 +442,7 @@ class CompetitorFollowersWebController extends Controller
             'status' => 'success',
             'has_email' => ! empty($audienceListItem->con_email),
             'email' => $audienceListItem->con_email ?? null,
+            'email_fetch_status' => $audienceListItem->email_fetch_status,
             'email_fetch_completed' => $emailFetchCompleted,
         ], 200);
     }
@@ -438,12 +452,24 @@ class CompetitorFollowersWebController extends Controller
         $user = Auth::user();
         $audience = Audience::where('user_id', $user->id)->where('id', $audienceId)->firstOrFail();
 
+        $readiness = app(\App\V2\Outreach\OutreachLeadReadinessService::class);
+
         $request->validate([
-            'audience_list_ids' => 'required|array|min:1|max:20',
+            'auto_batch' => 'sometimes|boolean',
+            'audience_list_ids' => 'required_unless:auto_batch,true|array|min:1|max:25',
             'audience_list_ids.*' => 'required|integer|exists:audience_lists,id',
         ]);
 
-        $audienceListIds = $request->input('audience_list_ids');
+        $audienceListIds = $request->boolean('auto_batch')
+            ? $readiness->nextAudienceListIdsForEmailFetch($audience->audience_id, 25)
+            : $request->input('audience_list_ids', []);
+
+        if ($audienceListIds === []) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No contacts left to enrich in this list.',
+            ], 400);
+        }
 
         $audienceListItems = AudienceList::whereIn('id', $audienceListIds)
             ->where('audience_id', $audience->audience_id)

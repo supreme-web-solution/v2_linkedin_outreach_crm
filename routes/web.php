@@ -19,7 +19,11 @@ use App\Http\Controllers\Web\OutreachImportListWebController;
 use App\Http\Controllers\Web\OutreachWebController;
 use App\Http\Controllers\Web\TeamWebController;
 use App\Http\Controllers\Web\UnifiedInboxWebController;
+use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Support\Facades\Route;
+
+$enabledInboxPlatforms = implode('|', OutreachChannelRegistry::inboxPlatforms()) ?: '__none__';
+$enabledIntegrationChannels = implode('|', OutreachChannelRegistry::enabledChannelKeys()) ?: '__none__';
 
 Route::get('/', function () {
     return redirect()->route(request()->user() ? 'dashboard' : 'login');
@@ -32,7 +36,7 @@ Route::get('team/accept/{token}', [TeamWebController::class, 'showAcceptInvite']
 Route::get('book/{token}', [\App\Http\Controllers\Web\CallBookingWebController::class, 'show'])->name('book.show');
 Route::post('book/{token}', [\App\Http\Controllers\Web\CallBookingWebController::class, 'store'])->name('book.store');
 
-Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
+Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use ($enabledInboxPlatforms, $enabledIntegrationChannels) {
     Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     Route::inertia('tutorials', 'Tutorials')->name('tutorials');
@@ -76,12 +80,15 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::get('leads/daily-limit', [LeadsWebController::class, 'getDailyLimit'])->name('leads.daily-limit');
     Route::get('leads/pending-count', [LeadsWebController::class, 'getPendingCount'])->name('leads.pending-count');
     Route::put('leads/lists/{id}', [LeadsWebController::class, 'updateList'])->whereNumber('id')->name('leads.lists.update');
+    Route::delete('leads/lists/bulk', [LeadsWebController::class, 'removeListsBulk'])->name('leads.lists.bulk-remove');
     Route::delete('leads/lists/{listId}', [LeadsWebController::class, 'removeList'])->where('listId', $listHashPattern)->name('leads.lists.remove');
     Route::delete('leads/bulk', [LeadsWebController::class, 'removeLeadBulk'])->name('leads.bulk-remove');
     Route::delete('leads/lead/{leadId}', [LeadsWebController::class, 'removeLead'])->whereNumber('leadId')->name('leads.lead.remove');
     Route::patch('leads/lead/{leadId}/status', [LeadsWebController::class, 'updateLeadStatus'])->whereNumber('leadId')->name('leads.lead.status');
     Route::get('leads/{listId}', [LeadsWebController::class, 'show'])->where('listId', $listHashPattern)->name('leads.show');
     Route::get('leads/{listId}/export', [LeadsWebController::class, 'export'])->where('listId', $listHashPattern)->name('leads.export');
+    Route::post('leads/{listId}/enrich', [LeadsWebController::class, 'enrich'])->where('listId', $listHashPattern)->name('leads.enrich');
+    Route::post('leads/{listId}/enrich-batch', [LeadsWebController::class, 'enrichBatch'])->where('listId', $listHashPattern)->name('leads.enrich-batch');
     Route::post('leads/{listId}/fetch-email', [LeadsWebController::class, 'fetchEmail'])->where('listId', $listHashPattern)->name('leads.fetch-email');
     Route::post('leads/{listId}/fetch-email-batch', [LeadsWebController::class, 'fetchEmailBatch'])->where('listId', $listHashPattern)->name('leads.fetch-email-batch');
     Route::get('leads/{listId}/check-email/{audienceListId}', [LeadsWebController::class, 'checkEmail'])->where('listId', $listHashPattern)->whereNumber('audienceListId')->name('leads.check-email');
@@ -100,8 +107,10 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
 
     Route::post('outreach/readiness-preview', [OutreachWebController::class, 'readinessPreview'])->name('outreach.readiness-preview');
     Route::post('outreach/ai/content', [OutreachAiWebController::class, 'generateContent'])->name('outreach.ai.content');
-    Route::post('outreach/enrich/fetch-emails', [OutreachEnrichmentWebController::class, 'fetchEmails'])->name('outreach.enrich.fetch-emails');
+    Route::post('outreach/enrich/leads', [OutreachEnrichmentWebController::class, 'enrichLeads'])->name('outreach.enrich.leads');
+    Route::post('outreach/enrich/fetch-emails', [OutreachEnrichmentWebController::class, 'enrichLeads'])->name('outreach.enrich.fetch-emails');
     Route::post('outreach/enrich/fetch-phones', [OutreachEnrichmentWebController::class, 'fetchPhones'])->name('outreach.enrich.fetch-phones');
+    Route::post('outreach/enrich/prepare-contacts', [OutreachEnrichmentWebController::class, 'prepareContacts'])->name('outreach.enrich.prepare-contacts');
     Route::post('outreach/enrich/verify-whatsapp', [OutreachEnrichmentWebController::class, 'verifyWhatsApp'])->name('outreach.enrich.verify-whatsapp');
     Route::post('outreach/enrich/resolve-handles', [OutreachEnrichmentWebController::class, 'resolveHandles'])->name('outreach.enrich.resolve-handles');
     Route::get('outreach/import-lists/template', [OutreachImportListWebController::class, 'template'])->name('outreach.import-lists.template');
@@ -123,11 +132,13 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::delete('outreach/{id}', [OutreachWebController::class, 'destroy'])->whereNumber('id')->name('outreach.destroy');
 
     Route::get('inbox', [UnifiedInboxWebController::class, 'index'])->name('inbox');
-    Route::get('inbox/{platform}', [UnifiedInboxWebController::class, 'platform'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->name('inbox.platform');
-    Route::get('inbox/{platform}/{id}', [UnifiedInboxWebController::class, 'show'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.show');
-    Route::get('inbox/{platform}/{id}/poll', [UnifiedInboxWebController::class, 'poll'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.poll');
-    Route::post('inbox/{platform}/{id}/send', [UnifiedInboxWebController::class, 'send'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.send');
-    Route::get('inbox/{platform}/{id}/messages/{messageId}/attachments/{attachmentId}', [UnifiedInboxWebController::class, 'attachment'])->where('platform', 'linkedin|whatsapp|instagram|telegram|twitter|email')->whereNumber('id')->name('inbox.attachment');
+    Route::get('inbox/{platform}', [UnifiedInboxWebController::class, 'platform'])->where('platform', $enabledInboxPlatforms)->name('inbox.platform');
+    Route::get('inbox/{platform}/{id}', [UnifiedInboxWebController::class, 'show'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.show');
+    Route::get('inbox/{platform}/{id}/poll', [UnifiedInboxWebController::class, 'poll'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.poll');
+    Route::post('inbox/{platform}/{id}/send', [UnifiedInboxWebController::class, 'send'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.send');
+    Route::delete('inbox/{platform}/{id}', [UnifiedInboxWebController::class, 'destroy'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.destroy');
+    Route::delete('inbox/{platform}/{id}/messages/{messageId}', [UnifiedInboxWebController::class, 'destroyMessage'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->whereNumber('messageId')->name('inbox.message.destroy');
+    Route::get('inbox/{platform}/{id}/messages/{messageId}/attachments/{attachmentId}', [UnifiedInboxWebController::class, 'attachment'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.attachment');
 
     Route::get('conversations', [ConversationsWebController::class, 'index'])->name('conversations');
     Route::get('conversations/flows/{flowKey}', [ConversationsWebController::class, 'flow'])->name('conversations.flow');
@@ -145,7 +156,6 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::post('conversations/{id}/track-call', [ConversationsWebController::class, 'trackCall'])->whereNumber('id')->name('conversations.track-call');
     Route::get('calls/upcoming', [CallsWebController::class, 'upcomingBooked'])->name('calls.upcoming');
     Route::get('calls', [CallsWebController::class, 'index'])->name('calls');
-    Route::post('calls', [CallsWebController::class, 'store'])->name('calls.store');
     Route::post('calls/from-leads', [CallsWebController::class, 'storeFromLeads'])->name('calls.from-leads');
     Route::get('calls/lead-lists/{listId}/leads', [CallsWebController::class, 'listLeads'])->name('calls.list-leads');
     Route::post('calls/settings', [CallsWebController::class, 'updateSettings'])->name('calls.settings');
@@ -171,6 +181,8 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
     Route::post('content/ai/generate-image', [ContentWebController::class, 'generateImageAi'])->name('content.ai.generate-image');
     Route::put('content/{id}', [ContentWebController::class, 'update'])->name('content.update');
     Route::delete('content/{id}', [ContentWebController::class, 'destroy'])->name('content.destroy');
+    Route::post('content/bulk-delete', [ContentWebController::class, 'bulkDestroy'])->name('content.bulk-destroy');
+    Route::post('content/{id}/duplicate', [ContentWebController::class, 'duplicate'])->whereNumber('id')->name('content.duplicate');
     Route::post('content/{id}/publish', [ContentWebController::class, 'publish'])->name('content.publish');
     Route::post('content/{id}/schedule', [ContentWebController::class, 'schedule'])->name('content.schedule');
     Route::get('team', [TeamWebController::class, 'index'])->name('team');
@@ -189,8 +201,8 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () {
         ->name('calendar.events.reschedule');
     Route::get('integrations', [IntegrationWebController::class, 'index'])->name('integrations');
     Route::post('integrations/unipile/hosted-auth', [IntegrationWebController::class, 'startUnipileHostedAuth'])->name('integrations.unipile.hosted-auth');
-    Route::post('integrations/channels/{channel}/connect', [IntegrationWebController::class, 'startChannelHostedAuth'])->name('integrations.channels.connect');
-    Route::delete('integrations/channels/{channel}/disconnect', [IntegrationWebController::class, 'disconnectChannel'])->name('integrations.channels.disconnect');
+    Route::post('integrations/channels/{channel}/connect', [IntegrationWebController::class, 'startChannelHostedAuth'])->where('channel', $enabledIntegrationChannels)->name('integrations.channels.connect');
+    Route::delete('integrations/channels/{channel}/disconnect', [IntegrationWebController::class, 'disconnectChannel'])->where('channel', $enabledIntegrationChannels)->name('integrations.channels.disconnect');
     Route::post('integrations/unipile/cookie', [IntegrationWebController::class, 'connectUnipileCookie'])->name('integrations.unipile.cookie');
     Route::post('integrations/unipile/verify', [IntegrationWebController::class, 'verifyUnipile'])->name('integrations.unipile.verify');
     Route::delete('integrations/unipile/{id}', [IntegrationWebController::class, 'disconnectUnipile'])->whereNumber('id')->name('integrations.unipile.disconnect');

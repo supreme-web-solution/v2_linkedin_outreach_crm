@@ -1,14 +1,27 @@
 <script setup lang="ts">
 import { Head, Link, router } from '@inertiajs/vue3';
-import { ArrowLeft, Download, Loader2, Mail } from '@lucide/vue';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import BulkEnrichButton from '@/components/crm/BulkEnrichButton.vue';
 import EmailEnrichmentInfoTooltip from '@/components/crm/EmailEnrichmentInfoTooltip.vue';
+import { refreshDailyEnrichmentQuota } from '@/composables/useDailyEnrichmentQuota';
 import { Button } from '@/components/ui/button';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import ListPagination from '@/components/crm/ListPagination.vue';
+import LeadContactTags, { type LeadContacts } from '@/components/crm/LeadContactTags.vue';
+import LeadEnrichmentField from '@/components/crm/LeadEnrichmentField.vue';
+import LeadEnrichmentStatCard from '@/components/crm/LeadEnrichmentStatCard.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
-import ListSearchBar from '@/components/crm/ListSearchBar.vue';
+import ListPagination from '@/components/crm/ListPagination.vue';
+import {
+    ArrowLeft,
+    Download,
+    ExternalLink,
+    Loader2,
+    Mail,
+    Phone,
+    RefreshCw,
+    Search,
+} from '@lucide/vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 defineOptions({
     layout: {
@@ -19,18 +32,46 @@ defineOptions({
     },
 });
 
-interface FollowerRow {
+interface Follower {
     id: number;
-    con_first_name: string | null;
-    con_last_name: string | null;
-    con_job_title: string | null;
-    con_company_name: string | null;
-    con_location: string | null;
-    con_profile_url: string | null;
-    con_email: string | null;
-    con_public_identifier: string | null;
+    name: string;
+    email: string | null;
+    headline: string | null;
+    location: string | null;
+    profile_url: string | null;
+    network_distance: string | null;
     email_fetch_status: string | null;
     email_fetch_attempted_at: string | null;
+    contacts: LeadContacts;
+    company_name: string | null;
+    company_domain: string | null;
+    company_logo_url: string | null;
+}
+
+interface ContactStatBucket {
+    found: number;
+    total: number;
+    pending: number;
+    searched: number;
+    fill_percent: number;
+    hit_rate: number;
+}
+
+interface ContactStats {
+    total: number;
+    running: boolean;
+    processed: number;
+    fetchable: number;
+    emails: ContactStatBucket;
+    phones: ContactStatBucket;
+}
+
+interface DailyLimit {
+    daily_limit: number;
+    used: number;
+    remaining: number;
+    can_scrape: boolean;
+    reset_date: string | null;
 }
 
 const props = defineProps<{
@@ -41,58 +82,158 @@ const props = defineProps<{
         company_url: string | null;
         followers_count: number;
     };
-    list: {
-        data: FollowerRow[];
+    followers: {
+        data: Follower[];
         total: number;
         current_page: number;
         last_page: number;
         prev_page_url: string | null;
         next_page_url: string | null;
+        links?: Array<{ url: string | null; label: string; active: boolean }>;
     };
     emailFilter: string;
-    filters: { search: string | null };
-    pendingEmailFetchCount: number;
-    dailyLimit: { daily_limit: number; used: number; remaining: number; can_scrape: boolean; reset_date: string | null };
+    search: string;
+    counts: Record<string, number>;
+    contactStats: ContactStats;
+    pendingCount: number;
+    dailyLimit: DailyLimit;
 }>();
 
-const emailFilters = [
+const MAX_CONCURRENT_ENRICHMENTS = 5;
+
+const searchTerm = ref(props.search ?? '');
+const selected = ref<Set<number>>(new Set());
+const busy = ref(false);
+const enrichingIds = ref<Set<number>>(new Set());
+const flash = ref('');
+const flashError = ref('');
+
+const filters = [
     { key: 'all', label: 'All' },
     { key: 'with_email', label: 'With email' },
-    { key: 'without_email', label: 'No email' },
-    { key: 'not_found', label: 'Not found' },
+    { key: 'without_email', label: 'No email found' },
     { key: 'not_fetched', label: 'Not fetched' },
     { key: 'pending', label: 'Pending' },
 ];
 
-function csrf(): string {
-    const m = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
+const hasPending = computed(() =>
+    enrichingIds.value.size > 0
+    || props.pendingCount > 0
+    || props.followers.data.some((f) => ['pending', 'processing'].includes(f.email_fetch_status ?? '')),
+);
+
+const inFlightEnrichments = computed(() =>
+    Math.max(props.pendingCount, enrichingIds.value.size),
+);
+
+function isFollowerEnriching(follower: Follower): boolean {
+    return enrichingIds.value.has(follower.id)
+        || ['pending', 'processing'].includes(follower.email_fetch_status ?? '');
 }
 
-async function api(url: string, method = 'POST', body?: unknown) {
-    const res = await fetch(url, {
-        method,
-        headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-XSRF-TOKEN': csrf(),
-            'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'same-origin',
-        body: method === 'GET' || method === 'HEAD' ? undefined : body ? JSON.stringify(body) : undefined,
-    });
-    return { ok: res.ok, data: await res.json().catch(() => ({})) };
+function canStartEnrich(excludeId?: number): boolean {
+    if (!props.dailyLimit.can_scrape) {
+        return false;
+    }
+    const localCount = excludeId
+        ? [...enrichingIds.value].filter((id) => id !== excludeId).length
+        : enrichingIds.value.size;
+
+    return Math.max(props.pendingCount, localCount) < MAX_CONCURRENT_ENRICHMENTS;
 }
 
-function isFetching(row: FollowerRow): boolean {
-    return fetchingIds.value.has(row.id)
-        || row.email_fetch_status === 'pending'
-        || row.email_fetch_status === 'processing';
+watch(
+    () => props.followers.data.map((f) => ({ id: f.id, status: f.email_fetch_status })),
+    (rows) => {
+        const next = new Set(enrichingIds.value);
+        let changed = false;
+
+        for (const row of rows) {
+            if (!next.has(row.id)) {
+                continue;
+            }
+            if (row.status === 'completed' || row.status === 'failed') {
+                next.delete(row.id);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            enrichingIds.value = next;
+        }
+    },
+    { deep: true },
+);
+
+function xsrf(): string {
+    return decodeURIComponent(document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN='))?.split('=')[1] ?? '');
 }
 
-async function pollEmailResult(audienceListId: number, maxAttempts = 25): Promise<{ found: boolean; email?: string }> {
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 2000));
+function go(params: Record<string, string | undefined>) {
+    router.get(
+        `/competitor-followers/${props.audience.id}`,
+        { email_filter: props.emailFilter, search: searchTerm.value || undefined, ...params },
+        { preserveState: true, preserveScroll: true, replace: true },
+    );
+}
+
+function setFilter(key: string) {
+    go({ email_filter: key });
+}
+
+function runSearch() {
+    go({ search: searchTerm.value || undefined });
+}
+
+function toggle(id: number) {
+    if (selected.value.has(id)) selected.value.delete(id);
+    else selected.value.add(id);
+    selected.value = new Set(selected.value);
+}
+
+const allSelected = computed(() => props.followers.data.length > 0 && props.followers.data.every((f) => selected.value.has(f.id)));
+
+function toggleAll() {
+    if (allSelected.value) {
+        selected.value = new Set();
+    } else {
+        selected.value = new Set(props.followers.data.map((f) => f.id));
+    }
+}
+
+function setFlash(msg: string, error = false) {
+    flash.value = error ? '' : msg;
+    flashError.value = error ? msg : '';
+    setTimeout(() => {
+        flash.value = '';
+        flashError.value = '';
+    }, 5000);
+}
+
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleReload() {
+    if (reloadTimer) {
+        clearTimeout(reloadTimer);
+    }
+    reloadTimer = setTimeout(() => {
+        router.reload({
+            only: ['followers', 'counts', 'contactStats', 'dailyLimit', 'pendingCount'],
+            preserveScroll: true,
+        });
+        void refreshDailyEnrichmentQuota();
+    }, 400);
+}
+
+function removeEnrichingId(id: number) {
+    const next = new Set(enrichingIds.value);
+    next.delete(id);
+    enrichingIds.value = next;
+}
+
+async function pollEnrichmentResult(audienceListId: number): Promise<'found' | 'not_found' | 'timeout'> {
+    for (let attempt = 0; attempt < 50; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1000 : 2000));
 
         const res = await fetch(`/competitor-followers/${props.audience.id}/check-email/${audienceListId}`, {
             headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -100,290 +241,360 @@ async function pollEmailResult(audienceListId: number, maxAttempts = 25): Promis
         });
         const data = await res.json().catch(() => ({}));
 
-        if (data.has_email && data.email) {
-            return { found: true, email: data.email as string };
+        if (data.has_email) {
+            return 'found';
         }
         if (data.email_fetch_completed) {
-            return { found: false };
+            return 'not_found';
         }
     }
 
-    return { found: false };
+    return 'timeout';
 }
 
-const busy = ref<Record<number, boolean>>({});
-const fetchingIds = ref<Set<number>>(new Set());
-const batchBusy = ref(false);
-const message = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-const followerSearch = ref(props.filters?.search ?? '');
-
-function applyFollowerSearch() {
-    router.get(`/competitor-followers/${props.audience.id}`, {
-        search: followerSearch.value || undefined,
-        email_filter: props.emailFilter !== 'all' ? props.emailFilter : undefined,
-    }, { preserveState: true, preserveScroll: true, replace: true, only: ['list', 'filters'] });
-}
-
-function flash(type: 'success' | 'error' | 'info', text: string) {
-    message.value = { type, text };
-    setTimeout(() => (message.value = null), 6000);
-}
-
-function messageClass(type: 'success' | 'error' | 'info'): string {
-    if (type === 'success') return 'bg-green-500/10 text-green-600';
-    if (type === 'info') return 'bg-blue-500/10 text-blue-600 dark:text-blue-400';
-    return 'bg-red-500/10 text-red-600';
-}
-
-async function findEmail(row: FollowerRow) {
-    if (isFetching(row) || !props.dailyLimit.can_scrape) {
+async function enrichFollower(follower: Follower) {
+    if (isFollowerEnriching(follower)) {
         return;
     }
 
-    fetchingIds.value = new Set(fetchingIds.value).add(row.id);
-    busy.value[row.id] = true;
+    if (!canStartEnrich()) {
+        setFlash(
+            `You have ${inFlightEnrichments.value} enrichment${inFlightEnrichments.value === 1 ? '' : 's'} running. Max ${MAX_CONCURRENT_ENRICHMENTS} at a time — wait for one to finish.`,
+            true,
+        );
+        return;
+    }
+
+    enrichingIds.value = new Set(enrichingIds.value).add(follower.id);
 
     try {
-        const { ok, data } = await api(`/competitor-followers/${props.audience.id}/fetch-email`, 'POST', {
-            audience_list_id: row.id,
+        const res = await fetch(`/competitor-followers/${props.audience.id}/fetch-email`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': xsrf(), Accept: 'application/json' },
+            body: JSON.stringify({ audience_list_id: follower.id }),
         });
+        const data = await res.json();
 
-        if (!ok) {
-            flash('error', data.message || 'Failed to queue email lookup.');
+        if (!res.ok) {
+            setFlash(data.message || 'Failed to enrich.', true);
+            removeEnrichingId(follower.id);
             return;
         }
 
-        if (data.email) {
-            flash('success', data.message || 'Email found.');
-            router.reload({ only: ['list', 'dailyLimit', 'pendingEmailFetchCount'] });
-            return;
+        setFlash(data.message);
+        scheduleReload();
+        void refreshDailyEnrichmentQuota();
+
+        if (!data.email) {
+            await pollEnrichmentResult(follower.id);
+            scheduleReload();
         }
-
-        router.reload({ only: ['list', 'dailyLimit', 'pendingEmailFetchCount'] });
-        startPolling();
-
-        const result = await pollEmailResult(row.id);
-        router.reload({ only: ['list', 'dailyLimit', 'pendingEmailFetchCount'] });
-
-        if (result.found && result.email) {
-            flash('success', `Email found: ${result.email}`);
-        } else {
-            flash('info', 'No email on this LinkedIn profile. We only returns addresses the member has shared.');
-        }
+    } catch {
+        setFlash('Network error.', true);
+        removeEnrichingId(follower.id);
     } finally {
-        busy.value[row.id] = false;
-        const next = new Set(fetchingIds.value);
-        next.delete(row.id);
-        fetchingIds.value = next;
+        removeEnrichingId(follower.id);
     }
 }
 
-const selected = ref<Set<number>>(new Set());
-function toggle(id: number) {
-    if (selected.value.has(id)) selected.value.delete(id);
-    else selected.value.add(id);
-    selected.value = new Set(selected.value);
-}
-const selectableIds = computed(() =>
-    props.list.data.filter((r) => !r.con_email && !r.email_fetch_attempted_at).map((r) => r.id),
-);
-function toggleAll() {
-    if (selectableIds.value.every((id) => selected.value.has(id))) {
-        selected.value = new Set();
-    } else {
-        selected.value = new Set(selectableIds.value);
-    }
-}
+const canBulkEnrich = computed(() => (props.contactStats?.fetchable ?? 0) > 0 && canStartEnrich());
 
-async function findEmailsBatch() {
-    if (selected.value.size === 0 || batchBusy.value) return;
-    batchBusy.value = true;
+async function enrichNextBatch() {
+    if (!canBulkEnrich.value || busy.value) {
+        return;
+    }
+
+    busy.value = true;
+
     try {
-        const { ok, data } = await api(`/competitor-followers/${props.audience.id}/fetch-email-batch`, 'POST', {
-            audience_list_ids: Array.from(selected.value),
+        const res = await fetch(`/competitor-followers/${props.audience.id}/fetch-email-batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': xsrf(), Accept: 'application/json' },
+            body: JSON.stringify({ auto_batch: true }),
         });
-        flash(ok ? 'success' : 'error', data.message || (ok ? 'Batch queued' : 'Failed'));
-        if (ok) {
-            selected.value = new Set();
-            router.reload({ only: ['list', 'dailyLimit', 'pendingEmailFetchCount'] });
-            startPolling();
-        }
-    } finally {
-        batchBusy.value = false;
-    }
-}
+        const data = await res.json();
 
-let timer: ReturnType<typeof setInterval> | null = null;
-function startPolling() {
-    if (timer) return;
-    timer = setInterval(async () => {
-        const { data } = await api('/competitor-followers/pending-count', 'GET');
-        if ((data.pending_count ?? 0) === 0) {
-            stopPolling();
-            router.reload({ only: ['list', 'dailyLimit', 'pendingEmailFetchCount'] });
+        if (res.ok) {
+            setFlash(data.message);
+            scheduleReload();
+            void refreshDailyEnrichmentQuota();
         } else {
-            router.reload({ only: ['list'] });
+            setFlash(data.message || 'Failed to enrich followers.', true);
         }
-    }, 6000);
-}
-function stopPolling() {
-    if (timer) {
-        clearInterval(timer);
-        timer = null;
+    } catch {
+        setFlash('Network error.', true);
+    } finally {
+        busy.value = false;
     }
 }
 
+let poll: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
-    if (props.pendingEmailFetchCount > 0) startPolling();
+    poll = setInterval(() => {
+        if (hasPending.value) {
+            scheduleReload();
+        }
+    }, 5000);
 });
-onBeforeUnmount(stopPolling);
+onBeforeUnmount(() => {
+    if (poll) {
+        clearInterval(poll);
+    }
+    if (reloadTimer) {
+        clearTimeout(reloadTimer);
+    }
+});
 
-function fullName(r: FollowerRow): string {
-    return `${r.con_first_name ?? ''} ${r.con_last_name ?? ''}`.trim() || '—';
+function followerContacts(follower: Follower): LeadContacts {
+    return {
+        ...follower.contacts,
+        email_fetch_status: follower.contacts.email_fetch_status ?? follower.email_fetch_status,
+    };
+}
+
+function distanceLabel(d: string | null): string {
+    if (!d) return '';
+    const map: Record<string, string> = { DISTANCE_1: '1st', DISTANCE_2: '2nd', DISTANCE_3: '3rd' };
+    return map[d] ?? d;
 }
 </script>
 
 <template>
     <Head :title="audience.audience_name || 'Competitor Followers'" />
 
-    <div class="flex flex-col gap-5 p-4">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-                <Link href="/competitor-followers" class="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                    <ArrowLeft class="h-3 w-3" /> Back to audiences
-                </Link>
-                <LinkedInPageHeading :title="audience.audience_name || 'Competitor Followers'" show-badge>
-                    <template #subtitle>
-                        {{ audience.followers_count.toLocaleString() }} followers captured
-                    </template>
-                </LinkedInPageHeading>
-            </div>
+    <div class="flex flex-col gap-4 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-3">
-                <div class="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-                    <span class="inline-flex items-center gap-1.5">
-                        Email quota
-                        <EmailEnrichmentInfoTooltip side="bottom" align="end" />
-                    </span>
-                    :
-                    <span class="font-semibold text-foreground">{{ dailyLimit.used }}/{{ dailyLimit.daily_limit }}</span>
-                    used today
+                <Link href="/competitor-followers" class="rounded-lg border border-border p-2 hover:bg-muted">
+                    <ArrowLeft class="h-4 w-4" />
+                </Link>
+                <div>
+                    <LinkedInPageHeading :title="audience.audience_name || 'Competitor Followers'" show-badge>
+                        <template #subtitle>
+                            {{ followers.total.toLocaleString() }} followers ·
+                            <span class="text-blue-600">Competitor audience</span>
+                        </template>
+                    </LinkedInPageHeading>
                 </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
                 <Button variant="success" size="toolbar" as-child>
                     <a :href="`/competitor-followers/${audience.id}/export`">
                         <Download class="h-4 w-4" /> Export CSV
                     </a>
                 </Button>
+                <AppToolbarButton variant="info" @click="router.reload({ only: ['followers', 'counts', 'contactStats', 'dailyLimit', 'pendingCount'] })">
+                    <RefreshCw class="h-4 w-4" /> Refresh
+                </AppToolbarButton>
             </div>
         </div>
 
-        <div v-if="message" :class="['rounded-lg px-4 py-2 text-sm', messageClass(message.type)]">
-            {{ message.text }}
+        <p v-if="flash" class="rounded-lg bg-green-100 px-4 py-2 text-sm text-green-800 dark:bg-green-900/30 dark:text-green-300">{{ flash }}</p>
+        <p v-if="flashError" class="rounded-lg bg-red-100 px-4 py-2 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-300">{{ flashError }}</p>
+
+        <!-- Enrichment stats -->
+        <div v-if="contactStats" class="space-y-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Contact enrichment</p>
+                    <p class="mt-0.5 text-sm text-muted-foreground">
+                        {{ contactStats.total.toLocaleString() }} followers
+                    </p>
+                </div>
+                <div v-if="inFlightEnrichments > 0" class="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium">
+                    <Loader2 class="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    Enriching
+                    <span class="rounded-full bg-muted px-2 py-0.5 tabular-nums text-foreground">
+                        {{ inFlightEnrichments }}/{{ MAX_CONCURRENT_ENRICHMENTS }}
+                    </span>
+                </div>
+                <div v-else-if="contactStats.running" class="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium">
+                    <Loader2 class="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    Running
+                    <span class="rounded-full bg-muted px-2 py-0.5 tabular-nums text-foreground">
+                        {{ contactStats.processed }}/{{ contactStats.total }}
+                    </span>
+                </div>
+                <BulkEnrichButton
+                    v-if="canBulkEnrich || busy"
+                    :loading="busy"
+                    :disabled="!canBulkEnrich"
+                    :remaining="contactStats.fetchable"
+                    @click="enrichNextBatch"
+                />
+            </div>
+
+            <div class="grid gap-3 md:grid-cols-2">
+                <LeadEnrichmentStatCard
+                    :icon="Mail"
+                    label="Work emails"
+                    :found="contactStats.emails.found"
+                    :total="contactStats.emails.total"
+                    :fill-percent="contactStats.emails.fill_percent"
+                    :hit-rate="contactStats.emails.searched > 0 ? contactStats.emails.hit_rate : contactStats.emails.fill_percent"
+                    source-label="LinkedIn"
+                />
+                <LeadEnrichmentStatCard
+                    :icon="Phone"
+                    label="Mobile phones"
+                    :found="contactStats.phones.found"
+                    :total="contactStats.phones.total"
+                    :fill-percent="contactStats.phones.fill_percent"
+                    :hit-rate="contactStats.phones.searched > 0 ? contactStats.phones.hit_rate : contactStats.phones.fill_percent"
+                    source-label="LinkedIn"
+                />
+            </div>
         </div>
 
-        <!-- Filters -->
-        <div class="flex flex-col gap-3">
-            <ListSearchBar v-model="followerSearch" placeholder="Search followers…" @search="applyFollowerSearch" />
-            <div class="flex flex-wrap items-center gap-2">
-            <Link
-                v-for="f in emailFilters"
-                :key="f.key"
-                :href="`/competitor-followers/${audience.id}?email_filter=${f.key}${followerSearch ? `&search=${encodeURIComponent(followerSearch)}` : ''}`"
-                :class="[
-                    'rounded-full border px-3 py-1 text-xs font-medium transition',
-                    emailFilter === f.key ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted',
-                ]"
-            >
-                {{ f.label }}
-            </Link>
-
-            <button
-                v-if="selected.size > 0"
-                type="button"
-                :disabled="batchBusy"
-                class="ml-auto inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 disabled:opacity-50"
-                @click="findEmailsBatch"
-            >
-                <Loader2 v-if="batchBusy" class="h-3.5 w-3.5 animate-spin" />
-                <Mail v-else class="h-3.5 w-3.5" />
-                Find emails for {{ selected.size }} selected
-            </button>
+        <!-- Filters + search -->
+        <div class="flex flex-wrap items-center gap-3">
+            <div class="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1">
+                <button
+                    v-for="f in filters"
+                    :key="f.key"
+                    type="button"
+                    class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                    :class="emailFilter === f.key ? 'bg-gradient-to-b from-blue-500 to-blue-600 text-primary-foreground' : 'text-muted-foreground hover:bg-muted'"
+                    @click="setFilter(f.key)"
+                >
+                    {{ f.label }}<span v-if="counts[f.key] !== undefined" class="ml-1 opacity-70">({{ counts[f.key] }})</span>
+                </button>
             </div>
+            <div class="flex flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2" style="min-width: 200px">
+                <Search class="h-4 w-4 text-muted-foreground" />
+                <input v-model="searchTerm" type="text" placeholder="Search followers…" class="w-full bg-transparent text-sm outline-none" @keyup.enter="runSearch" />
+            </div>
+        </div>
+
+        <!-- Bulk bar -->
+        <div v-if="selected.size > 0" class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
+            <span class="font-medium">{{ selected.size }} selected</span>
+            <button type="button" class="ml-auto text-xs text-muted-foreground hover:text-foreground" @click="selected = new Set()">Clear</button>
+        </div>
+
+        <!-- Empty -->
+        <div v-if="followers.data.length === 0" class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-12 text-center">
+            <Mail class="h-10 w-10 text-muted-foreground/40" />
+            <p class="font-medium">No followers match this view</p>
         </div>
 
         <!-- Table -->
-        <div class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-            <table class="w-full text-sm">
-                <thead class="border-b border-border bg-muted/40">
-                    <tr>
-                        <th class="px-3 py-3 text-left">
-                            <button type="button" @click="toggleAll">
-                                <AppSelectionCheckbox :checked="selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))" />
-                            </button>
-                        </th>
-                        <th class="px-4 py-3 text-left font-medium text-muted-foreground">Name</th>
-                        <th class="hidden px-4 py-3 text-left font-medium text-muted-foreground md:table-cell">Title</th>
-                        <th class="hidden px-4 py-3 text-left font-medium text-muted-foreground lg:table-cell">Company</th>
-                        <th class="px-4 py-3 text-left font-medium text-muted-foreground">
-                            <span class="inline-flex items-center gap-1.5">
-                                Email
-                                <EmailEnrichmentInfoTooltip side="top" align="start" />
-                            </span>
-                        </th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-border">
-                    <tr v-for="row in list.data" :key="row.id" class="transition hover:bg-muted/30">
-                        <td class="px-3 py-3">
-                            <button
-                                v-if="!row.con_email && !row.email_fetch_attempted_at"
-                                type="button"
-                                @click="toggle(row.id)"
-                            >
-                                <AppSelectionCheckbox :checked="selected.has(row.id)" />
-                            </button>
-                        </td>
-                        <td class="px-4 py-3">
-                            <a
-                                v-if="row.con_profile_url"
-                                :href="row.con_profile_url"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                class="font-medium text-foreground hover:text-primary hover:underline"
-                                >{{ fullName(row) }}</a
-                            >
-                            <span v-else class="font-medium">{{ fullName(row) }}</span>
-                            <div v-if="row.con_location" class="text-xs text-muted-foreground">{{ row.con_location }}</div>
-                        </td>
-                        <td class="hidden px-4 py-3 text-muted-foreground md:table-cell">{{ row.con_job_title || '—' }}</td>
-                        <td class="hidden px-4 py-3 text-muted-foreground lg:table-cell">{{ row.con_company_name || '—' }}</td>
-                        <td class="px-4 py-3">
-                            <a v-if="row.con_email" :href="`mailto:${row.con_email}`" class="text-primary hover:underline">{{ row.con_email }}</a>
-                            <span v-else-if="isFetching(row)" class="inline-flex items-center gap-1.5 text-xs text-blue-600">
-                                <Loader2 class="h-3.5 w-3.5 animate-spin" /> Fetching…
-                            </span>
-                            <span v-else-if="row.email_fetch_attempted_at" class="text-xs text-muted-foreground" title="LinkedIn did not expose an email on this profile">
-                                Not on profile
-                            </span>
-                            <button
-                                v-else
-                                type="button"
-                                :disabled="isFetching(row) || !dailyLimit.can_scrape"
-                                class="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                                @click="findEmail(row)"
-                            >
-                                <Loader2 v-if="isFetching(row)" class="h-3.5 w-3.5 animate-spin" />
-                                <Mail v-else class="h-3.5 w-3.5" />
-                                Find email
-                            </button>
-                        </td>
-                    </tr>
-                    <tr v-if="list.data.length === 0">
-                        <td colspan="5" class="px-4 py-10 text-center text-sm text-muted-foreground">No followers match this filter.</td>
-                    </tr>
-                </tbody>
-            </table>
-
-            <ListPagination :paginator="list" label="followers" />
+        <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b border-border text-left text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                            <th class="w-10 px-3 py-3">
+                                <button type="button" @click="toggleAll">
+                                    <AppSelectionCheckbox :checked="allSelected" />
+                                </button>
+                            </th>
+                            <th class="px-4 py-3">Contact</th>
+                            <th class="px-4 py-3">Company</th>
+                            <th class="px-4 py-3">Phone</th>
+                            <th class="px-4 py-3">
+                                <span class="inline-flex items-center gap-1.5">
+                                    Work email
+                                    <EmailEnrichmentInfoTooltip side="top" align="start" />
+                                </span>
+                            </th>
+                            <th class="px-4 py-3">Channels</th>
+                            <th class="w-16 px-3 py-3" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr
+                            v-for="follower in followers.data"
+                            :key="follower.id"
+                            class="group border-b border-border/70 transition-colors last:border-b-0 hover:bg-muted/20"
+                            :class="selected.has(follower.id) ? 'bg-muted/30 ring-1 ring-inset ring-primary/15' : ''"
+                        >
+                            <td class="relative px-3 py-4">
+                                <span v-if="selected.has(follower.id)" class="absolute inset-y-0 left-0 w-0.5 bg-primary" />
+                                <button type="button" @click="toggle(follower.id)">
+                                    <AppSelectionCheckbox :checked="selected.has(follower.id)" />
+                                </button>
+                            </td>
+                            <td class="px-4 py-4">
+                                <div class="min-w-[180px]">
+                                    <div class="flex items-center gap-2">
+                                        <a
+                                            v-if="follower.profile_url"
+                                            :href="follower.profile_url"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            class="font-semibold text-foreground hover:underline"
+                                        >
+                                            {{ follower.name }}
+                                        </a>
+                                        <p v-else class="font-semibold text-foreground">{{ follower.name }}</p>
+                                        <span v-if="follower.network_distance" class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{{ distanceLabel(follower.network_distance) }}</span>
+                                    </div>
+                                    <p v-if="follower.headline" class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{{ follower.headline }}</p>
+                                    <p v-else-if="follower.location" class="mt-0.5 text-xs text-muted-foreground">{{ follower.location }}</p>
+                                </div>
+                            </td>
+                            <td class="px-4 py-4">
+                                <div v-if="follower.company_domain || follower.company_name" class="flex min-w-[140px] items-center gap-2.5">
+                                    <img
+                                        v-if="follower.company_logo_url"
+                                        :src="follower.company_logo_url"
+                                        :alt="follower.company_name || follower.company_domain || 'Company'"
+                                        class="h-7 w-7 shrink-0 rounded-md border border-border bg-white object-contain p-0.5"
+                                        loading="lazy"
+                                    />
+                                    <div v-else class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] font-semibold uppercase text-muted-foreground">
+                                        {{ (follower.company_name || follower.company_domain || '?').slice(0, 1) }}
+                                    </div>
+                                    <span class="truncate text-sm text-foreground" :title="follower.company_domain || follower.company_name || ''">
+                                        {{ follower.company_domain || follower.company_name }}
+                                    </span>
+                                </div>
+                                <span v-else class="text-sm text-muted-foreground/50">—</span>
+                            </td>
+                            <td class="px-4 py-4">
+                                <LeadEnrichmentField
+                                    type="phone"
+                                    :value="follower.contacts.phone"
+                                    :fetch-status="isFollowerEnriching(follower) ? 'processing' : follower.contacts.phone_fetch_status"
+                                    :fetch-attempted="follower.contacts.phone_fetch_attempted === true"
+                                    :fetching="isFollowerEnriching(follower)"
+                                />
+                            </td>
+                            <td class="px-4 py-4">
+                                <LeadEnrichmentField
+                                    type="email"
+                                    :value="follower.email"
+                                    :fetch-status="isFollowerEnriching(follower) ? 'processing' : follower.email_fetch_status"
+                                    :fetch-attempted="!!follower.email_fetch_attempted_at"
+                                    :fetching="isFollowerEnriching(follower)"
+                                    :can-fetch="true"
+                                    :fetch-disabled="!canStartEnrich(follower.id) || !dailyLimit.can_scrape"
+                                    @fetch="enrichFollower(follower)"
+                                />
+                            </td>
+                            <td class="px-4 py-4">
+                                <LeadContactTags :contacts="followerContacts(follower)" :show-email="false" />
+                            </td>
+                            <td class="px-3 py-4">
+                                <div class="flex items-center justify-end opacity-0 transition-opacity group-hover:opacity-100">
+                                    <a
+                                        v-if="follower.profile_url"
+                                        :href="follower.profile_url"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                        title="View profile"
+                                    >
+                                        <ExternalLink class="h-4 w-4" />
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <ListPagination v-if="followers.data.length" :paginator="followers" label="followers" />
         </div>
     </div>
 </template>

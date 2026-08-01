@@ -47,10 +47,7 @@ class DashboardStatsService
                 ->where('direction', 'outbound')
                 ->whereHas('conversation', fn ($q) => $q->where('user_id', $user->id))
                 ->count(),
-            'unread_conversations' => V2Conversation::query()
-                ->where('user_id', $user->id)
-                ->where('status', 'active')
-                ->count(),
+            'unread_conversations' => app(InboxUnreadService::class)->unreadCountForUser($user->id),
         ];
     }
 

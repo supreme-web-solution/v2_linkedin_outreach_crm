@@ -151,6 +151,16 @@ class OutreachWebhookProgressService
     {
         $inner = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
 
+        foreach (['from_attendee', 'from'] as $key) {
+            $value = Arr::get($inner, $key) ?? Arr::get($payload, $key);
+            if (is_array($value)) {
+                $nested = trim((string) ($value['identifier'] ?? $value['email'] ?? $value['address'] ?? ''));
+                if ($nested !== '' && filter_var($nested, FILTER_VALIDATE_EMAIL)) {
+                    return strtolower($nested);
+                }
+            }
+        }
+
         foreach (['from', 'to', 'email', 'recipient', 'sender'] as $key) {
             $value = Arr::get($inner, $key);
             if (is_string($value) && filter_var($value, FILTER_VALIDATE_EMAIL)) {
@@ -195,6 +205,61 @@ class OutreachWebhookProgressService
             sprintf('%s accepted your LinkedIn invite.', $lead->full_name ?? 'Lead'),
             ['condition' => 'invite_accepted'],
         );
+    }
+
+    public function confirmOutboundSendFromWebhook(
+        int $userId,
+        string $chatId,
+        ?string $providerMessageId = null,
+    ): void {
+        if ($chatId === '') {
+            return;
+        }
+
+        $conversations = V2Conversation::query()
+            ->where('user_id', $userId)
+            ->where('provider_chat_id', $chatId)
+            ->get();
+
+        foreach ($conversations as $conversation) {
+            $lead = $this->resolveLeadFromConversation($conversation);
+            if (! $lead) {
+                continue;
+            }
+
+            $campaign = $lead->campaign;
+            if (! $campaign || ! in_array($campaign->status, ['active', 'running'], true)) {
+                continue;
+            }
+
+            if (in_array($lead->status, ['done', 'skipped', 'replied'], true)) {
+                continue;
+            }
+
+            $progress = V2OutreachLeadProgress::query()
+                ->where('outreach_campaign_id', $campaign->id)
+                ->where('outreach_lead_id', $lead->id)
+                ->first();
+
+            if (! $progress) {
+                continue;
+            }
+
+            $channel = (string) $conversation->provider;
+            $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
+            $pending = $channelState[$channel]['pending_confirmation'] ?? null;
+            if (! is_array($pending)) {
+                continue;
+            }
+
+            ProcessOutreachLeadJob::confirmPendingSend(
+                $campaign,
+                $lead,
+                $progress,
+                $pending,
+                $providerMessageId,
+            );
+        }
     }
 
     public function resolveLeadFromConversation(V2Conversation $conversation): ?V2OutreachLead

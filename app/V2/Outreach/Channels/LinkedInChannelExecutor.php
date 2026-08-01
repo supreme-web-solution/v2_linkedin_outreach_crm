@@ -6,6 +6,7 @@ use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\V2\Integrations\ProviderManager;
 use App\V2\Integrations\Unipile\UnipileProvider;
+use App\V2\Outreach\OutreachSendProof;
 use App\V2\Outreach\OutreachSequenceResolver;
 use App\V2\Services\UnifiedInboxService;
 use Illuminate\Support\Facades\Log;
@@ -33,7 +34,7 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
         array $node,
         array $context,
     ): array {
-        $recipientId = trim((string) ($lead->provider_profile_id ?? ''));
+        $recipientId = $this->resolveRecipientId($campaign, $lead, $context);
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $message = $this->resolver->messageText($node, $firstName);
         $providerKey = $this->providerManager->defaultProvider();
@@ -57,7 +58,7 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
 
             if ($action === 'send_message' && ($result['status'] ?? '') === 'completed') {
                 $response = is_array($result['payload']['response'] ?? null) ? $result['payload']['response'] : [];
-                $this->unifiedInbox->recordOutboundChat(
+                $conversation = $this->unifiedInbox->recordOutboundChat(
                     (int) $campaign->user_id,
                     (int) $campaign->organization_id,
                     'linkedin',
@@ -66,6 +67,37 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
                     $response,
                     $message ?: 'Hello',
                 );
+
+                if ($conversation === null) {
+                    return [
+                        'status' => 'failed',
+                        'error_message' => 'LinkedIn message could not be linked to inbox — treat as not sent.',
+                    ];
+                }
+
+                $result['payload']['conversation_id'] = $conversation->id;
+            }
+
+            if ($action === 'send_message' && ($result['status'] ?? '') === 'awaiting_send_confirmation') {
+                $response = is_array($result['payload']['response'] ?? null) ? $result['payload']['response'] : [];
+                $conversation = $this->unifiedInbox->recordOutboundChat(
+                    (int) $campaign->user_id,
+                    (int) $campaign->organization_id,
+                    'linkedin',
+                    $lead,
+                    $recipientId,
+                    $response,
+                    $message ?: 'Hello',
+                );
+
+                if ($conversation === null) {
+                    return [
+                        'status' => 'failed',
+                        'error_message' => 'LinkedIn message could not be linked to inbox — treat as not sent.',
+                    ];
+                }
+
+                $result['payload']['conversation_id'] = $conversation->id;
             }
 
             return $result;
@@ -87,7 +119,35 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
             'text' => $message ?: 'Hello',
         ], $context);
 
-        return $this->completed($chat);
+        $response = is_array($chat) ? $chat : [];
+        $proof = OutreachSendProof::fromResponse($response);
+
+        if ($proof['chat_id'] === '' && $proof['provider_message_id'] === '') {
+            return [
+                'status' => 'failed',
+                'error_message' => 'LinkedIn did not confirm the message was sent (missing chat/message id).',
+            ];
+        }
+
+        if ($proof['provider_message_id'] === '') {
+            return [
+                'status' => 'awaiting_send_confirmation',
+                'payload' => [
+                    'response' => $response,
+                    'chat_id' => $proof['chat_id'],
+                ],
+            ];
+        }
+
+        return [
+            'status' => 'completed',
+            'payload' => [
+                'response' => $response,
+                'chat_id' => $proof['chat_id'],
+                'provider_message_id' => $proof['provider_message_id'],
+                'confirmed_sent' => true,
+            ],
+        ];
     }
 
     /**
@@ -115,5 +175,79 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
             'status' => 'completed',
             'payload' => ['response' => $response],
         ];
+    }
+
+    /**
+     * Audience/import lists often store LinkedIn vanity slugs — resolve to ACo… before Unipile calls.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function resolveRecipientId(V2OutreachCampaign $campaign, V2OutreachLead $lead, array $context): string
+    {
+        $raw = trim((string) ($lead->provider_profile_id ?? ''));
+        $profileUrl = trim((string) ($lead->profile_url ?? ''));
+
+        if ($raw === '' && $profileUrl !== '' && preg_match('~linkedin\.com/in/([^/?#]+)~i', $profileUrl, $matches)) {
+            $raw = $matches[1];
+        }
+
+        if ($raw === '') {
+            return '';
+        }
+
+        if (preg_match('/^(ACo|ADo|ACw|AE)/i', $raw)) {
+            return $raw;
+        }
+
+        $accountId = trim((string) ($context['account_id'] ?? ''));
+        $providerKey = $this->providerManager->defaultProvider();
+        /** @var UnipileProvider $provider */
+        $provider = $this->providerManager->profile($providerKey);
+
+        if ($profileUrl !== '' && str_contains($profileUrl, 'linkedin.com/in/') && $accountId !== '') {
+            try {
+                $normalized = $provider->getProfileByUrl($profileUrl, $accountId);
+                $providerId = trim((string) ($normalized['provider_id'] ?? $normalized['id'] ?? ''));
+                if ($providerId !== '' && preg_match('/^(ACo|ADo|ACw|AE)/i', $providerId)) {
+                    $this->persistResolvedProviderId($lead, $providerId);
+
+                    return $providerId;
+                }
+            } catch (\Throwable) {
+                // Fall through to identifier lookup.
+            }
+        }
+
+        try {
+            $resolved = $provider->resolveProviderId($raw, $context);
+            $providerId = trim((string) ($resolved['provider_id'] ?? ''));
+            if ($providerId !== '' && $this->isResolvedLinkedInMemberId($providerId)) {
+                $this->persistResolvedProviderId($lead, $providerId);
+
+                return $providerId;
+            }
+        } catch (\Throwable $e) {
+            Log::warning('[Outreach] LinkedIn provider id resolution failed', [
+                'lead_id' => $lead->id,
+                'identifier' => $raw,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return $raw;
+    }
+
+    private function isResolvedLinkedInMemberId(string $providerId): bool
+    {
+        return (bool) preg_match('/^(ACo|ADo|ACw|AE)/i', trim($providerId));
+    }
+
+    private function persistResolvedProviderId(V2OutreachLead $lead, string $providerId): void
+    {
+        if ($providerId === '' || $providerId === (string) ($lead->provider_profile_id ?? '')) {
+            return;
+        }
+
+        $lead->forceFill(['provider_profile_id' => $providerId])->save();
     }
 }

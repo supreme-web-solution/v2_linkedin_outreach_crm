@@ -88,7 +88,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         if ($this->apiKey() === '') {
-            throw new UnipileException('Unipile API key is missing.', 500);
+            throw new UnipileException('Messaging API key is missing.', 500);
         }
 
         $normalizedMethod = strtoupper($method);
@@ -144,7 +144,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 $detail = ': '.substr($responseText, 0, 200);
             }
             throw new UnipileException(
-                'Unipile API error (HTTP '.$status.')'.$detail,
+                'Messaging error (HTTP '.$status.')'.$detail,
                 $status,
                 [
                     'method'   => $normalizedMethod,
@@ -193,7 +193,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         if ($this->apiKey() === '') {
-            throw new UnipileException('Unipile API key is missing.', 500);
+            throw new UnipileException('Messaging API key is missing.', 500);
         }
 
         $normalizedMethod = strtoupper($method);
@@ -249,7 +249,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             }
 
             throw new UnipileException(
-                'Unipile API error (HTTP '.$status.')'.$detail,
+                'Messaging error (HTTP '.$status.')'.$detail,
                 $status,
                 [
                     'method' => $normalizedMethod,
@@ -387,8 +387,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 'status' => $response->status(),
                 'type' => is_array($body) ? ($body['type'] ?? null) : null,
                 'message' => $response->successful()
-                    ? 'Unipile API is reachable.'
-                    : 'Unipile API returned HTTP '.$response->status().'.',
+                    ? 'Messaging service is reachable.'
+                    : 'Messaging service returned HTTP '.$response->status().'.',
                 'hint' => $response->successful()
                     ? null
                     : $this->errorHint(is_array($body) ? $body : [], $response->status()),
@@ -401,7 +401,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 'ok' => false,
                 'status' => $status,
                 'type' => is_array($body) ? ($body['type'] ?? null) : null,
-                'message' => 'Unipile API error (HTTP '.$status.').',
+                'message' => 'Messaging error (HTTP '.$status.').',
                 'hint' => $this->errorHint(is_array($body) ? $body : [], $status),
             ];
         }
@@ -511,6 +511,20 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $body = array_merge($payload, ['account_id' => $accountId]);
 
         return $this->request('POST', $this->endpoint('send_email'), $body);
+    }
+
+    /**
+     * @param  array<string, mixed>  $query
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    public function listEmails(array $query = [], array $context = []): array
+    {
+        $accountId = $this->resolveAccountId($query, $context);
+
+        return $this->request('GET', $this->endpoint('list_emails'), array_merge($query, [
+            'account_id' => $accountId,
+        ]));
     }
 
     public function listInvitations(): array
@@ -730,10 +744,13 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
      */
     private function normalizeProfileItem(array $profile, ?string $fallbackIdentifier = null): array
     {
+        $memberId = $this->extractLinkedInProviderId($profile);
         $providerId = (string) (
-            Arr::get($profile, 'provider_id')
-            ?? Arr::get($profile, 'id')
-            ?? ''
+            $memberId !== '' ? $memberId : (
+                Arr::get($profile, 'provider_id')
+                ?? Arr::get($profile, 'id')
+                ?? ''
+            )
         );
         $publicId = (string) (
             Arr::get($profile, 'public_identifier')
@@ -741,8 +758,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             ?? ''
         );
 
-        if ($providerId === '' && $publicId !== '') {
-            $providerId = $publicId;
+        if ($providerId !== '' && $this->isLinkedInVanitySlug($providerId)) {
+            $providerId = $memberId;
         }
 
         $name = trim((string) (
@@ -930,6 +947,11 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             throw new UnipileException('provider_id or recipient_id is required for invitations.');
         }
 
+        $providerId = $this->ensureLinkedInProviderId(
+            $providerId,
+            array_merge($context, ['account_id' => $accountId]),
+        );
+
         return $this->request('POST', $this->endpoint('send_invitation'), array_filter([
             'account_id' => $accountId,
             'provider_id' => $providerId,
@@ -1028,7 +1050,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         if ($this->apiKey() === '') {
-            throw new UnipileException('Unipile API key is missing.', 500);
+            throw new UnipileException('Messaging API key is missing.', 500);
         }
 
         Log::info('[Unipile] → POST '.$endpoint.' (multipart message)', [
@@ -1058,7 +1080,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         } catch (RequestException $exception) {
             $status = $exception->response?->status() ?? 502;
             throw new UnipileException(
-                'Unipile API error (HTTP '.$status.'): '.substr($exception->response?->body() ?? $exception->getMessage(), 0, 300),
+                'Messaging error (HTTP '.$status.'): '.substr($exception->response?->body() ?? $exception->getMessage(), 0, 300),
                 $status
             );
         }
@@ -1072,7 +1094,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     public function downloadMessageAttachment(string $messageId, string $attachmentId, array $context = []): \Illuminate\Http\Client\Response
     {
         if ($this->apiKey() === '') {
-            throw new UnipileException('Unipile API key is missing.', 500);
+            throw new UnipileException('Messaging API key is missing.', 500);
         }
 
         $endpoint = '/messages/'.rawurlencode($messageId).'/attachments/'.rawurlencode($attachmentId);
@@ -1109,6 +1131,14 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         if ($attendeeIds === []) {
             throw new UnipileException('attendee_ids is required to start a chat.');
         }
+
+        $resolveContext = array_merge($context, ['account_id' => $accountId]);
+        $attendeeIds = array_values(array_map(
+            fn (string $id) => $this->isLinkedInVanitySlug($id)
+                ? $this->ensureLinkedInProviderId($id, $resolveContext)
+                : $id,
+            $attendeeIds,
+        ));
 
         return $this->request('POST', $this->endpoint('start_chat'), array_filter([
             'account_id' => $accountId,
@@ -1282,7 +1312,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         if ($action === 'unfollow') {
-            throw new UnipileException('LinkedIn unfollow is not supported via Unipile.');
+            throw new UnipileException('LinkedIn unfollow is not supported.');
         }
 
         return $this->request('POST', '/linkedin/user/'.$providerId, array_filter([
@@ -1303,22 +1333,123 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             return ['provider_id' => null, 'profile' => []];
         }
 
+        if (preg_match('~linkedin\.com/in/([^/?#]+)~i', $identifier, $matches)) {
+            $identifier = $matches[1];
+        }
+
         if (preg_match('/^(ACo|ADo|ACw|AE)/i', $identifier)) {
             return ['provider_id' => $identifier, 'profile' => []];
         }
 
         $profile = $this->getProfileByIdentifier($identifier, $context);
-        $providerId = (string) (
-            Arr::get($profile, 'provider_id')
-            ?? Arr::get($profile, 'id')
-            ?? Arr::get($profile, 'public_identifier')
-            ?? ''
-        );
+        $normalized = $this->normalizeProfileItem(is_array($profile) ? $profile : [], $identifier);
+        $providerId = $this->extractLinkedInProviderId($normalized);
 
         return [
             'provider_id' => $providerId !== '' ? $providerId : null,
-            'profile' => is_array($profile) ? $profile : [],
+            'profile' => $normalized,
         ];
+    }
+
+    /**
+     * LinkedIn invites and DMs require Unipile provider_id (ACo…), not vanity slugs.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function ensureLinkedInProviderId(string $providerId, array $context): string
+    {
+        $providerId = trim($providerId);
+        if ($providerId === '') {
+            throw new UnipileException('provider_id or recipient_id is required.');
+        }
+
+        if (! $this->isLinkedInVanitySlug($providerId)) {
+            return $providerId;
+        }
+
+        $resolved = $this->resolveProviderId($providerId, $context);
+        $resolvedId = trim((string) ($resolved['provider_id'] ?? ''));
+        if ($resolvedId === '' || $this->isLinkedInVanitySlug($resolvedId)) {
+            throw new UnipileException(
+                'Could not resolve LinkedIn profile to a valid provider ID. Use a profile URL or LinkedIn member id (ACo…).',
+                422,
+            );
+        }
+
+        return $resolvedId;
+    }
+
+    /**
+     * @param  array<string, mixed>  $profile
+     */
+    private function extractLinkedInProviderId(array $profile): string
+    {
+        foreach (['provider_id', 'id'] as $key) {
+            $value = trim((string) (Arr::get($profile, $key) ?? ''));
+            if ($this->isLinkedInMemberId($value)) {
+                return $value;
+            }
+        }
+
+        foreach (['member_urn', 'object_urn', 'linkedin_id', 'invitee_id'] as $key) {
+            $extracted = $this->linkedinMemberIdFromUrn((string) (Arr::get($profile, $key) ?? ''));
+            if ($extracted !== '') {
+                return $extracted;
+            }
+        }
+
+        return '';
+    }
+
+    private function isLinkedInMemberId(string $value): bool
+    {
+        $value = trim($value);
+
+        return $value !== '' && preg_match('/^(ACo|ADo|ACw|AE)/i', $value);
+    }
+
+    private function linkedinMemberIdFromUrn(string $urn): string
+    {
+        $urn = trim($urn);
+        if ($urn === '') {
+            return '';
+        }
+
+        if (preg_match('/:(ACo[^:\s]+|ADo[^:\s]+|ACw[^:\s]+|AE[^:\s]+)$/i', $urn, $matches)) {
+            return $matches[1];
+        }
+
+        if (preg_match('/\b(ACo[a-zA-Z0-9_-]+|ADo[a-zA-Z0-9_-]+|ACw[a-zA-Z0-9_-]+|AE[a-zA-Z0-9_-]+)\b/', $urn, $matches)) {
+            return $matches[1];
+        }
+
+        return '';
+    }
+
+    private function isLinkedInVanitySlug(string $identifier): bool
+    {
+        $identifier = trim($identifier);
+        if ($identifier === '') {
+            return false;
+        }
+
+        if (preg_match('/^(ACo|ADo|ACw|AE)/i', $identifier)) {
+            return false;
+        }
+
+        if (preg_match('~linkedin\.com~i', $identifier)) {
+            return true;
+        }
+
+        if (str_starts_with($identifier, '+') || str_contains($identifier, '@')) {
+            return false;
+        }
+
+        if (preg_match('/^\d+$/', $identifier)) {
+            return false;
+        }
+
+        return (bool) preg_match('/^[a-z0-9_-]{3,}$/i', $identifier);
     }
 
     /**
@@ -1346,7 +1477,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             }
         }
 
-        throw new UnipileException('No connected Unipile account_id available for this request.');
+        throw new UnipileException('No connected messaging account available for this request.');
     }
 
     /**

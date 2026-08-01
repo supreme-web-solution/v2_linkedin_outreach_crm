@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, CheckCircle2, Clock, Loader2, Mail, Phone, RefreshCw, MessageCircle, AtSign } from '@lucide/vue';
+import { AlertTriangle, CheckCircle2, Clock, Loader2, RefreshCw, Sparkles } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import EmailEnrichmentInfoTooltip from '@/components/crm/EmailEnrichmentInfoTooltip.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
@@ -56,6 +56,12 @@ export interface ReadinessPreview {
         can_resolve: boolean;
         channels: string[];
     };
+    contact_prep: {
+        batch_size: number;
+        remaining_total: number;
+        can_prepare: boolean;
+        pending_async: number;
+    };
     warnings: string[];
     can_launch: boolean;
     should_confirm_launch: boolean;
@@ -82,13 +88,12 @@ const props = defineProps<{
     nodeModel: OutreachStep[];
     compact?: boolean;
     sidebar?: boolean;
+    /** Shown beside the sequence canvas — shorter copy, no “go back” hints */
+    embeddedInBuild?: boolean;
 }>();
 
 const loading = ref(false);
-const fetchingEmails = ref(false);
-const fetchingPhones = ref(false);
-const verifyingWhatsApp = ref(false);
-const resolvingHandles = ref(false);
+const preparingContacts = ref(false);
 const error = ref<string | null>(null);
 const readiness = ref<ReadinessPreview | null>(null);
 const enrichmentLimits = ref<EnrichmentLimits | null>(null);
@@ -102,6 +107,9 @@ const hasLinkedinLists = computed(() => linkedinLists.value.length > 0);
 const hasImportedLists = computed(() => importedLists.value.length > 0);
 
 const subtitleText = computed(() => {
+    if (props.embeddedInBuild) {
+        return 'Updates live as you add send steps on the canvas.';
+    }
     if (props.sidebar) {
         return 'Prepare contacts, then check readiness for your sequence.';
     }
@@ -116,47 +124,83 @@ const subtitleText = computed(() => {
 
 const contactPrepSteps = computed(() => {
     const steps: string[] = [];
+    const required = readiness.value?.required_channels ?? [];
+
+    if (!required.length) {
+        steps.push('Build your sequence — add send steps (Instagram, WhatsApp, email, etc.) to see what each contact needs.');
+        return steps;
+    }
 
     if (hasImportedLists.value) {
         steps.push('Imported spreadsheet — your contacts (phone, email, social handles).');
     }
-    if (hasLinkedinLists.value) {
-        steps.push(
-            hasImportedLists.value
-                ? 'LinkedIn lists — optionally fetch email/phone from profiles.'
-                : 'LinkedIn lists — fetch email/phone from profiles.',
-        );
+    if (hasLinkedinLists.value && (required.includes('email') || required.includes('linkedin'))) {
+        steps.push('LinkedIn lists — optionally pull email/phone/socials from profiles.');
     }
-    steps.push('Verify WhatsApp — confirm phone numbers (required before WhatsApp steps).');
-    steps.push('Resolve handles — IG / Telegram / X from spreadsheet columns.');
+    if (required.includes('whatsapp')) {
+        steps.push('WhatsApp — verify phone numbers before sending.');
+    }
+    if (required.some((ch) => ['instagram', 'telegram', 'twitter'].includes(ch))) {
+        steps.push('Social DMs — resolve @handles before Instagram/Telegram/X sends.');
+    }
+    steps.push('Prepare contacts — one batched click (up to 25 leads) for whatever your sequence needs.');
+    steps.push('Repeat until Fully ready matches your lead count, then launch.');
 
     return steps;
 });
 const channelRows = computed(() => {
     if (!readiness.value) return [];
-    return props.nodeModel.length
-        ? readiness.value.required_channels.map((ch) => readiness.value!.channels[ch]).filter(Boolean)
-        : [];
+    if (!readiness.value.required_channels.length) return [];
+    return readiness.value.required_channels.map((ch) => readiness.value!.channels[ch]).filter(Boolean);
 });
+
+const hasSequenceChannels = computed(() => (readiness.value?.required_channels?.length ?? 0) > 0);
 
 const needsContactPrep = computed(() => {
     if (!readiness.value) return false;
-    const r = readiness.value;
-    return (
-        r.email_fetch.can_batch_fetch ||
-        r.phone_fetch.can_batch_fetch ||
-        r.whatsapp_verify.can_verify ||
-        r.handle_resolve.can_resolve
-    );
+    if (readiness.value.contact_prep?.can_prepare) return true;
+    if ((readiness.value.contact_prep?.pending_async ?? 0) > 0) return true;
+    if ((readiness.value.handle_resolve?.needs_resolve ?? 0) > 0) return true;
+    return false;
 });
 
-const emailQueueToday = computed(() => {
-    if (!readiness.value || !enrichmentLimits.value) return 0;
-    const fetchable = readiness.value.email_fetch.fetchable;
-    const remaining = enrichmentLimits.value.email.effective_remaining
-        ?? enrichmentLimits.value.email.remaining;
-    if (enrichmentLimits.value.email.unlimited) return fetchable;
-    return Math.max(0, Math.min(fetchable, remaining));
+const prepBatchSize = computed(() => readiness.value?.contact_prep?.batch_size ?? 25);
+
+const prepRemainingTotal = computed(() => readiness.value?.contact_prep?.remaining_total ?? 0);
+
+const prepPendingAsync = computed(() => readiness.value?.contact_prep?.pending_async ?? 0);
+
+const canRunPrepareBatch = computed(() => prepRemainingTotal.value > 0 && !preparingContacts.value);
+
+const prepSummaryLines = computed(() => {
+    if (!readiness.value) return [];
+    const r = readiness.value;
+    const required = r.required_channels;
+    const lines: string[] = [];
+    if (required.includes('email') && r.email_fetch.fetchable > 0) {
+        lines.push(`${Math.min(r.email_fetch.fetchable, prepBatchSize.value)} email lookup(s) from LinkedIn (queued)`);
+    }
+    if ((required.includes('email') || required.includes('whatsapp')) && r.phone_fetch.fetchable > 0) {
+        lines.push(`${Math.min(r.phone_fetch.fetchable, prepBatchSize.value)} phone lookup(s) from LinkedIn (queued)`);
+    }
+    if (required.includes('whatsapp') && r.whatsapp_verify.needs_verify > 0) {
+        lines.push(`${Math.min(r.whatsapp_verify.needs_verify, prepBatchSize.value)} WhatsApp verify`);
+    }
+    if (r.handle_resolve.needs_resolve > 0) {
+        const socialLabels = (r.handle_resolve.channels ?? []).map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join('/');
+        lines.push(`${Math.min(r.handle_resolve.needs_resolve, prepBatchSize.value)} ${socialLabels || 'social'} handle resolve`);
+    }
+    return lines;
+});
+
+const prepareButtonLabel = computed(() => {
+    if (preparingContacts.value) return 'Preparing batch…';
+    if (prepPendingAsync.value > 0 && prepRemainingTotal.value <= 0) {
+        return 'Waiting for queued lookups…';
+    }
+    const remaining = prepRemainingTotal.value;
+    if (remaining <= 0) return 'Contacts prepared';
+    return `Prepare next batch (up to ${prepBatchSize.value})`;
 });
 
 const emailUsageLabel = computed(() => {
@@ -172,26 +216,6 @@ function applyEnrichmentLimits(payload: EnrichmentLimits | null | undefined) {
     }
 }
 
-const emailAtDailyLimit = computed(() => enrichmentLimits.value?.email.at_limit ?? false);
-
-const emailFetchButtonLabel = computed(() => {
-    if (fetchingEmails.value) return 'Queueing lookups…';
-    if (emailAtDailyLimit.value) return 'Daily email limit reached';
-    const n = emailQueueToday.value;
-    if (n <= 0) return 'Fetch emails';
-    if (n < (readiness.value?.email_fetch.fetchable ?? 0)) {
-        return `Queue ${n} emails today`;
-    }
-    return `Queue ${n} email lookup${n === 1 ? '' : 's'}`;
-});
-
-const phoneFetchButtonLabel = computed(() => {
-    if (fetchingPhones.value) return 'Queueing lookups…';
-    const n = readiness.value?.phone_fetch.fetchable ?? 0;
-    if (n <= 0) return 'Fetch phone numbers';
-    return `Queue ${n} phone lookup${n === 1 ? '' : 's'}`;
-});
-
 function xsrf(): string {
     if (typeof document === 'undefined') {
         return '';
@@ -203,10 +227,6 @@ function xsrf(): string {
 
 function leadListsPayload() {
     return props.leadLists.map((l) => ({ list_hash: l.list_hash, list_src: l.list_src }));
-}
-
-function linkedinListsPayload() {
-    return linkedinLists.value.map((l) => ({ list_hash: l.list_hash, list_src: l.list_src }));
 }
 
 async function loadReadiness() {
@@ -247,17 +267,15 @@ async function loadReadiness() {
     }
 }
 
-async function fetchEmails() {
-    if (!readiness.value?.email_fetch.can_batch_fetch || emailAtDailyLimit.value || emailQueueToday.value <= 0) {
-        return;
-    }
+async function prepareContacts() {
+    if (!canRunPrepareBatch.value) return;
 
-    fetchingEmails.value = true;
+    preparingContacts.value = true;
     fetchMessage.value = null;
     error.value = null;
 
     try {
-        const res = await fetch('/outreach/enrich/fetch-emails', {
+        const res = await fetch('/outreach/enrich/prepare-contacts', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -272,108 +290,18 @@ async function fetchEmails() {
         const data = await res.json();
         applyEnrichmentLimits(data.enrichment_limits as EnrichmentLimits | undefined);
         if (!res.ok) {
-            throw new Error(data.message || 'Email fetch failed.');
+            throw new Error(data.message || 'Contact preparation failed.');
         }
-        fetchMessage.value = data.message || 'Email lookups queued.';
-        startPolling();
+        fetchMessage.value = data.message as string;
+        if ((data.emails_queued ?? 0) > 0 || (data.phones_queued ?? 0) > 0) {
+            startPolling();
+        }
         await loadReadiness();
     } catch (e) {
-        error.value = e instanceof Error ? e.message : 'Email fetch failed.';
+        error.value = e instanceof Error ? e.message : 'Contact preparation failed.';
         await loadReadiness();
     } finally {
-        fetchingEmails.value = false;
-    }
-}
-
-async function fetchPhones() {
-    if (!readiness.value?.phone_fetch.can_batch_fetch) return;
-
-    fetchingPhones.value = true;
-    fetchMessage.value = null;
-    error.value = null;
-
-    try {
-        const res = await fetch('/outreach/enrich/fetch-phones', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-                'X-XSRF-TOKEN': xsrf(),
-            },
-            body: JSON.stringify({ lead_lists: linkedinListsPayload() }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            throw new Error(data.message || 'Phone fetch failed.');
-        }
-        fetchMessage.value = data.message || 'Phone fetch queued.';
-        startPolling();
-        await loadReadiness();
-    } catch (e) {
-        error.value = e instanceof Error ? e.message : 'Phone fetch failed.';
-        await loadReadiness();
-    } finally {
-        fetchingPhones.value = false;
-    }
-}
-
-async function verifyWhatsApp() {
-    if (!readiness.value?.whatsapp_verify.can_verify) return;
-
-    verifyingWhatsApp.value = true;
-    fetchMessage.value = null;
-    error.value = null;
-
-    try {
-        const res = await fetch('/outreach/enrich/verify-whatsapp', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-                'X-XSRF-TOKEN': xsrf(),
-            },
-            body: JSON.stringify({ lead_lists: leadListsPayload() }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            throw new Error(data.message || 'WhatsApp verification failed.');
-        }
-        fetchMessage.value = data.message;
-        await loadReadiness();
-    } catch (e) {
-        error.value = e instanceof Error ? e.message : 'WhatsApp verification failed.';
-    } finally {
-        verifyingWhatsApp.value = false;
-    }
-}
-
-async function resolveHandles() {
-    if (!readiness.value?.handle_resolve.can_resolve) return;
-
-    resolvingHandles.value = true;
-    fetchMessage.value = null;
-    error.value = null;
-
-    try {
-        const res = await fetch('/outreach/enrich/resolve-handles', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-                'X-XSRF-TOKEN': xsrf(),
-            },
-            body: JSON.stringify({ lead_lists: leadListsPayload() }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            throw new Error(data.message || 'Handle resolve failed.');
-        }
-        fetchMessage.value = data.message;
-        await loadReadiness();
-    } catch (e) {
-        error.value = e instanceof Error ? e.message : 'Handle resolve failed.';
-    } finally {
-        resolvingHandles.value = false;
+        preparingContacts.value = false;
     }
 }
 
@@ -381,7 +309,9 @@ function startPolling() {
     stopPolling();
     pollTimer = setInterval(async () => {
         const pendingReadiness =
-            (readiness.value?.email_fetch.pending ?? 0) + (readiness.value?.phone_fetch.pending ?? 0);
+            (readiness.value?.email_fetch.pending ?? 0)
+            + (readiness.value?.phone_fetch.pending ?? 0)
+            + (readiness.value?.contact_prep?.pending_async ?? 0);
         const pendingJobs = enrichmentLimits.value?.pending_email_jobs ?? 0;
 
         if (pendingReadiness > 0 || pendingJobs > 0) {
@@ -450,11 +380,24 @@ defineExpose({
         <p v-if="error" class="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{{ error }}</p>
         <p v-if="fetchMessage" class="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">{{ fetchMessage }}</p>
 
-        <div class="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-[11px] leading-relaxed text-slate-700">
+        <div
+            v-if="!embeddedInBuild"
+            class="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-[11px] leading-relaxed text-slate-700"
+        >
             <p class="mb-1.5 font-semibold text-slate-900">Contact prep flow</p>
             <ol class="list-decimal space-y-0.5 pl-4">
                 <li v-for="(step, idx) in contactPrepSteps" :key="idx">{{ step }}</li>
             </ol>
+        </div>
+
+        <div
+            v-else-if="!hasSequenceChannels"
+            class="mb-4 rounded-lg border border-dashed border-primary/30 bg-primary/5 px-3 py-3 text-center"
+        >
+            <p class="text-xs font-semibold text-primary">Add a send step on the canvas</p>
+            <p class="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                Use <strong>+ Add step</strong> to add Instagram, WhatsApp, email, or LinkedIn. Contact prep for your leads shows up here immediately — no need to switch screens.
+            </p>
         </div>
 
         <template v-if="readiness">
@@ -474,11 +417,29 @@ defineExpose({
                 </div>
             </div>
 
-            <div v-if="needsContactPrep" class="mb-4 space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
-                <p class="text-xs font-semibold text-primary">Prepare contacts</p>
+            <div v-if="!hasSequenceChannels" class="mb-4 rounded-lg border border-dashed border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900">
+                Add send steps to your sequence (e.g. Instagram DM) — readiness only checks channels you actually use. LinkedIn is not required for imported CSV lists.
+            </div>
+
+            <div v-if="(needsContactPrep || prepPendingAsync > 0) && hasSequenceChannels" class="mb-4 space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                <div class="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                        <p class="text-xs font-semibold text-primary">Prepare contacts</p>
+                        <p class="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                            One batched click (up to {{ prepBatchSize }} leads) for your sequence:
+                            <span v-if="readiness.required_channels.length">{{ readiness.required_channels.join(', ') }}</span>
+                        </p>
+                    </div>
+                    <span
+                        v-if="prepRemainingTotal > 0"
+                        class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium tabular-nums text-primary"
+                    >
+                        {{ prepRemainingTotal }} remaining
+                    </span>
+                </div>
 
                 <div
-                    v-if="enrichmentLimits && (readiness.email_fetch.can_batch_fetch || readiness.email_fetch.pending > 0)"
+                    v-if="enrichmentLimits && hasLinkedinLists && readiness.required_channels.includes('email') && (readiness.email_fetch.can_batch_fetch || readiness.email_fetch.pending > 0)"
                     class="rounded-lg border border-blue-200/60 bg-blue-50/50 p-3 dark:border-blue-900/40 dark:bg-blue-950/20"
                 >
                     <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -498,82 +459,44 @@ defineExpose({
                     </div>
                     <p v-if="enrichmentLimits.pending_email_jobs > 0" class="mt-2 flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
                         <Clock class="h-3 w-3" />
-                        {{ enrichmentLimits.pending_email_jobs }} email lookup(s) in progress…
+                        {{ enrichmentLimits.pending_email_jobs }} enrichment job(s) in progress…
                     </p>
                 </div>
 
-                <div v-if="readiness.email_fetch.can_batch_fetch && linkedinLists.length" class="rounded-lg border border-border bg-white p-3 shadow-sm dark:bg-card">
-                    <p class="text-[11px] leading-relaxed text-muted-foreground">
-                        <Mail class="mr-1 inline h-3.5 w-3.5 align-text-bottom" />
-                        {{ readiness.email_fetch.fetchable }} emails missing from LinkedIn profiles
-                    </p>
-                    <Button
-                        type="button"
-                        class="mt-2.5 w-full"
-                        :disabled="fetchingEmails || emailAtDailyLimit || emailQueueToday <= 0 || (enrichmentLimits?.pending_email_jobs ?? 0) >= 5"
-                        @click="fetchEmails"
-                    >
-                        <Loader2 v-if="fetchingEmails" class="h-4 w-4 animate-spin" />
-                        <Mail v-else class="h-4 w-4" />
-                        {{ emailFetchButtonLabel }}
-                    </Button>
-                </div>
+                <ul v-if="prepSummaryLines.length" class="space-y-1 rounded-lg border border-border bg-white px-3 py-2 text-[11px] text-muted-foreground dark:bg-card">
+                    <li v-for="(line, idx) in prepSummaryLines" :key="idx" class="flex items-start gap-1.5">
+                        <span class="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-primary/60" />
+                        <span>Next batch: {{ line }}</span>
+                    </li>
+                </ul>
 
-                <div v-if="readiness.phone_fetch.can_batch_fetch && linkedinLists.length" class="rounded-lg border border-border bg-white p-3 shadow-sm dark:bg-card">
-                    <p class="text-[11px] leading-relaxed text-muted-foreground">
-                        <Phone class="mr-1 inline h-3.5 w-3.5 align-text-bottom" />
-                        {{ readiness.phone_fetch.fetchable }} phone numbers to fetch from LinkedIn profiles
-                    </p>
-                    <Button
-                        type="button"
-                        variant="violet"
-                        class="mt-2.5 w-full"
-                        :disabled="fetchingPhones"
-                        @click="fetchPhones"
-                    >
-                        <Loader2 v-if="fetchingPhones" class="h-4 w-4 animate-spin" />
-                        <Phone v-else class="h-4 w-4" />
-                        {{ phoneFetchButtonLabel }}
-                    </Button>
-                </div>
+                <p v-if="prepPendingAsync > 0" class="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                    <Clock class="h-3 w-3" />
+                    {{ prepPendingAsync }} LinkedIn lookup(s) still running in the background…
+                </p>
 
-                <div v-if="readiness.whatsapp_verify.can_verify" class="rounded-lg border border-border bg-white p-3 shadow-sm">
-                    <p class="text-[11px] leading-relaxed text-muted-foreground">
-                        <MessageCircle class="mr-1 inline h-3.5 w-3.5 align-text-bottom" />
-                        {{ readiness.whatsapp_verify.needs_verify }} contacts to verify on WhatsApp
-                    </p>
-                    <button
-                        type="button"
-                        class="mt-2.5 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-green-700 bg-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700 active:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
-                        :disabled="verifyingWhatsApp"
-                        @click="verifyWhatsApp"
-                    >
-                        <Loader2 v-if="verifyingWhatsApp" class="h-4 w-4 animate-spin" />
-                        <MessageCircle v-else class="h-4 w-4" />
-                        {{ verifyingWhatsApp ? 'Verifying WhatsApp…' : 'Verify WhatsApp' }}
-                    </button>
-                </div>
+                <Button
+                    type="button"
+                    class="w-full"
+                    :disabled="!canRunPrepareBatch"
+                    @click="prepareContacts"
+                >
+                    <Loader2 v-if="preparingContacts" class="h-4 w-4 animate-spin" />
+                    <Sparkles v-else class="h-4 w-4" />
+                    {{ prepareButtonLabel }}
+                </Button>
 
-                <div v-if="readiness.handle_resolve.can_resolve" class="rounded-lg border border-border bg-white p-3 shadow-sm">
-                    <p class="text-[11px] leading-relaxed text-muted-foreground">
-                        <AtSign class="mr-1 inline h-3.5 w-3.5 align-text-bottom" />
-                        {{ readiness.handle_resolve.needs_resolve }} social handles to resolve
-                    </p>
-                    <button
-                        type="button"
-                        class="mt-2.5 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-pink-700 bg-pink-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-pink-700 active:bg-pink-800 disabled:cursor-not-allowed disabled:opacity-60"
-                        :disabled="resolvingHandles"
-                        @click="resolveHandles"
-                    >
-                        <Loader2 v-if="resolvingHandles" class="h-4 w-4 animate-spin" />
-                        <AtSign v-else class="h-4 w-4" />
-                        {{ resolvingHandles ? 'Resolving handles…' : 'Resolve handles' }}
-                    </button>
-                </div>
+                <p v-if="prepRemainingTotal > prepBatchSize" class="text-center text-[10px] text-muted-foreground">
+                    {{ readiness.total_leads }} leads total — click again after each batch to avoid API overload.
+                </p>
             </div>
 
-            <div v-if="channelRows.length === 0" class="mb-3 rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                Pick a template or build your sequence to see which channels need contact info.
+            <div v-if="channelRows.length === 0 && hasSequenceChannels" class="mb-3 rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                Channel readiness will appear here once your sequence includes send steps.
+            </div>
+
+            <div v-else-if="channelRows.length === 0 && !embeddedInBuild" class="mb-3 rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                Add send steps to your sequence to see which contacts need email, phone, or social handle prep.
             </div>
 
             <div v-else class="mb-4 space-y-3">

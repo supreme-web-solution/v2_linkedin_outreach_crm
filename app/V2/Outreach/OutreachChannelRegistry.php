@@ -7,7 +7,7 @@ class OutreachChannelRegistry
     /**
      * @return array<string, array<string, mixed>>
      */
-    public static function channels(): array
+    public static function allChannels(): array
     {
         return [
             'linkedin' => [
@@ -69,10 +69,141 @@ class OutreachChannelRegistry
         ];
     }
 
+    public static function isEnabled(string $channel): bool
+    {
+        if (! array_key_exists($channel, self::allChannels())) {
+            return false;
+        }
+
+        return (bool) (config('outreach_channels.enabled.'.$channel) ?? false);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function enabledChannelKeys(): array
+    {
+        return array_values(array_filter(
+            array_keys(self::allChannels()),
+            fn (string $key) => self::isEnabled($key),
+        ));
+    }
+
+    /**
+     * Enabled channels only — use for UI, connect flows, and outreach builder.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public static function channels(): array
+    {
+        return array_intersect_key(
+            self::allChannels(),
+            array_flip(self::enabledChannelKeys()),
+        );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function inboxPlatforms(): array
+    {
+        $inbox = config('outreach_channels.inbox', []);
+
+        if (! is_array($inbox)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $inbox,
+            fn (string $key) => self::isEnabled($key),
+        ));
+    }
+
+    /**
+     * Channels that can appear in the outreach sequence builder (excludes calendars — those are Call Manager only).
+     *
+     * @return array<int, string>
+     */
+    public static function sequenceChannelKeys(): array
+    {
+        return array_values(array_filter(
+            self::enabledChannelKeys(),
+            fn (string $key) => ! in_array($key, self::calendarProviders(), true),
+        ));
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    public static function sequenceChannels(): array
+    {
+        return array_intersect_key(
+            self::allChannels(),
+            array_flip(self::sequenceChannelKeys()),
+        );
+    }
+
+    /**
+     * @return array<string, array<int, array<string, string>>>
+     */
+    public static function sequenceActionsByChannel(): array
+    {
+        return array_intersect_key(self::allActionsByChannel(), self::sequenceChannels());
+    }
+
+    /**
+     * @return array<string, array<int, array<string, string>>>
+     */
+    public static function sequenceConditionsByChannel(): array
+    {
+        return array_intersect_key(self::allConditionsByChannel(), self::sequenceChannels());
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function calendarProviders(): array
+    {
+        return array_values(array_filter(
+            ['google_calendar', 'outlook_calendar'],
+            fn (string $key) => self::isEnabled($key),
+        ));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function enabledMessagingChannels(): array
+    {
+        return array_values(array_filter(
+            ['whatsapp', 'instagram', 'telegram', 'twitter'],
+            fn (string $key) => self::isEnabled($key),
+        ));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function enabledSocialHandleChannels(): array
+    {
+        return array_values(array_intersect(
+            self::enabledMessagingChannels(),
+            ['instagram', 'telegram', 'twitter'],
+        ));
+    }
+
     /**
      * @return array<string, array<int, array<string, string>>>
      */
     public static function actionsByChannel(): array
+    {
+        return array_intersect_key(self::allActionsByChannel(), self::channels());
+    }
+
+    /**
+     * @return array<string, array<int, array<string, string>>>
+     */
+    private static function allActionsByChannel(): array
     {
         return [
             'linkedin' => [
@@ -106,6 +237,14 @@ class OutreachChannelRegistry
      */
     public static function conditionsByChannel(): array
     {
+        return array_intersect_key(self::allConditionsByChannel(), self::channels());
+    }
+
+    /**
+     * @return array<string, array<int, array<string, string>>>
+     */
+    private static function allConditionsByChannel(): array
+    {
         $messageReplied = [
             ['key' => 'message_replied', 'label' => 'Message replied'],
             ['key' => 'no_reply', 'label' => 'No reply'],
@@ -138,14 +277,14 @@ class OutreachChannelRegistry
 
     public static function channelLabel(string $channel): string
     {
-        return (string) (self::channels()[$channel]['label'] ?? ucfirst($channel));
+        return (string) (self::allChannels()[$channel]['label'] ?? ucfirst($channel));
     }
 
     public static function channelKeyForUnipileType(string $type): ?string
     {
         $type = strtoupper($type);
 
-        foreach (self::channels() as $key => $meta) {
+        foreach (self::allChannels() as $key => $meta) {
             $providers = $meta['unipile_providers'] ?? [];
             if (in_array($type, $providers, true)) {
                 return $key;
@@ -160,8 +299,41 @@ class OutreachChannelRegistry
         $key = self::channelKeyForUnipileType($type);
 
         return $key !== null
-            ? (string) (self::channels()[$key]['integration_provider'] ?? '')
+            ? (string) (self::allChannels()[$key]['integration_provider'] ?? '')
             : null;
+    }
+
+    /**
+     * Channels that need contact prep (email, phone verify, handle resolve) for send steps in the sequence.
+     *
+     * @return array<int, string>
+     */
+    public static function contactRequiredChannelsForNodes(array $nodes): array
+    {
+        $required = [];
+        $resolver = new OutreachSequenceResolver();
+
+        foreach ($resolver->flattenNodes($nodes) as $node) {
+            if (($node['type'] ?? '') !== 'action') {
+                continue;
+            }
+
+            $action = (string) ($node['action'] ?? '');
+            if ($action === '' || $action === 'start') {
+                continue;
+            }
+
+            if (! in_array($action, ['send_message', 'send_email', 'send_invite'], true)) {
+                continue;
+            }
+
+            $ch = (string) ($node['channel'] ?? '');
+            if ($ch !== '' && self::isEnabled($ch)) {
+                $required[] = $ch;
+            }
+        }
+
+        return array_values(array_unique($required));
     }
 
     /**
@@ -175,7 +347,7 @@ class OutreachChannelRegistry
         foreach ($resolver->flattenNodes($nodes) as $node) {
             if (($node['type'] ?? '') === 'action') {
                 $ch = (string) ($node['channel'] ?? '');
-                if ($ch !== '') {
+                if ($ch !== '' && self::isEnabled($ch)) {
                     $required[] = $ch;
                 }
             }

@@ -46,12 +46,16 @@ class AutoResponsesWebController extends Controller
                 ['value' => 'regex', 'label' => 'Regex pattern'],
                 ['value' => 'any', 'label' => 'Any message'],
             ],
-            'platformOptions' => collect(OutreachChannelRegistry::channels())
-                ->map(fn (array $meta, string $key) => [
-                    'key' => $key,
-                    'label' => (string) ($meta['label'] ?? $key),
-                    'color' => (string) ($meta['color'] ?? '#64748b'),
-                ])
+            'platformOptions' => collect(OutreachChannelRegistry::inboxPlatforms())
+                ->map(function (string $key) {
+                    $meta = OutreachChannelRegistry::channels()[$key] ?? OutreachChannelRegistry::allChannels()[$key] ?? [];
+
+                    return [
+                        'key' => $key,
+                        'label' => (string) ($meta['label'] ?? $key),
+                        'color' => (string) ($meta['color'] ?? '#64748b'),
+                    ];
+                })
                 ->values()
                 ->all(),
         ]);

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Outlook Calendar">
+  <rect width="24" height="24" rx="4" fill="#0078D4"/>
+  <path fill="#fff" d="M6 6h8a2 2 0 0 1 2 2v10H8a2 2 0 0 1-2-2V6Zm2 2v8h6V8H8Z"/>
+  <path fill="#50D9FF" d="M16 8h4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-4V8Z"/>
+  <circle cx="10" cy="12" r="2" fill="#0078D4"/>
+</svg>

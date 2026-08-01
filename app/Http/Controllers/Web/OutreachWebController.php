@@ -70,7 +70,7 @@ class OutreachWebController extends Controller
         return Inertia::render('crm/outreach/OutreachCampaigns', [
             'campaigns' => $campaigns,
             'hasOrg' => (bool) $orgId,
-            'connectedChannels' => app(ChannelConnectionService::class)->summarizeForUser($user),
+            'connectedChannels' => app(ChannelConnectionService::class)->summarizeSequenceForUser($user),
             'filters' => ['search' => $search !== '' ? $search : null],
         ]);
     }
@@ -83,19 +83,20 @@ class OutreachWebController extends Controller
         return Inertia::render('crm/outreach/OutreachBuilder', [
             'templates' => $this->mergeTemplatesWithSaved(),
             'channelRegistry' => [
-                'channels' => OutreachChannelRegistry::channels(),
-                'actions' => OutreachChannelRegistry::actionsByChannel(),
-                'conditions' => OutreachChannelRegistry::conditionsByChannel(),
+                'channels' => OutreachChannelRegistry::sequenceChannels(),
+                'actions' => OutreachChannelRegistry::sequenceActionsByChannel(),
+                'conditions' => OutreachChannelRegistry::sequenceConditionsByChannel(),
             ],
-            'connectedChannels' => $channels->summarizeForUser($user),
+            'connectedChannels' => $channels->summarizeSequenceForUser($user),
             'campaign' => null,
             'availableLeadLists' => $this->availableLeadLists(),
             'attachedLists' => [],
             'initialStep' => 'template',
+            'aiConfigured' => app(\App\V2\Services\OpenAIContentService::class)->isConfigured(),
         ]);
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(Request $request, OutreachChannelInboxSettingsService $inboxSettings): RedirectResponse
     {
         /** @var \App\Models\User $user */
         $user = auth()->user();
@@ -113,6 +114,13 @@ class OutreachWebController extends Controller
             'lead_lists.*.list_name' => ['nullable', 'string'],
             'activate' => ['nullable', 'boolean'],
         ]);
+
+        if (! empty($data['meta']['channel_inbox']) && is_array($data['meta']['channel_inbox'])) {
+            $data['meta'] = $inboxSettings->mergeMetaChannelInbox(
+                is_array($data['meta'] ?? null) ? $data['meta'] : [],
+                $data['meta']['channel_inbox'],
+            );
+        }
 
         $campaign = V2OutreachCampaign::create([
             'user_id' => $user->id,
@@ -246,7 +254,7 @@ class OutreachWebController extends Controller
             ],
             'leads' => $leads,
             'attachedLists' => $attachedLists,
-            'connectedChannels' => app(ChannelConnectionService::class)->summarizeForUser($user),
+            'connectedChannels' => app(ChannelConnectionService::class)->summarizeSequenceForUser($user),
             'inboxSummary' => [
                 'replied_leads_count' => $repliedCount,
                 'platforms' => $inboxByPlatform,
@@ -273,15 +281,23 @@ class OutreachWebController extends Controller
         return Inertia::render('crm/outreach/OutreachBuilder', [
             'templates' => $this->mergeTemplatesWithSaved(),
             'channelRegistry' => [
-                'channels' => OutreachChannelRegistry::channels(),
-                'actions' => OutreachChannelRegistry::actionsByChannel(),
-                'conditions' => OutreachChannelRegistry::conditionsByChannel(),
+                'channels' => OutreachChannelRegistry::sequenceChannels(),
+                'actions' => OutreachChannelRegistry::sequenceActionsByChannel(),
+                'conditions' => OutreachChannelRegistry::sequenceConditionsByChannel(),
             ],
-            'connectedChannels' => $channels->summarizeForUser($user),
-            'campaign' => $campaign,
+            'connectedChannels' => $channels->summarizeSequenceForUser($user),
+            'campaign' => [
+                'id' => $campaign->id,
+                'name' => $campaign->name,
+                'template_type' => $campaign->template_type,
+                'status' => $campaign->status,
+                'node_model' => $campaign->node_model ?? [],
+                'meta' => $campaign->meta,
+            ],
             'availableLeadLists' => $this->availableLeadLists(),
             'attachedLists' => $attachedLists,
             'initialStep' => request()->query('step', 'build'),
+            'aiConfigured' => app(\App\V2\Services\OpenAIContentService::class)->isConfigured(),
         ]);
     }
 
@@ -377,7 +393,7 @@ class OutreachWebController extends Controller
         return redirect('/outreach/create')->with('success', 'Template deleted.');
     }
 
-    public function update(Request $request, int $id, OutreachRunDispatcher $dispatcher, OutreachChannelGuard $guard, OutreachProgressReconciler $reconciler): RedirectResponse|JsonResponse
+    public function update(Request $request, int $id, OutreachRunDispatcher $dispatcher, OutreachChannelGuard $guard, OutreachProgressReconciler $reconciler, OutreachChannelInboxSettingsService $inboxSettings): RedirectResponse|JsonResponse
     {
         $campaign = $this->findOwned($id);
 
@@ -399,6 +415,14 @@ class OutreachWebController extends Controller
         $previousStatus = $campaign->status;
         $sequenceChanged = array_key_exists('node_model', $data)
             && json_encode($data['node_model']) !== json_encode($campaign->node_model);
+
+        if (isset($data['meta']) && is_array($data['meta'])) {
+            $mergedMeta = array_merge(is_array($campaign->meta) ? $campaign->meta : [], $data['meta']);
+            if (! empty($data['meta']['channel_inbox']) && is_array($data['meta']['channel_inbox'])) {
+                $mergedMeta = $inboxSettings->mergeMetaChannelInbox($mergedMeta, $data['meta']['channel_inbox']);
+            }
+            $data['meta'] = $mergedMeta;
+        }
 
         if (isset($data['lead_lists'])) {
             $campaign->outreachLists()->delete();

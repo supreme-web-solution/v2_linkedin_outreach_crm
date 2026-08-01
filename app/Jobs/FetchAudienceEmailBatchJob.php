@@ -4,7 +4,9 @@ namespace App\Jobs;
 
 use App\Models\AudienceList;
 use App\Models\User;
-use App\V2\Services\UnipileProfileEmailService;
+use App\V2\Services\LeadEnrichmentPersister;
+use App\V2\Services\LeadEnrichmentService;
+use App\V2\Services\FullEnrichClient;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -32,12 +34,16 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
         $this->onQueue('default');
     }
 
-    public function handle(UnipileProfileEmailService $emailService): void
-    {
+    public function handle(
+        LeadEnrichmentService $enrichmentService,
+        LeadEnrichmentPersister $persister,
+    ): void {
         $user = User::find($this->userId);
         if (! $user) {
             return;
         }
+
+        FullEnrichClient::resetCreditsExhausted();
 
         $this->checkAndResetDailyLimit($user);
         $user->refresh();
@@ -47,7 +53,7 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
         $lookupsDone = 0;
 
         foreach ($items as $item) {
-            if (! empty($item->con_email) || ! empty($item->email_fetch_attempted_at)) {
+            if (! empty($item->email_fetch_attempted_at) && $item->email_fetch_status === 'completed') {
                 continue;
             }
 
@@ -73,22 +79,22 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
 
             $item->update(['email_fetch_status' => 'processing']);
 
-            // Unipile recommends random delays between chained profile
-            // lookups so LinkedIn doesn't throttle the account.
             if ($lookupsDone > 0) {
                 $this->humanPause();
             }
             $lookupsDone++;
 
             try {
-                $email = $emailService->fetchEmailForUser($user, $publicIdentifier);
+                $input = $enrichmentService->inputFromAudienceList($item);
+                $result = $enrichmentService->enrich($user, $input);
+                $persister->persistAudienceLead($item, $result, $user->id);
             } catch (\Throwable $e) {
                 $item->update([
                     'email_fetch_status' => null,
                     'email_fetch_attempted_at' => null,
                 ]);
 
-                Log::error('FetchAudienceEmailBatchJob: profile lookup failed', [
+                Log::error('FetchAudienceEmailBatchJob: enrichment failed', [
                     'audience_list_id' => $item->id,
                     'error' => $e->getMessage(),
                 ]);
@@ -97,19 +103,6 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
 
             $user->increment('daily_profile_email_scraping_count');
             $user->refresh();
-
-            if ($email) {
-                $item->update([
-                    'con_email' => $email,
-                    'email_fetch_status' => 'completed',
-                    'email_fetch_attempted_at' => now(),
-                ]);
-            } else {
-                $item->update([
-                    'email_fetch_attempted_at' => now(),
-                    'email_fetch_status' => 'completed',
-                ]);
-            }
         }
     }
 

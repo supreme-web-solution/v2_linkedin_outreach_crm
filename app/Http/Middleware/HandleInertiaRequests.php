@@ -6,7 +6,10 @@ use App\Models\User;
 use App\Models\V2UserActivity;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Services\ChannelConnectionService;
+use App\V2\Services\DailyEnrichmentQuotaService;
 use App\V2\Services\EntitlementService;
+use App\V2\Services\InboxUnreadService;
+use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -65,6 +68,7 @@ class HandleInertiaRequests extends Middleware
             'connectedChannels' => fn () => $user
                 ? app(ChannelConnectionService::class)->summarizeForUser($user)
                 : [],
+            'enabledChannels' => OutreachChannelRegistry::enabledChannelKeys(),
             'notifications' => fn () => $user && $user->current_organization_id
                 ? V2UserActivity::query()
                     ->where('user_id', $user->id)
@@ -83,6 +87,10 @@ class HandleInertiaRequests extends Middleware
                     ->values()
                     ->all()
                 : [],
+            'dailyEnrichmentQuota' => fn () => app(DailyEnrichmentQuotaService::class)->payloadForUser($user),
+            'inboxUnreadCount' => fn () => $user
+                ? app(InboxUnreadService::class)->unreadCountForUser($user->id)
+                : 0,
         ];
     }
 }

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
-import { ArrowLeft, Bot, Info, Loader2, Megaphone, MessageCircle, MessagesSquare, Paperclip, Pause, Search, Send, Sparkles, X } from '@lucide/vue';
+import { ArrowLeft, Bot, ExternalLink, Info, Loader2, Megaphone, MessageCircle, MessagesSquare, Paperclip, Pause, Search, Send, Sparkles, Trash2, X, AlertTriangle } from '@lucide/vue';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
+import { formatEmailBody } from '@/lib/formatEmailBody';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -21,15 +22,19 @@ defineOptions({
 type ConversationItem = {
     id: number;
     prospect_name: string | null;
+    prospect_email?: string | null;
+    email_quality?: { level: string; label: string; hint: string | null } | null;
     last_message_preview: string | null;
     last_message_at: string | null;
     outreach_campaign_id: number | null;
     outreach_campaign_name: string | null;
+    messages_count?: number;
+    is_unread?: boolean;
 };
 
 type OutreachContext = {
     campaign: { id: number; name: string; status: string; href: string };
-    lead: { id: number; full_name: string | null; status: string; phone: string | null; email: string | null } | null;
+    lead: { id: number; full_name: string | null; status: string; phone: string | null; email: string | null; email_quality?: { level: string; label: string; hint: string | null } | null } | null;
     progress: { paused_reason: string | null; paused_channel: string | null; channel_replied: boolean } | null;
     campaign_outbound_count: number;
     channel_settings: { ai_context: string; auto_reply_enabled: boolean; pause_on_reply: boolean };
@@ -54,9 +59,10 @@ const props = defineProps<{
     platformColor: string;
     connected: boolean;
     conversations: ConversationsPaginator;
-    selected: { id: number; prospect_name: string | null; has_channel: boolean } | null;
+    selected: { id: number; prospect_name: string | null; prospect_email?: string | null; has_channel: boolean } | null;
     messages: MessageItem[];
     outreachContext: OutreachContext | null;
+    unread_count: number;
     aiConfigured: boolean;
     supportsAttachments: boolean;
     filters: { search: string | null; campaign: number | null; id: number | null };
@@ -70,6 +76,8 @@ const search = ref(props.filters?.search ?? '');
 const messageScroll = ref<HTMLElement | null>(null);
 const sending = ref(false);
 const polling = ref(false);
+const deletingConversationId = ref<number | null>(null);
+const deletingMessageId = ref<number | null>(null);
 
 type MessageAttachment = {
     id: string;
@@ -90,15 +98,19 @@ type MessageItem = {
     provider_message_id?: string | null;
     direction: string;
     body: string;
+    formatted?: { main: string; quoted: string | null; preview: string; quote_header?: string | null } | null;
     at: string | null;
     source: string | null;
     attachments?: MessageAttachment[];
     reactions?: MessageReaction[];
 };
 
+const expandedQuotes = ref<Record<number, boolean>>({});
+
 const localMessages = ref<MessageItem[]>([...props.messages]);
 const localConversations = ref<ConversationsPaginator>({ ...props.conversations, data: [...props.conversations.data] });
 const localOutreachContext = ref<OutreachContext | null>(props.outreachContext);
+const localUnreadCount = ref(props.unread_count ?? 0);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -130,6 +142,13 @@ watch(
 );
 
 watch(
+    () => props.unread_count,
+    (count) => {
+        localUnreadCount.value = count ?? 0;
+    },
+);
+
+watch(
     () => props.outreachContext,
     (ctx) => {
         localOutreachContext.value = ctx;
@@ -147,11 +166,23 @@ const settingsForm = useForm({
 
 watch(
     () => localOutreachContext.value,
-    (ctx) => {
+    (ctx, prevCtx) => {
         if (!ctx) return;
-        settingsForm.ai_context = ctx.channel_settings.ai_context;
-        settingsForm.auto_reply_enabled = ctx.channel_settings.auto_reply_enabled;
-        settingsForm.pause_on_reply = ctx.channel_settings.pause_on_reply;
+
+        const threadChanged = prevCtx?.campaign?.id !== ctx.campaign?.id
+            || prevCtx?.lead?.id !== ctx.lead?.id;
+
+        if (threadChanged || !settingsForm.isDirty) {
+            settingsForm.ai_context = ctx.channel_settings.ai_context;
+            settingsForm.auto_reply_enabled = ctx.channel_settings.auto_reply_enabled;
+            settingsForm.pause_on_reply = ctx.channel_settings.pause_on_reply;
+            settingsForm.clearErrors();
+            settingsForm.defaults({
+                ai_context: ctx.channel_settings.ai_context,
+                auto_reply_enabled: ctx.channel_settings.auto_reply_enabled,
+                pause_on_reply: ctx.channel_settings.pause_on_reply,
+            });
+        }
     },
 );
 
@@ -193,6 +224,90 @@ function formatTime(at: string | null) {
     } catch {
         return at.slice(0, 16);
     }
+}
+
+function formatMessageTime(at: string | null) {
+    if (!at) return '';
+    try {
+        const date = new Date(at);
+        const now = new Date();
+        const sameDay = date.toDateString() === now.toDateString();
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const isYesterday = date.toDateString() === yesterday.toDateString();
+
+        if (sameDay) {
+            return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        }
+        if (isYesterday) {
+            return `Yesterday ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+        }
+
+        return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    } catch {
+        return at.slice(11, 16);
+    }
+}
+
+function messageDayKey(at: string | null): string {
+    if (!at) return '';
+    try {
+        return new Date(at).toDateString();
+    } catch {
+        return at.slice(0, 10);
+    }
+}
+
+function showDateDivider(index: number): boolean {
+    const current = localMessages.value[index];
+    if (!current?.at) return false;
+    if (index === 0) return true;
+
+    const previous = localMessages.value[index - 1];
+    if (!previous?.at) return true;
+
+    return messageDayKey(current.at) !== messageDayKey(previous.at);
+}
+
+function formatDateDivider(at: string | null) {
+    if (!at) return '';
+    try {
+        const date = new Date(at);
+        const now = new Date();
+        const sameDay = date.toDateString() === now.toDateString();
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const isYesterday = date.toDateString() === yesterday.toDateString();
+
+        if (sameDay) return 'Today';
+        if (isYesterday) return 'Yesterday';
+
+        return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+    } catch {
+        return at.slice(0, 10);
+    }
+}
+
+function messageDisplay(msg: MessageItem) {
+    if (props.platform === 'email') {
+        return msg.formatted ?? formatEmailBody(msg.body);
+    }
+
+    return { main: msg.body, quoted: null as string | null, preview: msg.body, quote_header: null as string | null };
+}
+
+function emailQuoteHeader(msg: MessageItem): string | null {
+    const header = messageDisplay(msg).quote_header;
+    return header && header.trim() !== '' ? header : null;
+}
+
+function toggleQuoted(messageId: number) {
+    expandedQuotes.value[messageId] = !expandedQuotes.value[messageId];
+}
+
+function emailQualityClass(level: string) {
+    if (level === 'placeholder' || level === 'invalid') return 'border-amber-200 bg-amber-50 text-amber-800';
+    return 'border-emerald-200 bg-emerald-50 text-emerald-800';
 }
 
 const avatarPalettes = [
@@ -255,6 +370,50 @@ function backToThreadList() {
         search: search.value.trim() || undefined,
         page: props.conversations.current_page > 1 ? props.conversations.current_page : undefined,
     }, { preserveState: false });
+}
+
+function deleteConversation(conv: ConversationItem) {
+    const label = conv.prospect_name ?? conv.prospect_email ?? 'this conversation';
+    if (!confirm(`Remove ${label} from your inbox? Messages will be deleted from this app.`)) {
+        return;
+    }
+
+    deletingConversationId.value = conv.id;
+    router.delete(`/inbox/${props.platform}/${conv.id}`, {
+        preserveScroll: true,
+        onFinish: () => { deletingConversationId.value = null; },
+    });
+}
+
+function deleteSelectedConversation() {
+    if (!props.selected) {
+        return;
+    }
+
+    deleteConversation({
+        id: props.selected.id,
+        prospect_name: props.selected.prospect_name,
+        prospect_email: props.selected.prospect_email ?? null,
+        last_message_preview: null,
+        last_message_at: null,
+        outreach_campaign_id: null,
+        outreach_campaign_name: null,
+    });
+}
+
+function deleteMessage(msg: MessageItem) {
+    if (!props.selected) {
+        return;
+    }
+    if (!confirm('Remove this message from the thread?')) {
+        return;
+    }
+
+    deletingMessageId.value = msg.id;
+    router.delete(`/inbox/${props.platform}/${props.selected.id}/messages/${msg.id}`, {
+        preserveScroll: true,
+        onFinish: () => { deletingMessageId.value = null; },
+    });
 }
 
 function scrollToBottom() {
@@ -336,11 +495,15 @@ async function pollThread() {
             messages: MessageItem[];
             conversations: ConversationsPaginator;
             outreachContext: OutreachContext | null;
+            unread_count?: number;
         };
 
         localMessages.value = data.messages ?? localMessages.value;
         if (data.conversations) {
             localConversations.value = data.conversations;
+        }
+        if (typeof data.unread_count === 'number') {
+            localUnreadCount.value = data.unread_count;
         }
         localOutreachContext.value = data.outreachContext ?? localOutreachContext.value;
     } catch {
@@ -386,7 +549,12 @@ function sendMessage() {
 
 function saveChannelSettings() {
     if (!localOutreachContext.value) return;
-    settingsForm.put(localOutreachContext.value.settings_update_url, { preserveScroll: true });
+    settingsForm.put(localOutreachContext.value.settings_update_url, {
+        preserveScroll: true,
+        onSuccess: () => {
+            settingsForm.defaults();
+        },
+    });
 }
 
 function onComposerKeydown(e: KeyboardEvent) {
@@ -409,6 +577,12 @@ function onComposerKeydown(e: KeyboardEvent) {
                 <div class="mt-1 flex items-center gap-2">
                     <OutreachChannelIcon :channel="platform" :size="24" class="h-6 w-6" />
                     <h1 class="text-xl font-semibold">{{ platformLabel }}</h1>
+                    <span
+                        v-if="localUnreadCount > 0"
+                        class="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground"
+                    >
+                        {{ localUnreadCount }} unread
+                    </span>
                 </div>
             </div>
             <p v-if="!connected" class="text-sm text-amber-600">
@@ -429,42 +603,108 @@ function onComposerKeydown(e: KeyboardEvent) {
                     <ListSearchBar v-model="search" placeholder="Search conversations…" hide-button />
                     <p class="mt-2 text-[11px] text-muted-foreground">
                         {{ localConversations.total }} conversation{{ localConversations.total === 1 ? '' : 's' }}
+                        <span v-if="localUnreadCount > 0" class="font-medium text-primary"> · {{ localUnreadCount }} unread</span>
                     </p>
                 </div>
                 <div class="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-muted/10 to-background">
-                    <button
+                    <div
                         v-for="conv in localConversations.data"
                         :key="conv.id"
-                        type="button"
-                        class="group flex w-full items-start gap-3 border-b border-border/50 px-3 py-3 text-left transition-colors hover:bg-muted/40"
-                        :class="selected?.id === conv.id ? 'bg-primary/5 ring-1 ring-inset ring-primary/10' : ''"
-                        :style="selected?.id === conv.id ? { borderLeft: `3px solid ${platformColor}` } : { borderLeft: '3px solid transparent' }"
+                        role="button"
+                        tabindex="0"
+                        class="group flex cursor-pointer items-center gap-2 border-b border-border/50 px-2.5 py-2 text-left transition-colors hover:bg-muted/40"
+                        :class="[
+                            selected?.id === conv.id ? 'bg-primary/5' : '',
+                            conv.is_unread && selected?.id !== conv.id ? 'bg-primary/[0.03]' : '',
+                        ]"
+                        :style="selected?.id === conv.id ? { borderLeft: `2px solid ${platformColor}` } : { borderLeft: '2px solid transparent' }"
                         @click="openThread(conv.id)"
+                        @keydown.enter="openThread(conv.id)"
                     >
-                        <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold ring-2 ring-background shadow-sm"
-                            :style="{
-                                backgroundColor: avatarPalette(conv.prospect_name).bg,
-                                color: avatarPalette(conv.prospect_name).text,
-                                boxShadow: `0 0 0 2px ${avatarPalette(conv.prospect_name).ring}`,
-                            }"
-                        >
-                            {{ contactInitials(conv.prospect_name) }}
+                        <div class="relative flex h-8 w-8 shrink-0 items-center justify-center">
+                            <div
+                                class="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-semibold"
+                                :style="{
+                                    backgroundColor: avatarPalette(conv.prospect_name).bg,
+                                    color: avatarPalette(conv.prospect_name).text,
+                                }"
+                            >
+                                {{ contactInitials(conv.prospect_name) }}
+                            </div>
+                            <span
+                                v-if="conv.is_unread && selected?.id !== conv.id"
+                                class="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card bg-primary"
+                                aria-hidden="true"
+                            />
                         </div>
                         <div class="min-w-0 flex-1">
                             <div class="flex items-start justify-between gap-2">
-                                <p class="truncate font-semibold text-foreground">{{ conv.prospect_name ?? 'Unknown contact' }}</p>
-                                <span class="shrink-0 text-[10px] text-muted-foreground">{{ formatTime(conv.last_message_at) }}</span>
+                                <div class="min-w-0">
+                                    <p
+                                        class="truncate text-sm leading-tight"
+                                        :class="conv.is_unread && selected?.id !== conv.id ? 'font-semibold text-foreground' : 'font-medium text-foreground'"
+                                    >
+                                        {{ conv.prospect_name ?? 'Unknown contact' }}
+                                    </p>
+                                    <p v-if="platform === 'email' && conv.prospect_email" class="truncate text-[11px] leading-tight text-muted-foreground">
+                                        {{ conv.prospect_email }}
+                                    </p>
+                                </div>
+                                <span
+                                    class="shrink-0 text-[10px]"
+                                    :class="conv.is_unread && selected?.id !== conv.id ? 'font-semibold text-primary' : 'text-muted-foreground'"
+                                >
+                                    {{ formatTime(conv.last_message_at) }}
+                                </span>
                             </div>
-                            <p v-if="conv.outreach_campaign_name" class="mt-0.5 truncate text-[10px] font-medium" :style="{ color: platformColor }">
-                                {{ conv.outreach_campaign_name }}
-                            </p>
-                            <p v-if="conv.last_message_preview" class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                            <div v-if="conv.outreach_campaign_name || (platform === 'email' && conv.email_quality && conv.email_quality.level !== 'ok')" class="mt-0.5 flex flex-wrap items-center gap-1">
+                                <span
+                                    v-if="conv.outreach_campaign_name"
+                                    class="inline-flex max-w-full items-center gap-0.5 truncate rounded border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
+                                >
+                                    <Megaphone class="h-2.5 w-2.5 shrink-0" />
+                                    {{ conv.outreach_campaign_name }}
+                                </span>
+                                <span
+                                    v-if="platform === 'email' && conv.email_quality && conv.email_quality.level !== 'ok'"
+                                    class="inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[9px] font-medium"
+                                    :class="emailQualityClass(conv.email_quality.level)"
+                                    :title="conv.email_quality.hint ?? conv.email_quality.label"
+                                >
+                                    <AlertTriangle class="h-2.5 w-2.5 shrink-0" />
+                                    Bad email
+                                </span>
+                            </div>
+                            <p
+                                v-if="conv.last_message_preview"
+                                class="mt-0.5 line-clamp-1 text-[11px] leading-snug"
+                                :class="conv.is_unread && selected?.id !== conv.id ? 'font-medium text-foreground/80' : 'text-muted-foreground'"
+                            >
                                 {{ conv.last_message_preview }}
                             </p>
-                            <p v-else class="mt-1 text-xs italic text-muted-foreground/70">No messages yet</p>
+                            <p v-else class="mt-0.5 text-[11px] italic text-muted-foreground/60">No messages yet</p>
                         </div>
-                    </button>
+                        <div class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                            <button
+                                type="button"
+                                class="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-primary"
+                                title="Open conversation"
+                                @click.stop="openThread(conv.id)"
+                            >
+                                <ExternalLink class="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-md p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                                title="Delete conversation"
+                                :disabled="deletingConversationId === conv.id"
+                                @click.stop="deleteConversation(conv)"
+                            >
+                                <Loader2 v-if="deletingConversationId === conv.id" class="h-3.5 w-3.5 animate-spin" />
+                                <Trash2 v-else class="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+                    </div>
 
                     <div v-if="isListEmpty" class="flex h-full min-h-[16rem] flex-col items-center justify-center px-6 py-10 text-center">
                         <div
@@ -505,18 +745,18 @@ function onComposerKeydown(e: KeyboardEvent) {
             >
                 <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
                     <template v-if="selected">
-                        <div class="shrink-0 border-b border-border px-4 py-3">
+                        <div class="shrink-0 border-b border-border px-4 py-2.5">
                             <div class="flex items-center gap-3">
                                 <button
                                     type="button"
-                                    class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted/50 lg:hidden"
+                                    class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted/50 lg:hidden"
                                     aria-label="Back to conversations"
                                     @click="backToThreadList"
                                 >
                                     <ArrowLeft class="h-4 w-4" />
                                 </button>
                                 <div
-                                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold shadow-sm"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
                                     :style="{
                                         backgroundColor: avatarPalette(selected.prospect_name).bg,
                                         color: avatarPalette(selected.prospect_name).text,
@@ -524,25 +764,90 @@ function onComposerKeydown(e: KeyboardEvent) {
                                 >
                                     {{ contactInitials(selected.prospect_name) }}
                                 </div>
-                                <div class="min-w-0">
-                                    <h2 class="truncate font-semibold">{{ selected.prospect_name ?? 'Unknown contact' }}</h2>
-                                    <p class="text-xs text-muted-foreground">{{ platformLabel }} conversation</p>
+                                <div class="min-w-0 flex-1">
+                                    <h2 class="truncate text-sm font-semibold">{{ selected.prospect_name ?? 'Unknown contact' }}</h2>
+                                    <p v-if="platform === 'email' && selected.prospect_email" class="truncate text-[11px] text-muted-foreground">
+                                        {{ selected.prospect_email }}
+                                    </p>
+                                    <p v-else class="text-[11px] text-muted-foreground">{{ platformLabel }} conversation</p>
                                 </div>
+                                <button
+                                    type="button"
+                                    class="rounded-md p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                                    title="Delete conversation"
+                                    @click="deleteSelectedConversation"
+                                >
+                                    <Trash2 class="h-4 w-4" />
+                                </button>
                             </div>
                         </div>
                         <div ref="messageScroll" class="min-h-0 flex-1 space-y-3 overflow-y-auto bg-gradient-to-b from-muted/10 to-background p-4">
+                            <template v-for="(msg, msgIndex) in localMessages" :key="msg.id">
+                                <div
+                                    v-if="showDateDivider(msgIndex)"
+                                    class="flex justify-center py-1"
+                                >
+                                    <span class="rounded-full bg-muted/70 px-3 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
+                                        {{ formatDateDivider(msg.at) }}
+                                    </span>
+                                </div>
                             <div
-                                v-for="msg in localMessages"
-                                :key="msg.id"
-                                class="flex"
-                                :class="msg.direction === 'outbound' ? 'justify-end' : 'justify-start'"
+                                class="group/msg flex flex-col"
+                                :class="msg.direction === 'outbound' ? 'items-end' : 'items-start'"
                             >
                                 <div
-                                    class="max-w-[85%] rounded-2xl px-3 py-2 text-sm"
-                                    :class="msg.direction === 'outbound' ? 'rounded-br-md bg-primary text-primary-foreground' : 'rounded-bl-md border border-border bg-muted/30'"
+                                    class="relative max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow-sm"
+                                    :class="msg.direction === 'outbound'
+                                        ? 'rounded-br-md bg-primary text-primary-foreground'
+                                        : 'rounded-bl-md border border-slate-200 bg-slate-100 text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'"
                                 >
+                                    <button
+                                        type="button"
+                                        class="absolute -right-1 -top-1 z-10 rounded-full border border-border bg-background p-1 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-red-600 group-hover/msg:opacity-100 disabled:opacity-50"
+                                        title="Delete message"
+                                        :disabled="deletingMessageId === msg.id"
+                                        @click="deleteMessage(msg)"
+                                    >
+                                        <Loader2 v-if="deletingMessageId === msg.id" class="h-3 w-3 animate-spin" />
+                                        <Trash2 v-else class="h-3 w-3" />
+                                    </button>
                                     <p v-if="msg.source === 'outreach_campaign'" class="mb-1 text-[10px] uppercase opacity-70">Outreach sent</p>
-                                    <p v-if="msg.body && msg.body !== '[Attachment]'" class="whitespace-pre-wrap break-words">{{ msg.body }}</p>
+                                    <template v-if="msg.body && msg.body !== '[Attachment]'">
+                                        <template v-if="platform === 'email'">
+                                            <p class="whitespace-pre-wrap break-words text-sm leading-relaxed">{{ messageDisplay(msg).main || messageDisplay(msg).preview }}</p>
+                                            <div v-if="emailQuoteHeader(msg) || messageDisplay(msg).quoted" class="mt-2.5 space-y-1.5">
+                                                <p
+                                                    v-if="emailQuoteHeader(msg)"
+                                                    class="inline-flex max-w-full flex-wrap items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold leading-snug tracking-wide"
+                                                    :class="msg.direction === 'outbound'
+                                                        ? 'bg-primary-foreground/15 text-primary-foreground/80'
+                                                        : 'bg-muted/70 text-muted-foreground'"
+                                                >
+                                                    <span
+                                                        class="shrink-0 uppercase opacity-80"
+                                                        :class="msg.direction === 'outbound' ? 'text-primary-foreground/60' : 'text-primary/70'"
+                                                    >Re</span>
+                                                    <span class="font-semibold normal-case">{{ emailQuoteHeader(msg) }}</span>
+                                                </p>
+                                                <button
+                                                    v-if="messageDisplay(msg).quoted"
+                                                    type="button"
+                                                    class="text-[11px] font-medium underline-offset-2 hover:underline"
+                                                    :class="msg.direction === 'outbound' ? 'text-primary-foreground/80' : 'text-muted-foreground'"
+                                                    @click="toggleQuoted(msg.id)"
+                                                >
+                                                    {{ expandedQuotes[msg.id] ? 'Hide quoted email' : 'Show quoted email' }}
+                                                </button>
+                                                <p
+                                                    v-if="messageDisplay(msg).quoted && expandedQuotes[msg.id]"
+                                                    class="whitespace-pre-wrap break-words rounded-lg border border-black/10 bg-black/5 px-2.5 py-2 text-xs leading-relaxed opacity-90"
+                                                >
+                                                    {{ messageDisplay(msg).quoted }}
+                                                </p>
+                                            </div>
+                                        </template>
+                                        <p v-else class="whitespace-pre-wrap break-words leading-relaxed">{{ msg.body }}</p>
+                                    </template>
                                     <div v-if="msg.attachments?.length" class="mt-2 space-y-2">
                                         <template v-for="att in msg.attachments" :key="att.id">
                                             <a
@@ -578,9 +883,26 @@ function onComposerKeydown(e: KeyboardEvent) {
                                             :title="reaction.is_sender ? 'You reacted' : 'Reaction'"
                                         >{{ reaction.value }}</span>
                                     </div>
-                                    <p class="mt-1 text-[10px] opacity-70">{{ formatTime(msg.at) }}</p>
+                                    <div
+                                        v-if="msg.at"
+                                        class="mt-1.5 flex justify-end pt-0.5"
+                                        :class="msg.direction === 'outbound'
+                                            ? 'border-t border-primary-foreground/15'
+                                            : 'border-t border-border/60'"
+                                    >
+                                        <time
+                                            :datetime="msg.at"
+                                            class="text-[11px] font-medium tabular-nums tracking-wide select-none"
+                                            :class="msg.direction === 'outbound'
+                                                ? 'text-primary-foreground/75'
+                                                : 'text-muted-foreground'"
+                                        >
+                                            {{ formatMessageTime(msg.at) }}
+                                        </time>
+                                    </div>
                                 </div>
                             </div>
+                            </template>
                         </div>
                         <div class="shrink-0 border-t border-border p-3">
                             <div v-if="selectedAttachmentName" class="mb-2 flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
@@ -700,6 +1022,16 @@ function onComposerKeydown(e: KeyboardEvent) {
                         </Link>
                         <p v-if="localOutreachContext.lead" class="mt-1 text-xs text-muted-foreground capitalize">
                             {{ localOutreachContext.lead.full_name }} · {{ localOutreachContext.lead.status }}
+                        </p>
+                        <p v-if="localOutreachContext.lead?.email" class="mt-1 truncate text-xs text-muted-foreground">
+                            {{ localOutreachContext.lead.email }}
+                        </p>
+                        <p
+                            v-if="localOutreachContext.lead?.email_quality && localOutreachContext.lead.email_quality.level !== 'ok'"
+                            class="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-relaxed text-amber-900"
+                        >
+                            <span class="font-medium">{{ localOutreachContext.lead.email_quality.label }}.</span>
+                            {{ localOutreachContext.lead.email_quality.hint }}
                         </p>
                         <p v-if="localOutreachContext.campaign_outbound_count > 0" class="mt-2 text-xs text-muted-foreground">
                             {{ localOutreachContext.campaign_outbound_count }} campaign message{{ localOutreachContext.campaign_outbound_count === 1 ? '' : 's' }} sent — view full thread in chat

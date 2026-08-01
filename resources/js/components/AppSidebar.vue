@@ -3,9 +3,9 @@ import { Link, usePage } from '@inertiajs/vue3';
 import {
     BarChart3,
     Bot,
+    Building2,
     Calendar,
     FileText,
-    Gift,
     GraduationCap,
     LayoutGrid,
     Layers,
@@ -16,7 +16,9 @@ import {
     Inbox,
     PenLine,
     Phone,
+    Radar,
     Share2,
+    Sparkles,
     TrendingUp,
     UserCog,
     Users,
@@ -53,27 +55,32 @@ const overviewItems: NavItem[] = [
     { title: 'Analytics', href: '/analytics', icon: BarChart3 },
 ];
 
-const outreachItems: NavItem[] = [
-    { title: 'Leads', href: '/leads', icon: Users2 },
-    {
-        title: 'Social Outreach',
-        icon: Share2,
-        children: [
-            { title: 'LinkedIn Outreach', href: '/campaigns', icon: Megaphone },
-            { title: 'Multi-Channel', href: '/outreach', icon: Layers },
-            { title: 'Unified Inbox', href: '/inbox', icon: Inbox },
-        ],
-    },
-    { title: 'Auto-Responses', href: '/auto-responses', icon: Bot },
-    {
-        title: 'Call Inbox',
-        icon: Phone,
-        children: [
-            { title: 'Call Manager', href: '/calls', icon: Phone },
-            { title: 'Conversations', href: '/conversations', icon: MessageSquare },
-        ],
-    },
-];
+const outreachItems = computed<NavItem[]>(() => {
+    const unread = (page.props.inboxUnreadCount as number) ?? 0;
+
+    return [
+        { title: 'Leads', href: '/leads', icon: Users2 },
+        {
+            title: 'Social Outreach',
+            icon: Share2,
+            badge: unread > 0 ? unread : undefined,
+            children: [
+                { title: 'LinkedIn Outreach', href: '/campaigns', icon: Megaphone },
+                { title: 'Multi-Channel', href: '/outreach', icon: Layers },
+                { title: 'Unified Inbox', href: '/inbox', icon: Inbox, badge: unread > 0 ? unread : undefined },
+            ],
+        },
+        { title: 'Auto-Responses', href: '/auto-responses', icon: Bot },
+        {
+            title: 'Call Inbox',
+            icon: Phone,
+            children: [
+                { title: 'Call Manager', href: '/calls', icon: Phone },
+                { title: 'Conversations', href: '/conversations', icon: MessageSquare },
+            ],
+        },
+    ];
+});
 
 const contentItems: NavItem[] = [
     { title: 'Outreach Templates', href: '/ai-messages', icon: PenLine },
@@ -98,19 +105,19 @@ const audienceItems: NavItem[] = [
 const bonusNavItems = computed<NavItem[]>(() => {
     const items: NavItem[] = [];
     if (hasAny(['OTO2', 'OTO8', 'Bundle'])) {
-        items.push({ title: 'Upsell Unlimited', href: '/bonus/upsell-unlimited', icon: Gift });
+        items.push({ title: 'Upsell Unlimited', href: '/bonus/upsell-unlimited', icon: Sparkles });
     }
     if (hasAny(['OTO3', 'OTO8', 'Bundle'])) {
-        items.push({ title: 'DFY Agency Setup', href: '/bonus/market-agency-setup', icon: Gift });
+        items.push({ title: 'DFY Agency Setup', href: '/bonus/market-agency-setup', icon: Building2 });
     }
     if (hasAny(['OTO4', 'OTO8', 'Bundle'])) {
-        items.push({ title: 'DFY Campaign', href: '/bonus/dfy-campaign', icon: Gift });
+        items.push({ title: 'DFY Campaign', href: '/bonus/dfy-campaign', icon: Megaphone });
     }
     if (hasAny(['OTO7', 'OTO8', 'Bundle'])) {
-        items.push({ title: 'Coaching Program', href: '/bonus/coach-program', icon: Gift });
+        items.push({ title: 'Coaching Program', href: '/bonus/coach-program', icon: GraduationCap });
     }
     if (hasAny(['OTO8', 'Bundle'])) {
-        items.push({ title: 'Unlimited Traffic', href: '/bonus/unlimited-traffic', icon: Gift });
+        items.push({ title: 'Unlimited Traffic', href: '/bonus/unlimited-traffic', icon: Radar });
         items.push({ title: 'Team', href: '/team', icon: UserCog });
     }
     return items;
@@ -132,7 +139,7 @@ const adminNavItems = computed<NavItem[]>(() => {
 const navGroups = computed<NavGroup[]>(() => {
     const groups: NavGroup[] = [
         { label: 'Overview', items: overviewItems },
-        { label: 'Outreach', items: outreachItems },
+        { label: 'Outreach', items: outreachItems.value },
         { label: 'Content', items: contentItems },
         { label: 'Audience', items: audienceItems },
     ];

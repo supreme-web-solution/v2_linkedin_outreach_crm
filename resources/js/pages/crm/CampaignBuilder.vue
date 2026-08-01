@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { Head, router } from '@inertiajs/vue3';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
-import { Users, Star, Eye, Settings2, CheckCircle2, Layers, Plus, Trash2, Rocket, ChevronRight, Search, ChevronLeft, ArrowLeft } from '@lucide/vue';
+import { Users, Star, Eye, Settings2, CheckCircle2, Layers, Plus, Trash2, Rocket, ChevronRight, Search, ArrowLeft } from '@lucide/vue';
 import CampaignFlowCanvas from '@/components/campaign/CampaignFlowCanvas.vue';
 import CampaignStepPreviewChip from '@/components/campaign/CampaignStepPreviewChip.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import ClientPagination from '@/components/crm/ClientPagination.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
 import { type CampaignStep } from '@/components/campaign/types';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -278,10 +279,6 @@ function onListSearchInput() {
     listPage.value = 1;
 }
 
-function goListPage(page: number) {
-    listPage.value = Math.min(Math.max(1, page), listTotalPages.value);
-}
-
 watch(phase, (value) => {
     document.body.style.overflow = value === 'build' ? 'hidden' : '';
 });
@@ -389,45 +386,32 @@ onUnmounted(() => {
                 No lists match "{{ listSearch }}".
             </p>
 
-            <div v-else class="grid gap-2">
-                <button
-                    v-for="list in paginatedLeadLists"
-                    :key="list.type"
-                    type="button"
-                    class="flex items-center justify-between rounded-xl border p-4 text-left transition-colors"
-                    :class="isListSelected(list) ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/40'"
-                    @click="toggleList(list)"
-                >
-                    <div>
-                        <p class="font-medium text-sm">{{ list.list_name }}</p>
-                        <p class="text-xs text-muted-foreground">{{ list.source }} · {{ list.total_leads.toLocaleString() }} leads</p>
-                    </div>
-                    <Plus v-if="!isListSelected(list)" class="h-4 w-4 text-muted-foreground" />
-                    <CheckCircle2 v-else class="h-4 w-4 text-primary" />
-                </button>
-            </div>
-
-            <div v-if="filteredLeadLists.length > LIST_PAGE_SIZE" class="flex items-center justify-between text-xs text-muted-foreground">
-                <span>
-                    Page {{ listPage }} of {{ listTotalPages }}
-                    · {{ filteredLeadLists.length }} list{{ filteredLeadLists.length !== 1 ? 's' : '' }}
-                </span>
-                <div class="flex items-center gap-1">
+            <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
+                <div class="grid gap-2 p-3">
                     <button
+                        v-for="list in paginatedLeadLists"
+                        :key="list.type"
                         type="button"
-                        :disabled="listPage <= 1"
-                        class="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 hover:bg-muted disabled:opacity-40"
-                        @click="goListPage(listPage - 1)">
-                        <ChevronLeft class="h-3 w-3" /> Prev
-                    </button>
-                    <button
-                        type="button"
-                        :disabled="listPage >= listTotalPages"
-                        class="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 hover:bg-muted disabled:opacity-40"
-                        @click="goListPage(listPage + 1)">
-                        Next <ChevronRight class="h-3 w-3" />
+                        class="flex items-center justify-between rounded-xl border p-4 text-left transition-colors"
+                        :class="isListSelected(list) ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/40'"
+                        @click="toggleList(list)"
+                    >
+                        <div>
+                            <p class="font-medium text-sm">{{ list.list_name }}</p>
+                            <p class="text-xs text-muted-foreground">{{ list.source }} · {{ list.total_leads.toLocaleString() }} leads</p>
+                        </div>
+                        <Plus v-if="!isListSelected(list)" class="h-4 w-4 text-muted-foreground" />
+                        <CheckCircle2 v-else class="h-4 w-4 text-primary" />
                     </button>
                 </div>
+
+                <ClientPagination
+                    v-model:page="listPage"
+                    :total-pages="listTotalPages"
+                    :total="filteredLeadLists.length"
+                    :per-page="LIST_PAGE_SIZE"
+                    label="lists"
+                />
             </div>
         </div>
 
@@ -444,7 +428,7 @@ onUnmounted(() => {
         </div>
 
         <div class="flex justify-between gap-3">
-            <button v-if="!campaign" type="button" class="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted" @click="phase = 'template'">← Templates</button>
+            <AppToolbarButton v-if="!campaign" variant="slate" @click="phase = 'template'">← Templates</AppToolbarButton>
             <div v-else />
             <button type="button" class="rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700" @click="goToBuild">
                 Continue to sequence →

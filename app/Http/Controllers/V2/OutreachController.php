@@ -210,7 +210,7 @@ class OutreachController extends Controller
             $data['action'] = 'view_profile';
         }
         if ($data['action'] === 'unfollow') {
-            return response()->json(['error' => 'LinkedIn unfollow is not supported via Unipile.'], 422);
+            return response()->json(['error' => 'LinkedIn unfollow is not supported.'], 422);
         }
         try {
             $providerKey = $this->providerManager->defaultProvider();

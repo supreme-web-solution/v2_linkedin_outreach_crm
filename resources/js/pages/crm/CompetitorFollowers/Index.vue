@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { AlertTriangle, Loader2, Search, Trash2, TrendingUp, Users2 } from '@lucide/vue';
+import { AlertTriangle, Eye, Loader2, Search, Trash2, TrendingUp, Users2 } from '@lucide/vue';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
@@ -137,7 +137,7 @@ onBeforeUnmount(() => {
     <div class="flex flex-col gap-6 p-4">
         <LinkedInPageHeading title="Competitor Active Followers" show-badge>
             <template #subtitle>
-                Pull people who like or comment on a competitor's LinkedIn posts into a targeted audience (via Unipile).
+                Pull people who like or comment on a competitor's LinkedIn posts into a targeted audience.
             </template>
         </LinkedInPageHeading>
 
@@ -148,7 +148,7 @@ onBeforeUnmount(() => {
         >
             <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0" />
             <div>
-                <strong>LinkedIn (Unipile) required.</strong>
+                <strong>LinkedIn connection required.</strong>
                 Connect your account on Integrations before building audiences.
                 <Link href="/integrations" class="font-semibold underline">Go to Integrations →</Link>
             </div>
@@ -219,7 +219,12 @@ onBeforeUnmount(() => {
                 <tbody class="divide-y divide-border">
                     <tr v-for="row in audiences.data" :key="row.id" class="transition hover:bg-muted/30">
                         <td class="px-4 py-3">
-                            <div class="font-medium text-foreground">{{ row.audience_name || 'Untitled' }}</div>
+                            <Link
+                                :href="`/competitor-followers/${row.id}`"
+                                class="font-medium text-foreground hover:text-blue-600 hover:underline"
+                            >
+                                {{ row.audience_name || 'Untitled' }}
+                            </Link>
                             <div v-if="row.company_url" class="truncate text-xs text-muted-foreground">{{ row.company_url }}</div>
                         </td>
                         <td class="px-4 py-3 font-semibold">{{ countOf(row).toLocaleString() }}</td>
@@ -247,16 +252,18 @@ onBeforeUnmount(() => {
                             <span v-else class="text-xs text-muted-foreground">—</span>
                         </td>
                         <td class="px-4 py-3">
-                            <div class="flex items-center justify-end gap-2">
+                            <div class="flex items-center justify-end gap-1">
                                 <Link
                                     :href="`/competitor-followers/${row.id}`"
-                                    class="rounded border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
+                                    class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-blue-600"
+                                    title="View"
                                 >
-                                    View
+                                    <Eye class="h-4 w-4" />
                                 </Link>
                                 <button
                                     type="button"
-                                    class="rounded border border-border p-1.5 text-muted-foreground transition hover:border-red-400 hover:text-red-500"
+                                    class="rounded p-1.5 text-muted-foreground transition hover:bg-muted hover:text-red-500"
+                                    title="Delete"
                                     @click="destroy(row.id)"
                                 >
                                     <Trash2 class="h-4 w-4" />

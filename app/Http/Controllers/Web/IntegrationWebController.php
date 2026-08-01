@@ -84,7 +84,7 @@ class IntegrationWebController extends Controller
             'espIntegrations' => $espIntegrations,
             'hasOrg' => (bool) $orgId,
             'connected' => $request->boolean('connected') && $channelKey === '' && $accountId === '',
-            'connectedChannel' => $channelKey !== '' ? $channelKey : null,
+            'connectedChannel' => ($request->boolean('connected') && $accountId !== '' && $channelKey !== '') ? $channelKey : null,
             'connectionError' => $request->boolean('error') && $channelKey === '',
             'channelConnectionError' => $request->boolean('error') && $channelKey !== '' ? $channelKey : null,
             'unipileConfigured' => $this->linkedin->isUnipileConfigured(),
@@ -109,6 +109,10 @@ class IntegrationWebController extends Controller
     {
         /** @var \App\Models\User $user */
         $user = auth()->user();
+
+        if (! OutreachChannelRegistry::isEnabled('linkedin')) {
+            return redirect()->route('integrations')->with('error', 'LinkedIn is not enabled on this server.');
+        }
 
         if (! $this->linkedin->isUnipileConfigured()) {
             return redirect()->route('integrations')->with('error', 'LinkedIn messaging is not available on this server.');
@@ -139,6 +143,10 @@ class IntegrationWebController extends Controller
 
     public function connectUnipileCookie(Request $request): RedirectResponse
     {
+        if (! OutreachChannelRegistry::isEnabled('linkedin')) {
+            return back()->with('error', 'LinkedIn is not enabled on this server.');
+        }
+
         $data = $request->validate([
             'li_at' => ['required', 'string', 'max:2048'],
             'user_agent' => ['nullable', 'string', 'max:512'],
@@ -204,6 +212,10 @@ class IntegrationWebController extends Controller
         /** @var \App\Models\User $user */
         $user = auth()->user();
 
+        if (! OutreachChannelRegistry::isEnabled($channel)) {
+            return redirect()->route('integrations')->with('error', 'This channel is not enabled on this server.');
+        }
+
         if (! $this->channels->isUnipileConfigured()) {
             return redirect()->route('integrations')->with('error', 'Channel messaging is not available on this server.');
         }
@@ -241,6 +253,10 @@ class IntegrationWebController extends Controller
     {
         /** @var \App\Models\User $user */
         $user = auth()->user();
+
+        if (! OutreachChannelRegistry::isEnabled($channel)) {
+            return back()->with('error', 'This channel is not enabled on this server.');
+        }
 
         try {
             $this->channels->disconnect($user, $channel);

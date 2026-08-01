@@ -115,9 +115,9 @@ class CallsWebController extends Controller
             'hasOrg' => (bool) $orgId,
             'hasUnipile' => (bool) V2IntegrationAccount::activeUnipileAccountId($user->id),
             'hasCalendarIntegration' => $this->calendar->isAvailable($user->id),
-            'calendarOptions' => $this->calendar->listCalendarsForUser($user->id),
+            'calendarOptionsByProvider' => $this->calendar->listCalendarsGroupedByProvider($user->id),
+            'calendarAccounts' => $this->calendar->listConnectedCalendarAccounts($user->id),
             'leadLists' => $this->leadLists->listsForUser($user->id)->values()->all(),
-            'conversations' => $orgId ? $this->conversationOptionsForUser($user->id) : [],
             'flows' => $orgId ? $this->orchestration->flowsForOrganization($orgId) : [],
         ]);
     }
@@ -161,27 +161,6 @@ class CallsWebController extends Controller
             'booked' => $query->where('status', 'booked'),
             default => $query->whereNotIn('status', ['scheduling', 'sent', 'in_progress', 'booked']),
         };
-    }
-
-    public function store(Request $request): RedirectResponse
-    {
-        /** @var User $user */
-        $user = auth()->user();
-        $orgId = (int) $user->current_organization_id;
-
-        if (!$orgId) {
-            return back()->with('error', 'Connect your workspace first.');
-        }
-
-        $data = $request->validate([
-            'conversation_id' => ['nullable', 'integer'],
-            'prospect_name' => ['nullable', 'string', 'max:191'],
-            'pending_message' => ['nullable', 'string'],
-        ]);
-
-        $this->orchestration->createCall($user, $orgId, $data);
-
-        return redirect()->route('calls')->with('success', 'Call prospect added to pipeline.');
     }
 
     public function upcomingBooked(Request $request): JsonResponse
@@ -352,7 +331,7 @@ class CallsWebController extends Controller
             $message .= " {$result['skipped']} skipped (missing profile or already in pipeline).";
         }
         if ($result['launched'] > 0) {
-            $message .= " {$result['launched']} chat(s) queued via Unipile.";
+            $message .= " {$result['launched']} chat(s) queued.";
         }
 
         return redirect()->route('calls')->with('success', $message);
@@ -442,7 +421,7 @@ class CallsWebController extends Controller
             return back()->with('error', 'No prospects need a chat started in this flow.');
         }
 
-        $message = "{$result['queued']} chat(s) queued via Unipile — sends are paced automatically to protect your LinkedIn account.";
+        $message = "{$result['queued']} chat(s) queued — sends are paced automatically to protect your LinkedIn account.";
         if ($result['skipped'] > 0) {
             $message .= " {$result['skipped']} skipped (missing profile).";
         }
@@ -520,6 +499,7 @@ class CallsWebController extends Controller
             'reminder_hours_before' => ['nullable', 'array'],
             'reminder_hours_before.*' => ['integer', 'min:1', 'max:168'],
             'calendar_id' => ['nullable', 'string', 'max:500'],
+            'calendar_provider' => ['nullable', 'string', 'in:google_calendar,outlook_calendar,'],
             'call_duration_minutes' => ['nullable', 'integer', 'min:15', 'max:240'],
             'use_unipile_calendar' => ['nullable', 'boolean'],
             'use_app_booking_link' => ['nullable', 'boolean'],
@@ -616,7 +596,7 @@ class CallsWebController extends Controller
             return back()->with('error', 'Could not send message.');
         }
 
-        return back()->with('success', 'Message queued via Unipile.');
+        return back()->with('success', 'Message queued.');
     }
 
     public function analyze(int $id): RedirectResponse
@@ -747,26 +727,6 @@ class CallsWebController extends Controller
         $convName = strtolower(trim((string) ($option['prospect_name'] ?? '')));
 
         return $convName !== '' && $convName === $callName;
-    }
-
-    /**
-     * @return list<array{id: int, prospect_name: string|null, prospect_headline: string|null, provider_chat_id: string|null, last_message_at: string|null}>
-     */
-    private function conversationOptionsForUser(int $userId): array
-    {
-        return V2Conversation::query()
-            ->where('user_id', $userId)
-            ->managedByCallManager()
-            ->with([
-                'lead:id,full_name,headline',
-                'calls:id,conversation_id,prospect_name,prospect_headline',
-            ])
-            ->latest('last_message_at')
-            ->limit(50)
-            ->get()
-            ->map(fn (V2Conversation $c) => $this->serializeConversationOption($c))
-            ->values()
-            ->all();
     }
 
     /**

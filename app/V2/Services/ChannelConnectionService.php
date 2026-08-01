@@ -23,11 +23,19 @@ class ChannelConnectionService
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function summarizeForUser(User $user): array
+    public function summarizeForUser(User $user, ?array $onlyChannelKeys = null): array
     {
+        $channelMap = OutreachChannelRegistry::channels();
+        if ($onlyChannelKeys !== null) {
+            $channelMap = array_intersect_key(
+                $channelMap,
+                array_flip($onlyChannelKeys),
+            );
+        }
+
         $providers = array_values(array_unique(array_map(
             fn (array $meta) => (string) $meta['integration_provider'],
-            OutreachChannelRegistry::channels()
+            $channelMap,
         )));
 
         $accounts = V2IntegrationAccount::query()
@@ -40,7 +48,7 @@ class ChannelConnectionService
         $byProvider = $accounts->keyBy('provider');
         $summary = [];
 
-        foreach (OutreachChannelRegistry::channels() as $channelKey => $meta) {
+        foreach ($channelMap as $channelKey => $meta) {
             $provider = (string) $meta['integration_provider'];
             $account = $byProvider->get($provider);
             $connected = $account !== null && $account->status === 'active';
@@ -61,6 +69,16 @@ class ChannelConnectionService
         }
 
         return $summary;
+    }
+
+    /**
+     * Connected channels for outreach sequence builder (messaging/social only — not calendars).
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function summarizeSequenceForUser(User $user): array
+    {
+        return $this->summarizeForUser($user, OutreachChannelRegistry::sequenceChannelKeys());
     }
 
     /**
@@ -89,7 +107,7 @@ class ChannelConnectionService
             'organization_id' => $orgId,
             'success_redirect_url' => $base.$successPath,
             'failure_redirect_url' => $base.$failPath,
-            'notify_url' => rtrim((string) config('app.url'), '/').(string) config('services.unipile.webhook_callback_path', '/unipile/callback'),
+            'notify_url' => $base.(string) config('services.unipile.webhook_callback_path', '/unipile/callback'),
         ];
 
         return $this->providerManager->account(

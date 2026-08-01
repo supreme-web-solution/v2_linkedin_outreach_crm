@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, markRaw, provide, ref, watch } from 'vue';
+import { computed, markRaw, nextTick, onUnmounted, provide, ref, watch } from 'vue';
 import {
     VueFlow,
     Position,
@@ -58,6 +58,45 @@ const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
 const selectedKey = ref<number | null>(null);
 const showAddMenu = ref(false);
+const addStepTriggerRef = ref<HTMLElement | null>(null);
+const addMenuAnchor = ref({ top: 0, left: 0, width: 0 });
+
+const addMenuStyle = computed(() => ({
+    top: `${addMenuAnchor.value.top - 8}px`,
+    left: `${addMenuAnchor.value.left}px`,
+    transform: 'translateY(-100%)',
+}));
+
+function syncAddMenuPosition() {
+    const el = addStepTriggerRef.value;
+    if (!el) {
+        return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    addMenuAnchor.value = {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+    };
+}
+
+watch(showAddMenu, async (open) => {
+    if (open) {
+        await nextTick();
+        syncAddMenuPosition();
+        window.addEventListener('resize', syncAddMenuPosition);
+        window.addEventListener('scroll', syncAddMenuPosition, true);
+    } else {
+        window.removeEventListener('resize', syncAddMenuPosition);
+        window.removeEventListener('scroll', syncAddMenuPosition, true);
+    }
+});
+
+onUnmounted(() => {
+    window.removeEventListener('resize', syncAddMenuPosition);
+    window.removeEventListener('scroll', syncAddMenuPosition, true);
+});
 
 const selectedStep = computed(() =>
     selectedKey.value === null ? null : findStepByKey(props.steps, selectedKey.value),
@@ -209,7 +248,7 @@ function minimapNodeColor(node: Node): string {
             </VueFlow>
 
             <div class="absolute bottom-4 left-4 z-10 flex flex-col items-start gap-3">
-                <div class="relative">
+                <div ref="addStepTriggerRef" class="relative">
                     <button
                         type="button"
                         class="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(15,23,42,0.18)] transition hover:bg-slate-800"
@@ -218,40 +257,44 @@ function minimapNodeColor(node: Node): string {
                         <Plus class="h-4 w-4" />
                         Add step
                     </button>
-                    <div
-                        v-if="showAddMenu"
-                        class="absolute bottom-full left-0 mb-2 min-w-[240px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_16px_40px_rgba(15,23,42,0.12)]"
-                    >
-                        <p class="px-2 pb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                            Insert step
-                        </p>
-                        <button
-                            v-for="action in CAMPAIGN_ACTIONS"
-                            :key="action.value"
-                            type="button"
-                            class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-xs transition hover:bg-slate-50"
-                            @click="addFromToolbar('action', action.value)"
+                    <Teleport to="body">
+                        <div
+                            v-if="showAddMenu"
+                            class="campaign-add-step-menu fixed z-[10050] min-w-[240px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
+                            :style="addMenuStyle"
+                            @click.stop
                         >
-                            <span
-                                class="flex h-8 w-8 items-center justify-center rounded-lg border"
-                                :style="{ background: action.light, borderColor: action.border, color: action.accent }"
+                            <p class="px-2 pb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                Insert step
+                            </p>
+                            <button
+                                v-for="action in CAMPAIGN_ACTIONS"
+                                :key="action.value"
+                                type="button"
+                                class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-xs transition hover:bg-slate-50"
+                                @click="addFromToolbar('action', action.value)"
                             >
-                                <CampaignActionIcon :value="action.value" :size="15" />
-                            </span>
-                            <span class="font-medium text-slate-700">{{ action.label }}</span>
-                        </button>
-                        <div class="my-1.5 border-t border-slate-100" />
-                        <button
-                            type="button"
-                            class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-xs transition hover:bg-amber-50"
-                            @click="addFromToolbar('delay')"
-                        >
-                            <span class="flex h-8 w-8 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-600">
-                                <Clock class="h-4 w-4" />
-                            </span>
-                            <span class="font-medium text-amber-900">Add Wait / Delay</span>
-                        </button>
-                    </div>
+                                <span
+                                    class="flex h-8 w-8 items-center justify-center rounded-lg border"
+                                    :style="{ background: action.light, borderColor: action.border, color: action.accent }"
+                                >
+                                    <CampaignActionIcon :value="action.value" :size="15" />
+                                </span>
+                                <span class="font-medium text-slate-700">{{ action.label }}</span>
+                            </button>
+                            <div class="my-1.5 border-t border-slate-100" />
+                            <button
+                                type="button"
+                                class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-xs transition hover:bg-amber-50"
+                                @click="addFromToolbar('delay')"
+                            >
+                                <span class="flex h-8 w-8 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-600">
+                                    <Clock class="h-4 w-4" />
+                                </span>
+                                <span class="font-medium text-amber-900">Add Wait / Delay</span>
+                            </button>
+                        </div>
+                    </Teleport>
                 </div>
             </div>
         </div>

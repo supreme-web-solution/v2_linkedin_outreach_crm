@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class SnLead extends Model
 {
@@ -11,6 +12,8 @@ class SnLead extends Model
         'last_name',
         'headline',
         'email',
+        'email_fetch_status',
+        'email_fetch_attempted_at',
         'phone',
         'phone_fetch_attempted_at',
         'phone_fetch_status',
@@ -31,4 +34,9 @@ class SnLead extends Model
         'sn_list_id',
         'outreach_status',
     ];
+
+    public function company(): HasOne
+    {
+        return $this->hasOne(SnLeadsCompany::class, 'sn_lead_id');
+    }
 }

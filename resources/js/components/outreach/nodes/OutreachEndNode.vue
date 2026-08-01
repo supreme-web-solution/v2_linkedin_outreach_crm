@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { Handle, Position, type NodeProps } from '@vue-flow/core';
 import { CircleStop } from '@lucide/vue';
-import OutreachNodeAddMenu from '@/components/outreach/OutreachNodeAddMenu.vue';
 import type { OutreachFlowNodeData } from '@/components/outreach/outreachFlowAdapter';
 
-const props = defineProps<NodeProps<OutreachFlowNodeData>>();
+defineProps<NodeProps<OutreachFlowNodeData>>();
 </script>
 
 <template>
@@ -13,9 +12,5 @@ const props = defineProps<NodeProps<OutreachFlowNodeData>>();
     <div class="flex min-w-[170px] cursor-grab items-center gap-2.5 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-600 shadow-sm active:cursor-grabbing">
         <CircleStop class="h-3.5 w-3.5 text-slate-400" stroke-width="2" />
         End sequence
-    </div>
-
-    <div class="absolute left-1/2 top-full mt-2 -translate-x-1/2">
-        <OutreachNodeAddMenu :menu-id="`before-end-${props.data.step.key}`" :after-key="props.data.step.key" />
     </div>
 </template>

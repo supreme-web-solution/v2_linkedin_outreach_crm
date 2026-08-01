@@ -3,6 +3,7 @@ import { Link, router, usePage } from '@inertiajs/vue3';
 import { Bell, ChevronDown, Phone, Search, Sparkles } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
+import DailyEnrichmentQuotaBar from '@/components/crm/DailyEnrichmentQuotaBar.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
     DropdownMenu,
@@ -12,6 +13,7 @@ import {
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useInitials } from '@/composables/useInitials';
 import UserMenuContent from '@/components/UserMenuContent.vue';
+import { useDailyEnrichmentQuota } from '@/composables/useDailyEnrichmentQuota';
 import type { BreadcrumbItem, User } from '@/types';
 
 type AppNotification = {
@@ -34,6 +36,7 @@ withDefaults(
 
 const page = usePage();
 const user = computed(() => page.props.auth.user as User);
+const { quota: enrichmentQuota } = useDailyEnrichmentQuota();
 const notifications = computed(() => (page.props.notifications as AppNotification[] | undefined) ?? []);
 const hasNotifications = computed(() => notifications.value.length > 0);
 const searchQuery = ref('');
@@ -91,6 +94,8 @@ function formatNotificationTime(at: string | null): string {
         </div>
 
         <div class="ml-auto flex items-center gap-2">
+            <DailyEnrichmentQuotaBar v-if="enrichmentQuota" :quota="enrichmentQuota" compact />
+
             <!-- Global search -->
             <form class="relative hidden sm:block" @submit.prevent="submitSearch">
                 <Search class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />

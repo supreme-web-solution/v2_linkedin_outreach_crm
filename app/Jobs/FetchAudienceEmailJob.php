@@ -5,7 +5,9 @@ namespace App\Jobs;
 use App\Models\Audience;
 use App\Models\AudienceList;
 use App\Models\User;
-use App\V2\Services\UnipileProfileEmailService;
+use App\V2\Services\FullEnrichClient;
+use App\V2\Services\LeadEnrichmentPersister;
+use App\V2\Services\LeadEnrichmentService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -21,7 +23,7 @@ class FetchAudienceEmailJob implements ShouldQueue
 
     public int $maxExceptions = 1;
 
-    public int $timeout = 120;
+    public int $timeout = 180;
 
     public bool $deleteWhenMissingModels = true;
 
@@ -56,16 +58,20 @@ class FetchAudienceEmailJob implements ShouldQueue
         ]);
     }
 
-    public function handle(UnipileProfileEmailService $emailService): void
-    {
+    public function handle(
+        LeadEnrichmentService $enrichmentService,
+        LeadEnrichmentPersister $persister,
+    ): void {
         $item = AudienceList::find($this->audienceListItemId);
         if (! $item) {
             return;
         }
 
+        FullEnrichClient::resetCreditsExhausted();
+
         $item->update(['email_fetch_status' => 'processing']);
 
-        if (! empty($item->con_email)) {
+        if (! empty($item->con_email) && ! empty($item->con_phone)) {
             $item->update(['email_fetch_status' => 'completed']);
 
             return;
@@ -84,11 +90,13 @@ class FetchAudienceEmailJob implements ShouldQueue
 
         $dailyLimit = (int) config('services.email_scraping.daily_limit_per_user', 100);
         if ($user->daily_profile_email_scraping_count >= $dailyLimit) {
-            throw new \RuntimeException("Daily email lookup limit reached ({$dailyLimit} profiles/day).");
+            throw new \RuntimeException("Daily enrichment limit reached ({$dailyLimit} profiles/day).");
         }
 
         try {
-            $email = $emailService->fetchEmailForUser($user, $this->publicIdentifier);
+            $input = $enrichmentService->inputFromAudienceList($item);
+            $result = $enrichmentService->enrich($user, $input);
+            $persister->persistAudienceLead($item, $result, $user->id);
         } catch (\Throwable $e) {
             $item->update([
                 'email_fetch_status' => null,
@@ -99,21 +107,6 @@ class FetchAudienceEmailJob implements ShouldQueue
         }
 
         $user->increment('daily_profile_email_scraping_count');
-
-        if ($email) {
-            $item->update([
-                'con_email' => $email,
-                'email_fetch_status' => 'completed',
-                'email_fetch_attempted_at' => now(),
-            ]);
-
-            return;
-        }
-
-        $item->update([
-            'email_fetch_attempted_at' => now(),
-            'email_fetch_status' => 'completed',
-        ]);
     }
 
     private function checkAndResetDailyLimit(User $user): void

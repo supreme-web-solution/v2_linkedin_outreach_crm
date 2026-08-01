@@ -526,9 +526,7 @@ function toggleStatus() {
                 </div>
             </div>
 
-            <p v-if="isRunning" class="text-xs text-muted-foreground text-center">
-                Make sure <code class="text-[10px] bg-muted px-1 rounded">php artisan queue:work --queue=campaigns,outreach</code> is running so steps execute.
-            </p>
+           
         </div>
     </div>
 

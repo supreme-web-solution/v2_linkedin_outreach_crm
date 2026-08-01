@@ -14,6 +14,14 @@ use Illuminate\Http\Request;
 
 class OutreachEnrichmentWebController extends Controller
 {
+    public function enrichLeads(
+        Request $request,
+        OutreachLeadReadinessService $readiness,
+        EmailEnrichmentLimiter $limiter,
+    ): JsonResponse {
+        return $this->fetchEmails($request, $readiness, $limiter);
+    }
+
     public function fetchEmails(
         Request $request,
         OutreachLeadReadinessService $readiness,
@@ -39,7 +47,7 @@ class OutreachEnrichmentWebController extends Controller
         if ($batches === []) {
             return response()->json([
                 'success' => false,
-                'message' => 'No audience profiles are eligible for email lookup.',
+                'message' => 'No audience profiles are eligible for enrichment.',
             ], 400);
         }
 
@@ -83,8 +91,8 @@ class OutreachEnrichmentWebController extends Controller
 
         $skipped = $requested - $queued;
         $message = $skipped > 0
-            ? "Queued {$queued} email lookup(s). {$skipped} skipped due to today's daily limit — run again tomorrow."
-            : "Queued {$queued} email lookup(s). Profiles are checked one at a time with a short delay to protect your LinkedIn account.";
+            ? "Queued {$queued} enrichment job(s). {$skipped} skipped due to today's daily limit — run again tomorrow."
+            : "Queued {$queued} enrichment job(s). LinkedIn profile first, then FullEnrich when configured.";
 
         return response()->json([
             'success' => true,
@@ -175,17 +183,50 @@ class OutreachEnrichmentWebController extends Controller
         $candidates = $service->handleResolveCandidates($data['lead_lists'], $user->id);
         $result = $service->resolveHandlesBatch($user, $candidates, 25);
 
+        $skippedNote = ($result['skipped'] ?? 0) > 0
+            ? ' '.($result['skipped']).' skipped (connect that channel under Integrations first).'
+            : '';
+
         return response()->json([
             'success' => true,
             'resolved' => $result['resolved'],
             'failed' => $result['failed'],
+            'skipped' => $result['skipped'] ?? 0,
             'remaining' => $result['remaining'],
             'message' => sprintf(
-                'Resolved %d handle(s). %d could not be resolved.%s',
+                'Resolved %d handle(s). %d could not be resolved.%s%s',
                 $result['resolved'],
                 $result['failed'],
+                $skippedNote,
                 $result['remaining'] > 0 ? " Run again for {$result['remaining']} more." : '',
             ),
+        ]);
+    }
+
+    public function prepareContacts(Request $request, OutreachContactEnrichmentService $service): JsonResponse
+    {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+
+        $data = $request->validate([
+            'lead_lists' => ['required', 'array', 'min:1'],
+            'lead_lists.*.list_hash' => ['required', 'string'],
+            'lead_lists.*.list_src' => ['required', 'in:aud,sn,csv'],
+            'node_model' => ['nullable', 'array'],
+        ]);
+
+        $result = $service->prepareContactsBatch(
+            $user,
+            $data['lead_lists'],
+            $data['node_model'] ?? [],
+        );
+
+        $limiter = app(EmailEnrichmentLimiter::class);
+
+        return response()->json([
+            'success' => true,
+            ...$result,
+            'enrichment_limits' => $limiter->limitsPayloadForUser($user->fresh()),
         ]);
     }
 }

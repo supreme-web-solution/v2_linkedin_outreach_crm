@@ -338,6 +338,47 @@ class CallCalendarServiceTest extends TestCase
         $this->assertSame('evt_fallback', $result['event_id']);
     }
 
+    public function test_resolve_calendar_account_honors_selected_provider(): void
+    {
+        $user = $this->userWithOrg();
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'google_calendar',
+            'provider_account_id' => 'uni_google',
+            'status' => 'active',
+            'meta' => [
+                'unipile_account_id' => 'uni_google',
+                'unipile_type' => 'GOOGLE_OAUTH',
+                'email' => 'owner@gmail.com',
+            ],
+        ]);
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'outlook_calendar',
+            'provider_account_id' => 'uni_outlook',
+            'status' => 'active',
+            'meta' => [
+                'unipile_account_id' => 'uni_outlook',
+                'unipile_type' => 'OUTLOOK',
+                'email' => 'owner@outlook.com',
+            ],
+        ]);
+
+        $service = app(CallCalendarService::class);
+
+        $google = $service->resolveCalendarAccount($user->id, 'google_calendar');
+        $outlook = $service->resolveCalendarAccount($user->id, 'outlook_calendar');
+
+        $this->assertSame('uni_google', $google['unipile_account_id'] ?? null);
+        $this->assertSame('uni_outlook', $outlook['unipile_account_id'] ?? null);
+
+        $accounts = $service->listConnectedCalendarAccounts($user->id);
+        $this->assertCount(2, $accounts);
+        $this->assertSame(['google_calendar', 'outlook_calendar'], array_column($accounts, 'provider'));
+    }
+
     private function userWithOrg(): User
     {
         $user = User::factory()->create();

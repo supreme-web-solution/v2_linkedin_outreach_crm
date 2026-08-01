@@ -38,7 +38,7 @@ class OutreachCampaignStatsService
             ->pluck('total', 'status')
             ->all();
 
-        $stepsCompleted = (int) ($eventCounts['completed'] ?? 0) + (int) ($eventCounts['skipped'] ?? 0);
+        $stepsCompleted = (int) ($eventCounts['completed'] ?? 0) + (int) ($eventCounts['sent'] ?? 0);
         $stepsFailed = (int) ($eventCounts['failed'] ?? 0);
 
         $byChannel = V2OutreachNodeEvent::query()
@@ -118,7 +118,7 @@ class OutreachCampaignStatsService
 
             $nodeEvents = $eventsByNode->get($key, collect());
             $statusTotals = $nodeEvents->pluck('total', 'status');
-            $completed = (int) ($statusTotals['completed'] ?? 0);
+            $completed = (int) ($statusTotals['completed'] ?? 0) + (int) ($statusTotals['sent'] ?? 0);
             $failed = (int) ($statusTotals['failed'] ?? 0);
             $waiting = (int) ($statusTotals['waiting'] ?? 0);
             $skipped = (int) ($statusTotals['skipped'] ?? 0);

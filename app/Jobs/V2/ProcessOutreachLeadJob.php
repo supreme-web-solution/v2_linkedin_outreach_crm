@@ -10,6 +10,7 @@ use App\V2\Outreach\OutreachActivityLogger;
 use App\V2\Outreach\OutreachChannelGuard;
 use App\V2\Outreach\OutreachCompletionService;
 use App\V2\Outreach\OutreachConditionEvaluator;
+use App\V2\Outreach\OutreachSendProof;
 use App\V2\Outreach\OutreachSequenceResolver;
 use App\V2\Outreach\OutreachStepExecutor;
 use Illuminate\Bus\Queueable;
@@ -79,6 +80,11 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         $run = $this->outreachRunId ? V2OutreachRun::query()->find($this->outreachRunId) : null;
         $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
+
+        if ($this->resolvePendingSendTimeout($campaign, $lead, $progress, $nodes, $resolver, $logger, $run)) {
+            return;
+        }
+
         $nodeKey = (int) ($progress->next_node_key ?: 1);
 
         if ($nodeKey === self::SEQUENCE_COMPLETE_KEY) {
@@ -212,25 +218,74 @@ class ProcessOutreachLeadJob implements ShouldQueue
             return;
         }
 
-        if ($status === 'completed' || $status === 'skipped') {
-            $logger->log($campaign->id, $lead->id, $run?->id, $node, $status, "Completed \"{$nodeLabel}\" for {$lead->full_name}.", $result['payload'] ?? []);
-            $completed[] = $nodeKey;
-            $nextKey = $resolver->resolveNextNodeKey($nodes, $nodeKey, $progress->acceptance_status);
+        if ($status === 'skipped') {
+            $skipReason = (string) ($result['error_message'] ?? 'Missing contact info for this step.');
+            $logger->log(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'skipped',
+                "Skipped \"{$nodeLabel}\" for {$lead->full_name} — {$skipReason}",
+                $result['payload'] ?? [],
+            );
 
-            if (($result['payload']['halt'] ?? false) === true || $nextKey === null) {
-                $this->markComplete($campaign, $lead, $progress, $run, $node, $logger, $completion, $completed);
+            if (OutreachSendProof::nodeIsOutboundSend($node)) {
+                $lead->update(['status' => 'skipped']);
+                $progress->update(['run_status' => 9, 'next_run_at' => null]);
 
                 return;
             }
 
+            $this->advanceAfterStep($campaign, $lead, $progress, $run, $node, $nodes, $result, $resolver, $logger, $completion, $completed, $nodeKey, $nodeLabel, 'skipped');
+
+            return;
+        }
+
+        if ($status === 'awaiting_send_confirmation') {
+            $channel = (string) ($node['channel'] ?? 'linkedin');
+            $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
+            $channelState[$channel] = array_merge(
+                is_array($channelState[$channel] ?? null) ? $channelState[$channel] : [],
+                [
+                    'pending_confirmation' => [
+                        'node_key' => $nodeKey,
+                        'chat_id' => (string) ($result['payload']['chat_id'] ?? ''),
+                        'conversation_id' => (int) ($result['payload']['conversation_id'] ?? 0),
+                    ],
+                    'sent_at' => now()->toIso8601String(),
+                ],
+            );
+
+            $logger->log(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'pending',
+                "Sent \"{$nodeLabel}\" for {$lead->full_name} — waiting for delivery confirmation.",
+                $result['payload'] ?? [],
+            );
+
+            $lead->update(['status' => 'running']);
             $progress->update([
-                'current_node_key' => $nodeKey,
-                'next_node_key' => $nextKey,
-                'completed_keys' => array_values(array_unique($completed)),
-                'next_run_at' => null,
-                'run_status' => max((int) $progress->run_status, 1),
+                'channel_state' => $channelState,
+                'next_run_at' => now()->addMinutes(10),
             ]);
-            self::dispatch($campaign->id, $lead->id, $run?->id)->delay(now()->addSeconds(3));
+
+            self::dispatch($campaign->id, $lead->id, $run?->id)->delay(now()->addMinutes(10));
+
+            return;
+        }
+
+        if ($status === 'completed') {
+            $logStatus = OutreachSendProof::nodeIsOutboundSend($node) ? 'sent' : 'completed';
+            $logMessage = $logStatus === 'sent'
+                ? "Confirmed sent \"{$nodeLabel}\" for {$lead->full_name}."
+                : "Completed \"{$nodeLabel}\" for {$lead->full_name}.";
+
+            $logger->log($campaign->id, $lead->id, $run?->id, $node, $logStatus, $logMessage, $result['payload'] ?? []);
+            $this->advanceAfterStep($campaign, $lead, $progress, $run, $node, $nodes, $result, $resolver, $logger, $completion, $completed, $nodeKey, $nodeLabel, 'completed');
 
             return;
         }
@@ -239,6 +294,183 @@ class ProcessOutreachLeadJob implements ShouldQueue
         $logger->log($campaign->id, $lead->id, $run?->id, $node, 'failed', "Failed \"{$nodeLabel}\": {$error}");
         $lead->update(['status' => 'error']);
         $progress->update(['run_status' => 9, 'next_run_at' => null]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $node
+     * @param  array<int, array<string, mixed>>  $nodes
+     * @param  array<string, mixed>  $result
+     * @param  array<int, int>  $completed
+     */
+    private function advanceAfterStep(
+        V2OutreachCampaign $campaign,
+        V2OutreachLead $lead,
+        V2OutreachLeadProgress $progress,
+        ?V2OutreachRun $run,
+        array $node,
+        array $nodes,
+        array $result,
+        OutreachSequenceResolver $resolver,
+        OutreachActivityLogger $logger,
+        OutreachCompletionService $completion,
+        array $completed,
+        int $nodeKey,
+        string $nodeLabel,
+        string $outcome,
+    ): void {
+        $completed[] = $nodeKey;
+        $nextKey = $resolver->resolveNextNodeKey($nodes, $nodeKey, $progress->acceptance_status);
+
+        if (($result['payload']['halt'] ?? false) === true || $nextKey === null) {
+            if ($outcome === 'skipped' && OutreachSendProof::nodeIsOutboundSend($node)) {
+                return;
+            }
+
+            $this->markComplete($campaign, $lead, $progress, $run, $node, $logger, $completion, $completed);
+
+            return;
+        }
+
+        $progress->update([
+            'current_node_key' => $nodeKey,
+            'next_node_key' => $nextKey,
+            'completed_keys' => array_values(array_unique($completed)),
+            'next_run_at' => null,
+            'run_status' => max((int) $progress->run_status, 1),
+        ]);
+        self::dispatch($campaign->id, $lead->id, $run?->id)->delay(now()->addSeconds(3));
+    }
+
+    /**
+     * Confirm a send that was waiting on Unipile webhook delivery proof, then advance the sequence.
+     *
+     * @param  array<string, mixed>  $confirmation
+     */
+    public static function confirmPendingSend(
+        V2OutreachCampaign $campaign,
+        V2OutreachLead $lead,
+        V2OutreachLeadProgress $progress,
+        array $confirmation,
+        ?string $providerMessageId = null,
+    ): void {
+        $nodeKey = (int) ($confirmation['node_key'] ?? 0);
+        if ($nodeKey <= 0) {
+            return;
+        }
+
+        $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
+        $resolver = app(OutreachSequenceResolver::class);
+        $logger = app(OutreachActivityLogger::class);
+        $completion = app(OutreachCompletionService::class);
+        $node = $resolver->findNodeByKey($nodes, $nodeKey);
+        if (! $node) {
+            return;
+        }
+
+        $channel = (string) ($node['channel'] ?? '');
+        $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
+        if ($channel !== '') {
+            $channelSlice = is_array($channelState[$channel] ?? null) ? $channelState[$channel] : [];
+            unset($channelSlice['pending_confirmation']);
+            $channelSlice['confirmed_sent'] = true;
+            $channelSlice['provider_message_id'] = $providerMessageId;
+            $channelSlice['confirmed_at'] = now()->toIso8601String();
+            $channelState[$channel] = $channelSlice;
+        }
+
+        $completed = is_array($progress->completed_keys) ? $progress->completed_keys : [];
+        $nodeLabel = $resolver->nodeLabel($node);
+
+        $logger->log(
+            $campaign->id,
+            $lead->id,
+            null,
+            $node,
+            'sent',
+            "Confirmed sent \"{$nodeLabel}\" for {$lead->full_name}.",
+            array_filter(['provider_message_id' => $providerMessageId]),
+        );
+
+        $runId = null;
+        $nextKey = $resolver->resolveNextNodeKey($nodes, $nodeKey, $progress->acceptance_status);
+        $completed[] = $nodeKey;
+
+        if ($nextKey === null) {
+            $lead->update(['status' => 'done']);
+            $progress->update([
+                'current_node_key' => $nodeKey,
+                'next_node_key' => self::SEQUENCE_COMPLETE_KEY,
+                'completed_keys' => array_values(array_unique($completed)),
+                'channel_state' => $channelState,
+                'run_status' => 4,
+                'next_run_at' => null,
+            ]);
+            $logger->log($campaign->id, $lead->id, null, null, 'completed', "Sequence finished for {$lead->full_name}.");
+            $completion->maybeFinish($campaign, null);
+
+            return;
+        }
+
+        $progress->update([
+            'current_node_key' => $nodeKey,
+            'next_node_key' => $nextKey,
+            'completed_keys' => array_values(array_unique($completed)),
+            'channel_state' => $channelState,
+            'next_run_at' => null,
+            'run_status' => max((int) $progress->run_status, 1),
+        ]);
+
+        self::dispatch($campaign->id, $lead->id, $runId)->delay(now()->addSeconds(3));
+    }
+
+    /**
+     * Fail the step when Unipile never confirmed delivery within the wait window.
+     *
+     * @param  array<int, array<string, mixed>>  $nodes
+     */
+    private function resolvePendingSendTimeout(
+        V2OutreachCampaign $campaign,
+        V2OutreachLead $lead,
+        V2OutreachLeadProgress $progress,
+        array $nodes,
+        OutreachSequenceResolver $resolver,
+        OutreachActivityLogger $logger,
+        ?V2OutreachRun $run,
+    ): bool {
+        $nodeKey = (int) $progress->next_node_key;
+        if ($nodeKey <= 0 || $nodeKey === self::SEQUENCE_COMPLETE_KEY) {
+            return false;
+        }
+
+        $node = $resolver->findNodeByKey($nodes, $nodeKey);
+        if (! $node || ! OutreachSendProof::nodeIsOutboundSend($node)) {
+            return false;
+        }
+
+        $channel = (string) ($node['channel'] ?? '');
+        $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
+        $pending = $channelState[$channel]['pending_confirmation'] ?? null;
+        if (! is_array($pending) || (int) ($pending['node_key'] ?? 0) !== $nodeKey) {
+            return false;
+        }
+
+        if ($progress->next_run_at !== null && $progress->next_run_at->isFuture()) {
+            return true;
+        }
+
+        $nodeLabel = $resolver->nodeLabel($node);
+        $logger->log(
+            $campaign->id,
+            $lead->id,
+            $run?->id,
+            $node,
+            'failed',
+            "Delivery not confirmed for \"{$nodeLabel}\" — no delivery confirmation received.",
+        );
+        $lead->update(['status' => 'error']);
+        $progress->update(['run_status' => 9, 'next_run_at' => null]);
+
+        return true;
     }
 
     /**

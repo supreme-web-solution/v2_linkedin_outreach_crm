@@ -2,11 +2,15 @@
 
 namespace App\V2\Outreach;
 
+use App\Jobs\FetchAudienceEmailBatchJob;
+use App\Jobs\FetchAudiencePhoneBatchJob;
+use App\Jobs\FetchSnPhoneBatchJob;
 use App\Models\AudienceList;
 use App\Models\SnLead;
 use App\Models\User;
 use App\Models\V2LeadContactOverlay;
 use App\Models\V2OutreachImportLead;
+use App\V2\Services\EmailEnrichmentLimiter;
 use App\V2\Services\UnipileProfileContactService;
 
 class OutreachContactEnrichmentService
@@ -63,15 +67,19 @@ class OutreachContactEnrichmentService
 
     /**
      * @param  array<int, array{list_hash: string, list_src: string}>  $leadLists
+     * @param  array<int, string>|null  $requiredChannels
      * @return array<int, array{channel: string, src: string, list_hash: string, record_id: int, identifier: string, linkedin_key: string}>
      */
-    public function handleResolveCandidates(array $leadLists, ?int $userId = null): array
+    public function handleResolveCandidates(array $leadLists, ?int $userId = null, ?array $requiredChannels = null): array
     {
         $rows = $this->readiness->collectLeadRows($leadLists, $userId);
         $candidates = [];
+        $channels = $requiredChannels !== null
+            ? array_values(array_intersect(OutreachChannelRegistry::enabledSocialHandleChannels(), $requiredChannels))
+            : OutreachChannelRegistry::enabledSocialHandleChannels();
 
         foreach ($rows as $row) {
-            foreach (['instagram', 'telegram', 'twitter'] as $channel) {
+            foreach ($channels as $channel) {
                 $providerField = "{$channel}_provider_id";
                 $handleField = "{$channel}_handle";
                 if (($row[$providerField] ?? '') !== '') {
@@ -166,7 +174,11 @@ class OutreachContactEnrichmentService
         $verified = 0;
         $failed = 0;
 
-        foreach (array_slice($candidates, 0, $limit) as $candidate) {
+        foreach (array_slice($candidates, 0, $limit) as $index => $candidate) {
+            if ($index > 0) {
+                $this->paceMessagingLookup();
+            }
+
             try {
                 $result = $this->contactService->verifyWhatsAppForUser($user, $candidate['phone']);
             } catch (\Throwable) {
@@ -191,13 +203,24 @@ class OutreachContactEnrichmentService
     {
         $resolved = 0;
         $failed = 0;
+        $skipped = 0;
 
-        foreach (array_slice($candidates, 0, $limit) as $candidate) {
-            $providerId = $this->contactService->resolvePlatformIdentifier(
-                $user,
-                $candidate['channel'],
-                $candidate['identifier'],
-            );
+        foreach (array_slice($candidates, 0, $limit) as $index => $candidate) {
+            if ($index > 0) {
+                $this->paceMessagingLookup();
+            }
+
+            try {
+                $providerId = $this->contactService->resolvePlatformIdentifier(
+                    $user,
+                    $candidate['channel'],
+                    $candidate['identifier'],
+                );
+            } catch (\Throwable) {
+                $skipped++;
+
+                continue;
+            }
 
             if ($providerId) {
                 $this->persistPlatformId($candidate, $providerId, $user->id);
@@ -207,7 +230,251 @@ class OutreachContactEnrichmentService
             }
         }
 
-        return ['resolved' => $resolved, 'failed' => $failed, 'remaining' => max(0, count($candidates) - $limit)];
+        return [
+            'resolved' => $resolved,
+            'failed' => $failed,
+            'skipped' => $skipped,
+            'remaining' => max(0, count($candidates) - $limit),
+        ];
+    }
+
+    /**
+     * One paced batch: extract from LinkedIn (when applicable), verify WhatsApp phones, resolve social handles.
+     *
+     * @param  array<int, array{list_hash: string, list_src: string}>  $leadLists
+     * @param  array<int, array<string, mixed>>  $nodeModel
+     * @return array<string, mixed>
+     */
+    public function prepareContactsBatch(User $user, array $leadLists, array $nodeModel, ?int $batchSize = null): array
+    {
+        $batchSize = max(1, min(50, $batchSize ?? (int) config('services.unipile_pacing.contact_prep_batch_size', 25)));
+        $preview = $this->readiness->previewForLists($leadLists, $nodeModel, $user->id);
+        $required = $this->readiness->requiredChannels($nodeModel);
+
+        $emailsQueued = in_array('email', $required, true)
+            ? $this->queueEmailBatch($user, $leadLists, $nodeModel, $batchSize)
+            : 0;
+        $phonesQueued = (in_array('email', $required, true) || in_array('whatsapp', $required, true))
+            ? $this->queuePhoneBatch($leadLists, $user->id, $batchSize)
+            : 0;
+
+        $whatsapp = ['verified' => 0, 'failed' => 0, 'remaining' => 0];
+        if ($preview['whatsapp_verify']['can_verify'] ?? false) {
+            $waCandidates = $this->whatsAppVerifyCandidates($leadLists, $user->id);
+            $whatsapp = $this->verifyWhatsAppBatch($user, $waCandidates, $batchSize);
+        }
+
+        $handles = ['resolved' => 0, 'failed' => 0, 'skipped' => 0, 'remaining' => 0];
+        if ($preview['handle_resolve']['can_resolve'] ?? false) {
+            $handleCandidates = $this->handleResolveCandidates($leadLists, $user->id, $required);
+            $handles = $this->resolveHandlesBatch($user, $handleCandidates, $batchSize);
+        }
+
+        $remainingAfter = $this->readiness->previewForLists($leadLists, $nodeModel, $user->id);
+        $remainingTotal = (int) ($remainingAfter['contact_prep']['remaining_total'] ?? 0);
+
+        $parts = [];
+        if ($emailsQueued > 0) {
+            $parts[] = "{$emailsQueued} email lookup".($emailsQueued === 1 ? '' : 's').' queued';
+        }
+        if ($phonesQueued > 0) {
+            $parts[] = "{$phonesQueued} phone lookup".($phonesQueued === 1 ? '' : 's').' queued';
+        }
+        if ($whatsapp['verified'] > 0 || $whatsapp['failed'] > 0) {
+            $parts[] = "{$whatsapp['verified']} WhatsApp verified, {$whatsapp['failed']} failed";
+        }
+        if ($handles['resolved'] > 0 || $handles['failed'] > 0) {
+            $parts[] = "{$handles['resolved']} handle(s) resolved, {$handles['failed']} failed";
+        }
+        if (($handles['skipped'] ?? 0) > 0) {
+            $parts[] = "{$handles['skipped']} skipped (connect that channel under Integrations)";
+        }
+
+        $message = $parts !== []
+            ? 'Batch complete: '.implode(' · ', $parts).'.'
+            : 'Nothing left to prepare in this batch.';
+
+        if ($remainingTotal > 0) {
+            $message .= " About {$remainingTotal} item(s) remaining — run another batch.";
+        }
+
+        return [
+            'batch_size' => $batchSize,
+            'emails_queued' => $emailsQueued,
+            'phones_queued' => $phonesQueued,
+            'whatsapp' => $whatsapp,
+            'handles' => $handles,
+            'remaining_total' => $remainingTotal,
+            'message' => $message,
+        ];
+    }
+
+    /**
+     * Verify messaging channels for a single lead row (used by Leads page enrich).
+     *
+     * @param  array<string, mixed>  $row
+     * @return array{whatsapp_verified: bool, handles_resolved: int, handles_failed: int, handles_skipped: int}
+     */
+    public function verifyContactsForRow(User $user, array $row): array
+    {
+        $result = [
+            'whatsapp_verified' => false,
+            'handles_resolved' => 0,
+            'handles_failed' => 0,
+            'handles_skipped' => 0,
+        ];
+
+        $phone = trim((string) ($row['phone'] ?? ''));
+        if ($phone !== '' && trim((string) ($row['whatsapp_provider_id'] ?? '')) === '') {
+            try {
+                $candidate = [
+                    'src' => (string) ($row['src'] ?? ''),
+                    'list_hash' => (string) ($row['list_hash'] ?? ''),
+                    'record_id' => (int) ($row['record_id'] ?? 0),
+                    'phone' => $phone,
+                    'linkedin_key' => (string) ($row['linkedin_key'] ?? ''),
+                ];
+                $wa = $this->contactService->verifyWhatsAppForUser($user, $phone);
+                if ($wa['verified'] && $wa['provider_id']) {
+                    $this->persistWhatsApp($candidate, $wa['provider_id'], $user->id, $candidate['linkedin_key']);
+                    $result['whatsapp_verified'] = true;
+                } else {
+                    $this->markWhatsAppUnreachable($candidate);
+                }
+            } catch (\Throwable) {
+                // Channel not connected or lookup failed — skip silently
+            }
+        }
+
+        foreach (OutreachChannelRegistry::enabledSocialHandleChannels() as $channel) {
+            $handle = trim((string) ($row["{$channel}_handle"] ?? ''));
+            if ($handle === '' || trim((string) ($row["{$channel}_provider_id"] ?? '')) !== '') {
+                continue;
+            }
+
+            $candidate = [
+                'channel' => $channel,
+                'src' => (string) ($row['src'] ?? ''),
+                'list_hash' => (string) ($row['list_hash'] ?? ''),
+                'record_id' => (int) ($row['record_id'] ?? 0),
+                'identifier' => $handle,
+                'linkedin_key' => (string) ($row['linkedin_key'] ?? ''),
+            ];
+
+            try {
+                $providerId = $this->contactService->resolvePlatformIdentifier($user, $channel, $handle);
+            } catch (\Throwable) {
+                $result['handles_skipped']++;
+
+                continue;
+            }
+
+            if ($providerId) {
+                $this->persistPlatformId($candidate, $providerId, $user->id);
+                $result['handles_resolved']++;
+            } else {
+                $result['handles_failed']++;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param  array<int, array{list_hash: string, list_src: string}>  $leadLists
+     * @param  array<int, array<string, mixed>>  $nodeModel
+     */
+    private function queueEmailBatch(User $user, array $leadLists, array $nodeModel, int $batchSize): int
+    {
+        $limiter = app(EmailEnrichmentLimiter::class);
+        $preview = $this->readiness->previewForLists($leadLists, $nodeModel, $user->id);
+
+        if (! ($preview['email_fetch']['can_batch_fetch'] ?? false)) {
+            return 0;
+        }
+
+        $batches = $preview['email_fetch']['batches'] ?? [];
+        $allIds = [];
+        foreach ($batches as $batch) {
+            foreach ($batch['audience_list_ids'] ?? [] as $id) {
+                $allIds[] = (int) $id;
+            }
+        }
+
+        if ($allIds === []) {
+            return 0;
+        }
+
+        $capacity = $limiter->queueCapacity($user, min(count($allIds), $batchSize));
+        if (! ($capacity['allowed'] ?? false)) {
+            return 0;
+        }
+
+        $allowedIds = array_slice($allIds, 0, min($batchSize, $capacity['max_queue_now'] ?? 0));
+        if ($allowedIds === []) {
+            return 0;
+        }
+
+        $allowedSet = array_flip($allowedIds);
+        $queued = 0;
+
+        foreach ($batches as $batch) {
+            $ids = array_values(array_filter(
+                $batch['audience_list_ids'] ?? [],
+                fn ($id) => isset($allowedSet[(int) $id]),
+            ));
+
+            if ($ids === []) {
+                continue;
+            }
+
+            FetchAudienceEmailBatchJob::dispatch($ids, $user->id);
+            $queued += count($ids);
+        }
+
+        return $queued;
+    }
+
+    /**
+     * @param  array<int, array{list_hash: string, list_src: string}>  $leadLists
+     */
+    private function queuePhoneBatch(array $leadLists, int $userId, int $batchSize): int
+    {
+        $batches = $this->phoneFetchBatches($leadLists, $userId);
+        $queued = 0;
+
+        foreach ($batches as $batch) {
+            if ($queued >= $batchSize) {
+                break;
+            }
+
+            $remaining = $batchSize - $queued;
+            $ids = array_slice($batch['record_ids'] ?? [], 0, $remaining);
+            if ($ids === []) {
+                continue;
+            }
+
+            if (($batch['list_src'] ?? 'aud') === 'aud') {
+                FetchAudiencePhoneBatchJob::dispatch($ids, $userId);
+            } else {
+                FetchSnPhoneBatchJob::dispatch($ids, $userId, $batch['list_hash']);
+            }
+
+            $queued += count($ids);
+        }
+
+        return $queued;
+    }
+
+    private function paceMessagingLookup(): void
+    {
+        $min = (int) config('services.unipile_pacing.profile_lookup_delay_min_ms', 1000);
+        $max = (int) config('services.unipile_pacing.profile_lookup_delay_max_ms', 3000);
+        if ($max < $min) {
+            $max = $min;
+        }
+
+        usleep(random_int($min, $max) * 1000);
     }
 
     /**

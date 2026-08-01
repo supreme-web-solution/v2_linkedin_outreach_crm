@@ -4,6 +4,8 @@ namespace App\V2\Services;
 
 use App\Models\Audience;
 use App\Models\AudienceList;
+use App\Models\SnLead;
+use App\Models\SnLeadList;
 use App\Models\User;
 
 /**
@@ -13,28 +15,49 @@ class EmailEnrichmentLimiter
 {
     public function pendingJobCount(int $userId): int
     {
+        $stuckCutoff = now()->subMinutes(10);
+
         $userAudienceIds = Audience::query()
             ->where('user_id', $userId)
             ->pluck('audience_id')
             ->all();
 
-        if ($userAudienceIds === []) {
-            return 0;
+        $audiencePending = 0;
+        if ($userAudienceIds !== []) {
+            AudienceList::query()
+                ->whereIn('audience_id', $userAudienceIds)
+                ->whereIn('email_fetch_status', ['pending', 'processing'])
+                ->where(fn ($q) => $q->where('email_fetch_attempted_at', '<', $stuckCutoff)->orWhereNull('email_fetch_attempted_at'))
+                ->update(['email_fetch_status' => null, 'email_fetch_attempted_at' => null]);
+
+            $audiencePending = AudienceList::query()
+                ->whereIn('audience_id', $userAudienceIds)
+                ->whereIn('email_fetch_status', ['pending', 'processing'])
+                ->where('email_fetch_attempted_at', '>=', $stuckCutoff)
+                ->count();
         }
 
-        $stuckCutoff = now()->subMinutes(10);
+        $snListHashes = SnLeadList::query()
+            ->where('user_id', $userId)
+            ->pluck('list_hash')
+            ->all();
 
-        AudienceList::query()
-            ->whereIn('audience_id', $userAudienceIds)
-            ->whereIn('email_fetch_status', ['pending', 'processing'])
-            ->where(fn ($q) => $q->where('email_fetch_attempted_at', '<', $stuckCutoff)->orWhereNull('email_fetch_attempted_at'))
-            ->update(['email_fetch_status' => null, 'email_fetch_attempted_at' => null]);
+        $snPending = 0;
+        if ($snListHashes !== []) {
+            SnLead::query()
+                ->whereIn('sn_list_id', $snListHashes)
+                ->whereIn('email_fetch_status', ['pending', 'processing'])
+                ->where(fn ($q) => $q->where('email_fetch_attempted_at', '<', $stuckCutoff)->orWhereNull('email_fetch_attempted_at'))
+                ->update(['email_fetch_status' => null, 'email_fetch_attempted_at' => null]);
 
-        return AudienceList::query()
-            ->whereIn('audience_id', $userAudienceIds)
-            ->whereIn('email_fetch_status', ['pending', 'processing'])
-            ->where('email_fetch_attempted_at', '>=', $stuckCutoff)
-            ->count();
+            $snPending = SnLead::query()
+                ->whereIn('sn_list_id', $snListHashes)
+                ->whereIn('email_fetch_status', ['pending', 'processing'])
+                ->where('email_fetch_attempted_at', '>=', $stuckCutoff)
+                ->count();
+        }
+
+        return $audiencePending + $snPending;
     }
 
     /**

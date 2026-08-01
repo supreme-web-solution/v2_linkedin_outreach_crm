@@ -11,6 +11,7 @@ class UnipileProfileContactService
 {
     public function __construct(
         private readonly UnipileProfileEmailService $emailService,
+        private readonly LinkedInProfileSocialExtractor $socialExtractor,
     ) {}
 
     public function fetchEmailForUser(User $user, string $identifier): ?string

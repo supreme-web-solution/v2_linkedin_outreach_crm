@@ -34,14 +34,18 @@ class OutreachStepExecutor
         $this->linkedInConnection = $linkedInConnection;
         $this->guard = $guard;
         $contactResolver = app(OutreachLeadContactResolver::class);
-        $this->executors = [
+        $allExecutors = [
             'linkedin' => $linkedIn,
-            'email' => $email,
+            'email' => new EmailChannelExecutor($providerManager, $unifiedInbox),
             'whatsapp' => new MessagingChannelExecutor('whatsapp', $providerManager, $contactResolver, $unifiedInbox),
             'instagram' => new MessagingChannelExecutor('instagram', $providerManager, $contactResolver, $unifiedInbox),
             'telegram' => new MessagingChannelExecutor('telegram', $providerManager, $contactResolver, $unifiedInbox),
             'twitter' => new MessagingChannelExecutor('twitter', $providerManager, $contactResolver, $unifiedInbox),
         ];
+        $this->executors = array_intersect_key(
+            $allExecutors,
+            array_flip(OutreachChannelRegistry::enabledChannelKeys()),
+        );
     }
 
     private OutreachSequenceResolver $resolver;

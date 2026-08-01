@@ -7,8 +7,8 @@ export const BRAND_ICON_SRC: Record<BrandChannel, string> = {
     telegram: '/brands/telegram.svg',
     twitter: '/brands/twitter.svg',
     email: '/brands/email.svg',
-    google_calendar: '/brands/email.svg',
-    outlook_calendar: '/brands/email.svg',
+    google_calendar: '/brands/google_calendar.svg',
+    outlook_calendar: '/brands/outlook_calendar.svg',
 };
 
 export function brandIconSrc(channel?: string | null): string {
