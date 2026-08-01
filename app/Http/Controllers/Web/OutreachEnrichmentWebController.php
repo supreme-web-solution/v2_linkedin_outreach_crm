@@ -68,7 +68,7 @@ class OutreachEnrichmentWebController extends Controller
                 'remaining_daily' => $capacity['remaining_daily'],
                 'pending_jobs' => $capacity['pending_jobs'],
                 'enrichment_limits' => $limiter->limitsPayloadForUser($user->fresh()),
-            ], $capacity['pending_jobs'] >= 5 ? 429 : 400);
+            ], $capacity['pending_jobs'] >= $limiter->batchSize() ? 429 : 400);
         }
 
         $allowedIds = array_slice($allIds, 0, $capacity['max_queue_now']);
@@ -118,14 +118,16 @@ class OutreachEnrichmentWebController extends Controller
         $batches = $service->phoneFetchBatches($data['lead_lists'], $user->id);
         $queued = 0;
 
+        $batchSize = app(EmailEnrichmentLimiter::class)->batchSize();
+
         foreach ($batches as $batch) {
             if (($batch['list_src'] ?? 'aud') === 'aud') {
-                foreach (array_chunk($batch['record_ids'], 50) as $chunk) {
+                foreach (array_chunk($batch['record_ids'], $batchSize) as $chunk) {
                     FetchAudiencePhoneBatchJob::dispatch($chunk, $user->id);
                     $queued += count($chunk);
                 }
             } else {
-                foreach (array_chunk($batch['record_ids'], 25) as $chunk) {
+                foreach (array_chunk($batch['record_ids'], $batchSize) as $chunk) {
                     FetchSnPhoneBatchJob::dispatch($chunk, $user->id, $batch['list_hash']);
                     $queued += count($chunk);
                 }
@@ -153,7 +155,11 @@ class OutreachEnrichmentWebController extends Controller
         ]);
 
         $candidates = $service->whatsAppVerifyCandidates($data['lead_lists'], $user->id);
-        $result = $service->verifyWhatsAppBatch($user, $candidates, 25);
+        $result = $service->verifyWhatsAppBatch(
+            $user,
+            $candidates,
+            app(EmailEnrichmentLimiter::class)->batchSize(),
+        );
 
         return response()->json([
             'success' => true,
@@ -181,7 +187,11 @@ class OutreachEnrichmentWebController extends Controller
         ]);
 
         $candidates = $service->handleResolveCandidates($data['lead_lists'], $user->id);
-        $result = $service->resolveHandlesBatch($user, $candidates, 25);
+        $result = $service->resolveHandlesBatch(
+            $user,
+            $candidates,
+            app(EmailEnrichmentLimiter::class)->batchSize(),
+        );
 
         $skippedNote = ($result['skipped'] ?? 0) > 0
             ? ' '.($result['skipped']).' skipped (connect that channel under Integrations first).'

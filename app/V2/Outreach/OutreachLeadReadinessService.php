@@ -680,7 +680,7 @@ class OutreachLeadReadinessService
             + $whatsappRemaining
             + ($handles['needs_resolve'] ?? 0);
 
-        $batchSize = max(1, min(50, (int) config('services.unipile_pacing.contact_prep_batch_size', 25)));
+        $batchSize = app(\App\V2\Services\EmailEnrichmentLimiter::class)->batchSize();
 
         return [
             'batch_size' => $batchSize,

@@ -68,7 +68,11 @@ return [
     ],
 
     'email_scraping' => [
-        'daily_limit_per_user' => env('DAILY_EMAIL_SCRAPING_LIMIT', 100),
+        // Per-user daily LinkedIn profile contact lookups (email/phone enrich).
+        'daily_limit_per_user' => (int) env('DAILY_EMAIL_SCRAPING_LIMIT', 100),
+        // Max leads queued per Enrich / Prepare click (Leads + Outreach).
+        // Also used as the in-flight cap: no new click while this many are already pending.
+        'batch_size' => (int) env('EMAIL_ENRICHMENT_BATCH_SIZE', 25),
     ],
 
     'fullenrich' => [
@@ -104,8 +108,11 @@ return [
         // Random pause between paginated harvest calls (competitor engagers)
         'harvest_page_delay_min_ms' => (int) env('UNIPILE_HARVEST_PAGE_DELAY_MIN_MS', 800),
         'harvest_page_delay_max_ms' => (int) env('UNIPILE_HARVEST_PAGE_DELAY_MAX_MS', 2500),
-        // Lead readiness: max contacts verified per "Prepare batch" click
-        'contact_prep_batch_size' => (int) env('OUTREACH_CONTACT_PREP_BATCH_SIZE', 25),
+        // Lead readiness / Prepare contacts — same as EMAIL_ENRICHMENT_BATCH_SIZE unless overridden.
+        'contact_prep_batch_size' => (int) env(
+            'OUTREACH_CONTACT_PREP_BATCH_SIZE',
+            env('EMAIL_ENRICHMENT_BATCH_SIZE', 25)
+        ),
     ],
 
     'unipile' => [

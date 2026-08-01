@@ -44,7 +44,10 @@ const props = defineProps<{
         can_enrich: boolean;
         fetchable: number;
     } | null;
+    enrichBatchSize?: number;
 }>();
+
+const ENRICH_BATCH_SIZE = computed(() => Math.max(1, props.enrichBatchSize ?? 25));
 
 const searchTerm = ref(props.search ?? '');
 const selected = ref<Set<number>>(new Set());
@@ -56,6 +59,15 @@ const flashError = ref('');
 const allSelected = computed(() => props.leads.data.length > 0 && props.leads.data.every((l) => selected.value.has(l.id)));
 
 const canEnrichList = computed(() => (props.importEnrichmentStats?.fetchable ?? 0) > 0);
+
+const bulkQueueNow = computed(() => {
+    const fetchable = props.importEnrichmentStats?.fetchable ?? 0;
+    if (fetchable <= 0) {
+        return 0;
+    }
+
+    return Math.min(ENRICH_BATCH_SIZE.value, fetchable);
+});
 
 function xsrf(): string {
     return decodeURIComponent(document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN='))?.split('=')[1] ?? '');
@@ -238,6 +250,8 @@ async function exportCsv() {
                     :loading="busy"
                     :disabled="!canEnrichList"
                     :remaining="importEnrichmentStats.fetchable"
+                    :queue-now="bulkQueueNow"
+                    :batch-size="ENRICH_BATCH_SIZE"
                     @click="enrichNextBatch"
                 />
             </div>

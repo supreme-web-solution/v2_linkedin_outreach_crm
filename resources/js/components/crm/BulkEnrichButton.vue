@@ -1,15 +1,32 @@
 <script setup lang="ts">
 import { Loader2, Sparkles } from '@lucide/vue';
+import { computed } from 'vue';
 
-defineProps<{
+const props = defineProps<{
     disabled?: boolean;
     loading?: boolean;
+    /** How many leads still need enrich in this list. */
     remaining?: number;
+    /** How many this click will actually queue (after daily/concurrency caps). */
+    queueNow?: number;
+    batchSize?: number;
 }>();
 
 defineEmits<{
     click: [];
 }>();
+
+const batch = computed(() => Math.max(1, props.batchSize ?? 25));
+
+const labelCount = computed(() => {
+    if (props.queueNow !== undefined) {
+        return Math.max(0, props.queueNow);
+    }
+    if (props.remaining !== undefined && props.remaining > 0) {
+        return Math.min(batch.value, props.remaining);
+    }
+    return batch.value;
+});
 </script>
 
 <template>
@@ -22,9 +39,8 @@ defineEmits<{
         <Loader2 v-if="loading" class="h-3.5 w-3.5 animate-spin" />
         <Sparkles v-else class="h-3.5 w-3.5" />
         Enrich
-        <span v-if="remaining !== undefined && remaining > 0" class="font-normal opacity-90">
-            ({{ Math.min(25, remaining).toLocaleString() }} next)
+        <span v-if="labelCount > 0" class="font-normal opacity-90">
+            ({{ labelCount.toLocaleString() }} next)
         </span>
-        <span v-else class="font-normal opacity-80">(up to 25)</span>
     </button>
 </template>

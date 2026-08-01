@@ -143,7 +143,8 @@ const contactPrepSteps = computed(() => {
     if (required.some((ch) => ['instagram', 'telegram', 'twitter'].includes(ch))) {
         steps.push('Social DMs — resolve @handles before Instagram/Telegram/X sends.');
     }
-    steps.push('Prepare contacts — one batched click (up to 25 leads) for whatever your sequence needs.');
+    const batchSize = readiness.value?.contact_prep?.batch_size ?? 25;
+    steps.push(`Prepare contacts — one batched click (up to ${batchSize} leads) for whatever your sequence needs.`);
     steps.push('Repeat until Fully ready matches your lead count, then launch.');
 
     return steps;

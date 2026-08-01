@@ -13,6 +13,11 @@ use App\Models\User;
  */
 class EmailEnrichmentLimiter
 {
+    public function batchSize(): int
+    {
+        return max(1, (int) config('services.email_scraping.batch_size', 25));
+    }
+
     public function pendingJobCount(int $userId): int
     {
         $stuckCutoff = now()->subMinutes(10);
@@ -120,7 +125,7 @@ class EmailEnrichmentLimiter
         $inFlight = $this->pendingJobCount($user->id);
         $remainingDaily = $dailyLimit <= 0 ? PHP_INT_MAX : max(0, $dailyLimit - $used - $inFlight);
         $pendingJobs = $inFlight;
-        $maxConcurrent = 5;
+        $batchSize = $this->batchSize();
 
         if ($dailyLimit > 0 && $remainingDaily <= 0) {
             return [
@@ -132,7 +137,8 @@ class EmailEnrichmentLimiter
             ];
         }
 
-        if ($pendingJobs >= $maxConcurrent) {
+        // One wave at a time: if a full batch (or more) is already pending, wait.
+        if ($pendingJobs >= $batchSize) {
             return [
                 'allowed' => false,
                 'message' => "You have {$pendingJobs} email lookups running. Wait for them to finish before starting more.",
@@ -142,16 +148,18 @@ class EmailEnrichmentLimiter
             ];
         }
 
-        $capped = $dailyLimit <= 0 ? $requested : min($requested, $remainingDaily);
+        // Queue up to batch_size this click (minus anything already in flight).
+        $slots = max(0, $batchSize - $pendingJobs);
+        $maxQueueNow = min($requested, $slots, $remainingDaily === PHP_INT_MAX ? $requested : $remainingDaily);
 
         return [
-            'allowed' => $capped > 0,
-            'message' => $capped < $requested
-                ? "Only {$capped} of {$requested} profiles can be queued today (daily limit)."
-                : "Up to {$capped} profile(s) will be queued.",
+            'allowed' => $maxQueueNow > 0,
+            'message' => $maxQueueNow < $requested
+                ? "Only {$maxQueueNow} of {$requested} profile(s) can be queued now (batch/daily limit)."
+                : "Up to {$maxQueueNow} profile(s) will be queued.",
             'remaining_daily' => $dailyLimit <= 0 ? -1 : $remainingDaily,
             'pending_jobs' => $pendingJobs,
-            'max_queue_now' => $capped,
+            'max_queue_now' => $maxQueueNow,
         ];
     }
 }

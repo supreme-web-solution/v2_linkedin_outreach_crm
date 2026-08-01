@@ -97,9 +97,10 @@ const props = defineProps<{
     contactStats: ContactStats;
     pendingCount: number;
     dailyLimit: DailyLimit;
+    enrichBatchSize?: number;
 }>();
 
-const MAX_CONCURRENT_ENRICHMENTS = 5;
+const ENRICH_BATCH_SIZE = computed(() => Math.max(1, props.enrichBatchSize ?? 25));
 
 const searchTerm = ref(props.search ?? '');
 const selected = ref<Set<number>>(new Set());
@@ -126,6 +127,22 @@ const inFlightEnrichments = computed(() =>
     Math.max(props.pendingCount, enrichingIds.value.size),
 );
 
+const bulkQueueNow = computed(() => {
+    const fetchable = props.contactStats?.fetchable ?? 0;
+    if (fetchable <= 0 || !canStartEnrich()) {
+        return 0;
+    }
+    const dailyRemaining = props.dailyLimit?.remaining ?? fetchable;
+    const slots = Math.max(0, ENRICH_BATCH_SIZE.value - props.pendingCount);
+
+    return Math.min(
+        ENRICH_BATCH_SIZE.value,
+        fetchable,
+        slots,
+        Math.max(0, dailyRemaining),
+    );
+});
+
 function isFollowerEnriching(follower: Follower): boolean {
     return enrichingIds.value.has(follower.id)
         || ['pending', 'processing'].includes(follower.email_fetch_status ?? '');
@@ -139,7 +156,7 @@ function canStartEnrich(excludeId?: number): boolean {
         ? [...enrichingIds.value].filter((id) => id !== excludeId).length
         : enrichingIds.value.size;
 
-    return Math.max(props.pendingCount, localCount) < MAX_CONCURRENT_ENRICHMENTS;
+    return Math.max(props.pendingCount, localCount) < ENRICH_BATCH_SIZE.value;
 }
 
 watch(
@@ -259,7 +276,7 @@ async function enrichFollower(follower: Follower) {
 
     if (!canStartEnrich()) {
         setFlash(
-            `You have ${inFlightEnrichments.value} enrichment${inFlightEnrichments.value === 1 ? '' : 's'} running. Max ${MAX_CONCURRENT_ENRICHMENTS} at a time — wait for one to finish.`,
+            `You have ${inFlightEnrichments.value} enrichment${inFlightEnrichments.value === 1 ? '' : 's'} running. Wait for the current batch (up to ${ENRICH_BATCH_SIZE.value}) to finish.`,
             true,
         );
         return;
@@ -405,7 +422,7 @@ function distanceLabel(d: string | null): string {
                     <Loader2 class="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                     Enriching
                     <span class="rounded-full bg-muted px-2 py-0.5 tabular-nums text-foreground">
-                        {{ inFlightEnrichments }}/{{ MAX_CONCURRENT_ENRICHMENTS }}
+                        {{ inFlightEnrichments }} pending
                     </span>
                 </div>
                 <div v-else-if="contactStats.running" class="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium">
@@ -420,6 +437,8 @@ function distanceLabel(d: string | null): string {
                     :loading="busy"
                     :disabled="!canBulkEnrich"
                     :remaining="contactStats.fetchable"
+                    :queue-now="bulkQueueNow"
+                    :batch-size="ENRICH_BATCH_SIZE"
                     @click="enrichNextBatch"
                 />
             </div>

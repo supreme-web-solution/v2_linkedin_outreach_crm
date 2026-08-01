@@ -209,6 +209,7 @@ class LeadsWebController extends Controller
             'importEnrichmentStats' => $importEnrichmentStats,
             'dailyLimit' => $src === 'csv' ? null : $this->dailyLimitPayload(),
             'pendingCount' => $pendingCount,
+            'enrichBatchSize' => max(1, (int) config('services.email_scraping.batch_size', 25)),
         ]);
     }
 
@@ -521,7 +522,8 @@ class LeadsWebController extends Controller
         }
 
         $pendingCount = app(EmailEnrichmentLimiter::class)->pendingJobCount($user->id);
-        if ($pendingCount >= 5) {
+        $batchSize = app(EmailEnrichmentLimiter::class)->batchSize();
+        if ($pendingCount >= $batchSize) {
             return response()->json([
                 'status' => 'error',
                 'message' => "You have {$pendingCount} enrichment jobs in progress. Please wait before starting more.",
@@ -598,7 +600,8 @@ class LeadsWebController extends Controller
         }
 
         $pendingCount = app(EmailEnrichmentLimiter::class)->pendingJobCount($user->id);
-        if ($pendingCount >= 5) {
+        $batchSize = app(EmailEnrichmentLimiter::class)->batchSize();
+        if ($pendingCount >= $batchSize) {
             return response()->json([
                 'status' => 'error',
                 'message' => "You have {$pendingCount} enrichment jobs in progress. Please wait before starting more.",
@@ -706,8 +709,10 @@ class LeadsWebController extends Controller
             'audience_list_ids.*' => 'required|integer|exists:audience_lists,id',
         ]);
 
+        $batchSize = max(1, (int) config('services.email_scraping.batch_size', 25));
+
         $audienceListIds = $request->boolean('auto_batch')
-            ? $readiness->nextAudienceListIdsForEmailFetch($audience->audience_id, 25)
+            ? $readiness->nextAudienceListIdsForEmailFetch($audience->audience_id, $batchSize)
             : $request->input('audience_list_ids', []);
 
         if ($audienceListIds === []) {
@@ -734,7 +739,7 @@ class LeadsWebController extends Controller
                 'daily_limit_reached' => $capacity['remaining_daily'] <= 0,
                 'remaining' => $capacity['remaining_daily'],
                 'pending_count' => $capacity['pending_jobs'],
-            ], $capacity['pending_jobs'] >= 5 ? 429 : 400);
+            ], $capacity['pending_jobs'] >= app(EmailEnrichmentLimiter::class)->batchSize() ? 429 : 400);
         }
 
         $idsToQueue = $needing->pluck('id')->take($capacity['max_queue_now'])->values()->all();
@@ -782,8 +787,10 @@ class LeadsWebController extends Controller
             'lead_ids.*' => 'required|integer|exists:sn_leads,id',
         ]);
 
+        $batchSize = max(1, (int) config('services.email_scraping.batch_size', 25));
+
         $leadIds = $request->boolean('auto_batch')
-            ? $readiness->nextSnLeadIdsForEmailFetch($listId, 25)
+            ? $readiness->nextSnLeadIdsForEmailFetch($listId, $batchSize)
             : $request->input('lead_ids', []);
 
         if ($leadIds === []) {
@@ -829,7 +836,7 @@ class LeadsWebController extends Controller
                 'daily_limit_reached' => $capacity['remaining_daily'] <= 0,
                 'remaining' => $capacity['remaining_daily'],
                 'pending_count' => $capacity['pending_jobs'],
-            ], $capacity['pending_jobs'] >= 5 ? 429 : 400);
+            ], $capacity['pending_jobs'] >= app(EmailEnrichmentLimiter::class)->batchSize() ? 429 : 400);
         }
 
         $idsToQueue = $needing->pluck('id')->take($capacity['max_queue_now'])->values()->all();
@@ -909,14 +916,16 @@ class LeadsWebController extends Controller
 
         $readiness = app(OutreachLeadReadinessService::class);
 
+        $batchSize = max(1, (int) config('services.email_scraping.batch_size', 25));
+
         $request->validate([
             'auto_batch' => ['sometimes', 'boolean'],
-            'import_lead_ids' => ['required_unless:auto_batch,true', 'array', 'min:1', 'max:25'],
+            'import_lead_ids' => ['required_unless:auto_batch,true', 'array', 'min:1', 'max:'.$batchSize],
             'import_lead_ids.*' => ['required', 'integer'],
         ]);
 
         $leadIds = $request->boolean('auto_batch')
-            ? $readiness->nextImportLeadIdsForEnrichment($importList->id, 25)
+            ? $readiness->nextImportLeadIdsForEnrichment($importList->id, $batchSize)
             : array_map('intval', $request->input('import_lead_ids', []));
 
         if ($leadIds === []) {

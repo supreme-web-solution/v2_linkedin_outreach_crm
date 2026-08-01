@@ -234,6 +234,7 @@ class CompetitorFollowersWebController extends Controller
             'contactStats' => $contactStats,
             'pendingCount' => $pendingCount,
             'dailyLimit' => $this->dailyLimitPayload($user),
+            'enrichBatchSize' => app(EmailEnrichmentLimiter::class)->batchSize(),
         ]);
     }
 
@@ -391,11 +392,12 @@ class CompetitorFollowersWebController extends Controller
             ], 429);
         }
 
-        $pendingCount = $this->getPendingEmailFetchCount($user->id);
-        if ($pendingCount >= 5) {
+        $pendingCount = app(EmailEnrichmentLimiter::class)->pendingJobCount($user->id);
+        $batchSize = app(EmailEnrichmentLimiter::class)->batchSize();
+        if ($pendingCount >= $batchSize) {
             return response()->json([
                 'status' => 'error',
-                'message' => "You have {$pendingCount} email scraping jobs in progress. Please come back in a while to allow other users to use the queue.",
+                'message' => "You have {$pendingCount} email scraping jobs in progress. Please wait for the current batch to finish.",
                 'concurrent_limit_reached' => true,
                 'pending_count' => $pendingCount,
             ], 429);
@@ -454,14 +456,17 @@ class CompetitorFollowersWebController extends Controller
 
         $readiness = app(\App\V2\Outreach\OutreachLeadReadinessService::class);
 
+        $limiter = app(EmailEnrichmentLimiter::class);
+        $batchSize = $limiter->batchSize();
+
         $request->validate([
             'auto_batch' => 'sometimes|boolean',
-            'audience_list_ids' => 'required_unless:auto_batch,true|array|min:1|max:25',
+            'audience_list_ids' => 'required_unless:auto_batch,true|array|min:1|max:'.$batchSize,
             'audience_list_ids.*' => 'required|integer|exists:audience_lists,id',
         ]);
 
         $audienceListIds = $request->boolean('auto_batch')
-            ? $readiness->nextAudienceListIdsForEmailFetch($audience->audience_id, 25)
+            ? $readiness->nextAudienceListIdsForEmailFetch($audience->audience_id, $batchSize)
             : $request->input('audience_list_ids', []);
 
         if ($audienceListIds === []) {
@@ -494,30 +499,39 @@ class CompetitorFollowersWebController extends Controller
         }
 
         $this->checkAndResetDailyLimit($user);
+        $user->refresh();
         $profileCount = $itemsNeedingEmail->count();
+        $capacity = $limiter->queueCapacity($user, $profileCount);
 
-        $dailyLimit = config('services.email_scraping.daily_limit_per_user', 100);
-        if ($user->daily_profile_email_scraping_count + $profileCount > $dailyLimit) {
-            $remaining = $dailyLimit - $user->daily_profile_email_scraping_count;
-
+        if (! $capacity['allowed']) {
             return response()->json([
                 'status' => 'error',
-                'message' => "Daily limit reached. You can scrape {$remaining} more profiles today. Limit resets tomorrow.",
-                'daily_limit_reached' => true,
-                'remaining' => max(0, $remaining),
-            ], 400);
+                'message' => $capacity['message'],
+                'daily_limit_reached' => $capacity['remaining_daily'] <= 0,
+                'remaining' => $capacity['remaining_daily'],
+                'pending_count' => $capacity['pending_jobs'],
+            ], $capacity['pending_jobs'] >= $batchSize ? 429 : 400);
         }
 
+        $idsToQueue = $itemsNeedingEmail->pluck('id')->take($capacity['max_queue_now'])->values()->all();
+
+        AudienceList::query()
+            ->whereIn('id', $idsToQueue)
+            ->update(['email_fetch_attempted_at' => now(), 'email_fetch_status' => 'pending']);
+
         try {
-            FetchAudienceEmailBatchJob::dispatch(
-                $itemsNeedingEmail->pluck('id')->toArray(),
-                $user->id
-            );
+            FetchAudienceEmailBatchJob::dispatch($idsToQueue, $user->id);
+
+            $queued = count($idsToQueue);
+            $message = $queued < $profileCount
+                ? "Queued {$queued} of {$profileCount} profile(s) for enrichment (batch/daily limit)."
+                : "Queued enrichment for {$queued} profile(s).";
 
             return response()->json([
                 'status' => 'success',
-                'message' => "Batch email fetch job dispatched for {$profileCount} profile(s). Please refresh the page in a few moments.",
-                'profile_count' => $profileCount,
+                'message' => $message,
+                'profile_count' => $queued,
+                'skipped' => $profileCount - $queued,
             ], 200);
         } catch (\Throwable $th) {
             Log::error('Failed to dispatch batch email fetch job', [

@@ -93,8 +93,8 @@ class LeadEnrichmentService
             instagramHandle: $social['instagram_handle'],
             twitterHandle: $social['twitter_handle'],
             telegramHandle: $social['telegram_handle'],
-            emailLookupAttempted: true,
-            phoneLookupAttempted: false,
+            emailLookupAttempted: $input->needsEmail(),
+            phoneLookupAttempted: $input->needsPhone(),
             sources: ['unipile'],
         );
     }

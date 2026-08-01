@@ -247,7 +247,7 @@ class OutreachContactEnrichmentService
      */
     public function prepareContactsBatch(User $user, array $leadLists, array $nodeModel, ?int $batchSize = null): array
     {
-        $batchSize = max(1, min(50, $batchSize ?? (int) config('services.unipile_pacing.contact_prep_batch_size', 25)));
+        $batchSize = max(1, min(50, $batchSize ?? app(\App\V2\Services\EmailEnrichmentLimiter::class)->batchSize()));
         $preview = $this->readiness->previewForLists($leadLists, $nodeModel, $user->id);
         $required = $this->readiness->requiredChannels($nodeModel);
 

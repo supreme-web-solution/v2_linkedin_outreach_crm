@@ -39,8 +39,18 @@ class FetchSnEmailBatchJob implements ShouldQueue
         LeadEnrichmentService $enrichmentService,
         LeadEnrichmentPersister $persister,
     ): void {
+        Log::info('[FetchSnEmailBatchJob] started', [
+            'user_id' => $this->userId,
+            'list_hash' => $this->listHash,
+            'lead_ids' => $this->snLeadIds,
+            'count' => count($this->snLeadIds),
+        ]);
+
         $user = User::find($this->userId);
         if (! $user) {
+            Log::warning('[FetchSnEmailBatchJob] user missing', ['user_id' => $this->userId]);
+            $this->markLeadsFailed($this->snLeadIds, 'User not found for enrichment job.');
+
             return;
         }
 
@@ -50,27 +60,51 @@ class FetchSnEmailBatchJob implements ShouldQueue
         $user->refresh();
 
         $dailyLimit = (int) config('services.email_scraping.daily_limit_per_user', 100);
+        // Match by id only — sn_list_id type mismatches must not leave rows stuck as pending.
         $leads = SnLead::query()
             ->whereIn('id', $this->snLeadIds)
-            ->where('sn_list_id', $this->listHash)
             ->get();
+
+        if ($leads->isEmpty()) {
+            Log::warning('[FetchSnEmailBatchJob] no matching leads', [
+                'user_id' => $this->userId,
+                'list_hash' => $this->listHash,
+                'lead_ids' => $this->snLeadIds,
+            ]);
+            $this->markLeadsFailed($this->snLeadIds, 'No matching leads for enrichment job.');
+
+            return;
+        }
+
         $lookupsDone = 0;
+        $completed = 0;
+        $failed = 0;
 
         foreach ($leads as $lead) {
             if (! empty($lead->email)) {
                 $lead->update(['email_fetch_status' => 'completed']);
+                $completed++;
 
                 continue;
             }
 
             if ($lead->email_fetch_status === 'completed') {
+                $completed++;
+
                 continue;
             }
 
             if ($user->daily_profile_email_scraping_count >= $dailyLimit) {
-                Log::warning('FetchSnEmailBatchJob: daily limit reached mid-batch', [
+                Log::warning('[FetchSnEmailBatchJob] daily limit reached mid-batch', [
                     'user_id' => $user->id,
+                    'remaining_ids' => $leads->skip($lookupsDone)->pluck('id')->all(),
                 ]);
+                // Leave remaining as pending so the UI can re-queue tomorrow after stuck reset,
+                // or mark them clear so user can retry.
+                SnLead::query()
+                    ->whereIn('id', $leads->pluck('id'))
+                    ->whereIn('email_fetch_status', ['pending', 'processing'])
+                    ->update(['email_fetch_status' => null, 'email_fetch_attempted_at' => null]);
                 break;
             }
 
@@ -80,6 +114,7 @@ class FetchSnEmailBatchJob implements ShouldQueue
                     'email_fetch_attempted_at' => now(),
                     'email_fetch_status' => 'completed',
                 ]);
+                $completed++;
 
                 continue;
             }
@@ -95,10 +130,12 @@ class FetchSnEmailBatchJob implements ShouldQueue
                 $lead->loadMissing('company');
                 $result = $enrichmentService->enrich($user, $enrichmentService->inputFromSnLead($lead));
                 $persister->persistSnLead($lead, $result, $user->id);
+                $completed++;
             } catch (\Throwable $e) {
                 $lead->update(['email_fetch_status' => 'failed']);
+                $failed++;
 
-                Log::error('FetchSnEmailBatchJob: enrichment failed', [
+                Log::error('[FetchSnEmailBatchJob] enrichment failed', [
                     'sn_lead_id' => $lead->id,
                     'error' => $e->getMessage(),
                 ]);
@@ -109,6 +146,48 @@ class FetchSnEmailBatchJob implements ShouldQueue
             $user->increment('daily_profile_email_scraping_count');
             $user->refresh();
         }
+
+        Log::info('[FetchSnEmailBatchJob] finished', [
+            'user_id' => $this->userId,
+            'list_hash' => $this->listHash,
+            'lookups' => $lookupsDone,
+            'completed' => $completed,
+            'failed' => $failed,
+        ]);
+    }
+
+    public function failed(?\Throwable $e): void
+    {
+        Log::error('[FetchSnEmailBatchJob] job failed', [
+            'user_id' => $this->userId,
+            'list_hash' => $this->listHash,
+            'lead_ids' => $this->snLeadIds,
+            'error' => $e?->getMessage(),
+        ]);
+        $this->markLeadsFailed($this->snLeadIds, $e?->getMessage() ?: 'Enrichment job failed.');
+    }
+
+    /**
+     * @param  array<int>  $ids
+     */
+    private function markLeadsFailed(array $ids, string $reason): void
+    {
+        if ($ids === []) {
+            return;
+        }
+
+        SnLead::query()
+            ->whereIn('id', $ids)
+            ->whereIn('email_fetch_status', ['pending', 'processing'])
+            ->update([
+                'email_fetch_status' => 'failed',
+                'email_fetch_attempted_at' => now(),
+            ]);
+
+        Log::warning('[FetchSnEmailBatchJob] marked leads failed', [
+            'ids' => $ids,
+            'reason' => $reason,
+        ]);
     }
 
     private function humanPause(): void
