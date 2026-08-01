@@ -37,6 +37,15 @@ class EnsureV2ExtensionToken
             return response()->json(['message' => 'Token expired.'], 401);
         }
 
+        if (! $record->user) {
+            $record->forceFill(['revoked_at' => now()])->save();
+
+            return response()->json([
+                'message' => 'Account not found.',
+                'error_code' => 'user_not_found',
+            ], 401);
+        }
+
         $record->forceFill(['last_used_at' => now()])->save();
         $request->attributes->set('v2User', $record->user);
         $request->attributes->set('v2Token', $record);
