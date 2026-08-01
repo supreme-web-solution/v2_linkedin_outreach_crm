@@ -4,9 +4,9 @@ namespace App\Http\Controllers\V2;
 
 use App\Http\Controllers\Controller;
 use App\V2\Services\OpenAIContentService;
+use App\V2\Services\OpenAiUserError;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 
 class PostCommentController extends Controller
 {
@@ -41,8 +41,8 @@ class PostCommentController extends Controller
                 ],
             ]);
         } catch (\Throwable $e) {
-            $message = $e->getMessage();
-            $status = Str::contains(strtolower($message), ['rate', '429']) ? 429 : 422;
+            $message = OpenAiUserError::fromThrowable($e);
+            $status = $message === OpenAiUserError::BUSY ? 429 : 422;
 
             return response()->json(['message' => $message], $status);
         }

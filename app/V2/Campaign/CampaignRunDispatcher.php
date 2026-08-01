@@ -97,7 +97,7 @@ class CampaignRunDispatcher
             ProcessCampaignLeadJob::dispatch($campaign->id, $lead->id, $run->id)
                 ->delay(now()->addSeconds($index * 5));
 
-            Log::info('[Campaign] Queued ProcessCampaignLeadJob', [
+            Log::debug('[Campaign] Queued ProcessCampaignLeadJob', [
                 'campaign_id' => $campaign->id,
                 'lead_id' => $lead->id,
                 'delay_seconds' => $index * 5,

@@ -59,6 +59,38 @@ class PostCommentTest extends TestCase
             ->assertJsonPath('data.comment', 'Love this take — especially the point about consistency.');
     }
 
+    public function test_generate_comment_hides_openai_quota_errors(): void
+    {
+        [$user, $org] = $this->authenticatedContext();
+        $token = 'v2ext_post_comment_quota';
+
+        V2ExtensionToken::query()->create([
+            'user_id' => $user->id,
+            'name' => 'test',
+            'token_hash' => hash('sha256', $token),
+            'expires_at' => now()->addHour(),
+        ]);
+
+        $mock = Mockery::mock(OpenAIContentService::class);
+        $mock->shouldReceive('generateLinkedInComment')
+            ->once()
+            ->andThrow(new \RuntimeException(
+                'OpenAI request failed: { "error": { "message": "You have no credits remaining.", "code": "credit_balance_exhausted" } }'
+            ));
+        $this->app->instance(OpenAIContentService::class, $mock);
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer '.$token,
+            'X-Organization-Id' => (string) $org->id,
+        ])->postJson('/api/v2/posts/generate-comment', [
+            'post_content' => 'Great insights on sales automation.',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', 'AI features are temporarily unavailable. Please contact your administrator.');
+        $response->assertJsonMissing(['message' => 'You have no credits remaining.']);
+    }
+
     /** @return array{0: User, 1: V2Organization} */
     private function authenticatedContext(): array
     {

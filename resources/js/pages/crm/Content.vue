@@ -748,7 +748,7 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                 <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="rewrite('expand')">Expand</button>
                             </div>
                             <p v-if="aiError" class="text-xs text-red-500">{{ aiError }}</p>
-                            <p v-if="!aiConfigured" class="text-xs text-orange-600">OPENAI_API_KEY missing in .env</p>
+                            <p v-if="!aiConfigured" class="text-xs text-orange-600">AI is not available right now. Contact your administrator.</p>
                             <p class="pt-1 text-xs text-muted-foreground">
                                 Need a starting point?
                                 <Link href="/inspiration" class="font-medium text-primary hover:underline">Browse Inspiration</Link>

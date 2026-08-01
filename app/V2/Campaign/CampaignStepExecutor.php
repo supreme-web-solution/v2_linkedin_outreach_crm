@@ -49,7 +49,7 @@ class CampaignStepExecutor
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $message = $this->resolver->messageText($node, $firstName);
 
-        Log::info('[Campaign] CampaignStepExecutor', [
+        Log::debug('[Campaign] CampaignStepExecutor', [
             'step' => $normalized,
             'lead_id' => $lead->id,
             'recipient_id' => $recipientId,
@@ -268,7 +268,7 @@ class CampaignStepExecutor
                 $result = $callback($providerKey);
                 $attempts[] = ['provider' => $providerKey, 'status' => 'completed'];
 
-                Log::info('[Campaign] Provider step OK', [
+                Log::debug('[Campaign] Provider step OK', [
                     'operation' => $operation,
                     'provider' => $providerKey,
                 ]);

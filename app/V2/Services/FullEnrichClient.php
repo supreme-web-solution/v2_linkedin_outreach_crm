@@ -34,21 +34,7 @@ class FullEnrichClient
 
     public function enrich(LeadEnrichmentInput $input): LeadEnrichmentResult
     {
-        if (! $this->isConfigured()) {
-            Log::info('[FullEnrich] skipped — API key not configured');
-
-            return new LeadEnrichmentResult;
-        }
-
-        if (self::$creditsExhausted) {
-            Log::info('[FullEnrich] skipped — provider credits exhausted');
-
-            return new LeadEnrichmentResult;
-        }
-
-        if (! $input->needsExternalEnrichment()) {
-            Log::info('[FullEnrich] skipped — email and phone already present');
-
+        if (! $this->isConfigured() || self::$creditsExhausted || ! $input->needsExternalEnrichment()) {
             return new LeadEnrichmentResult;
         }
 
@@ -57,8 +43,6 @@ class FullEnrichClient
             || $linkedinUrl;
 
         if (! $hasIdentity) {
-            Log::info('[FullEnrich] skipped — insufficient identity (need linkedin URL or name + company)');
-
             return new LeadEnrichmentResult;
         }
 
@@ -69,8 +53,6 @@ class FullEnrichClient
         ]));
 
         if ($enrichFields === []) {
-            Log::info('[FullEnrich] skipped — no enrich fields requested');
-
             return new LeadEnrichmentResult;
         }
 
@@ -86,13 +68,6 @@ class FullEnrichClient
             ]],
         ];
 
-        Log::info('[FullEnrich] → POST /contact/enrich/bulk', [
-            'linkedin_url' => $linkedinUrl,
-            'enrich_fields' => $enrichFields,
-            'needs_email' => $input->needsEmail(),
-            'needs_phone' => $input->needsPhone(),
-        ]);
-
         $startResponse = $this->request('post', '/contact/enrich/bulk', $payload);
         if ($this->isCreditsInsufficientResponse($startResponse)) {
             return new LeadEnrichmentResult;
@@ -101,17 +76,12 @@ class FullEnrichClient
         $start = $startResponse['data'];
         $enrichmentId = (string) (Arr::get($start, 'enrichment_id') ?? '');
         if ($enrichmentId === '') {
-            Log::warning('[FullEnrich] ✗ POST /contact/enrich/bulk → no enrichment_id', [
+            Log::warning('[FullEnrich] no enrichment_id returned', [
                 'http_status' => $startResponse['http_status'],
-                'response_keys' => array_keys($start),
             ]);
 
             return new LeadEnrichmentResult;
         }
-
-        Log::info('[FullEnrich] ✓ POST /contact/enrich/bulk → queued', [
-            'enrichment_id' => $enrichmentId,
-        ]);
 
         $deadline = microtime(true) + (int) config('services.fullenrich.poll_timeout_seconds', 90);
         $interval = (int) config('services.fullenrich.poll_interval_seconds', 3);
@@ -119,20 +89,11 @@ class FullEnrichClient
 
         while (microtime(true) < $deadline) {
             if (self::$creditsExhausted) {
-                Log::info('[FullEnrich] stopped polling — provider credits exhausted', [
-                    'enrichment_id' => $enrichmentId,
-                    'poll_attempts' => $pollAttempt,
-                ]);
-
                 return new LeadEnrichmentResult;
             }
 
             sleep(max(1, $interval));
             $pollAttempt++;
-
-            Log::info('[FullEnrich] → GET /contact/enrich/bulk/'.$enrichmentId, [
-                'poll_attempt' => $pollAttempt,
-            ]);
 
             $pollResponse = $this->request('get', '/contact/enrich/bulk/'.$enrichmentId);
             if ($this->isCreditsInsufficientResponse($pollResponse)) {
@@ -145,9 +106,8 @@ class FullEnrichClient
             if (in_array($status, ['FINISHED', 'COMPLETED', 'DONE'], true)) {
                 $parsed = $this->parseContactResult($result, $input);
 
-                Log::info('[FullEnrich] ✓ enrichment finished', [
+                Log::info('[FullEnrich] finished', [
                     'enrichment_id' => $enrichmentId,
-                    'status' => $status,
                     'poll_attempts' => $pollAttempt,
                     'email_found' => ($parsed->email ?? '') !== '',
                     'phone_found' => ($parsed->phone ?? '') !== '',
@@ -157,23 +117,16 @@ class FullEnrichClient
             }
 
             if ($this->isTerminalFailureStatus($status)) {
-                Log::warning('[FullEnrich] ✗ enrichment stopped', [
+                Log::warning('[FullEnrich] stopped', [
                     'enrichment_id' => $enrichmentId,
                     'status' => $status,
-                    'poll_attempts' => $pollAttempt,
                 ]);
 
                 return new LeadEnrichmentResult;
             }
-
-            Log::info('[FullEnrich] … polling', [
-                'enrichment_id' => $enrichmentId,
-                'status' => $status !== '' ? $status : 'PENDING',
-                'poll_attempt' => $pollAttempt,
-            ]);
         }
 
-        Log::warning('[FullEnrich] ✗ enrichment timed out', [
+        Log::warning('[FullEnrich] timed out', [
             'enrichment_id' => $enrichmentId,
             'poll_attempts' => $pollAttempt,
         ]);
@@ -190,9 +143,8 @@ class FullEnrichClient
 
         if ($response['http_status'] === 402 || $status === 'CREDITS_INSUFFICIENT') {
             if (! self::$creditsExhausted) {
-                Log::warning('[FullEnrich] ✗ provider credits exhausted — stopping further lookups', [
+                Log::warning('[FullEnrich] credits exhausted — further lookups skipped', [
                     'http_status' => $response['http_status'],
-                    'status' => $status !== '' ? $status : 'CREDITS_INSUFFICIENT',
                 ]);
             }
 

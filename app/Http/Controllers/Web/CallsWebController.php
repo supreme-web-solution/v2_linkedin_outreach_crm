@@ -616,7 +616,7 @@ class CallsWebController extends Controller
         $source = (string) ($result['analysis']['source'] ?? 'heuristic');
         $notice = $source === 'openai'
             ? 'AI suggestion updated.'
-            : 'Suggestion updated (using built-in rules — set a valid OPENAI_API_KEY in .env for full AI).';
+            : 'Suggestion updated (using built-in rules — AI is temporarily unavailable).';
 
         return back()->with('success', $notice);
     }

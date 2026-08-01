@@ -45,7 +45,7 @@ class LeadController extends Controller
         $organizationId = (int) $request->attributes->get('v2OrganizationId');
         $data           = LeadSearchRequestData::fromRequest($request);
 
-        Log::info('[Search] Incoming search request', [
+        Log::debug('[Search] Incoming search request', [
             'user_id'  => $user->id,
             'org_id'   => $organizationId,
             'params'   => array_filter($data, fn ($v) => $v !== null && $v !== '' && $v !== []),
@@ -61,7 +61,7 @@ class LeadController extends Controller
             ], 422);
         }
 
-        Log::info('[Search] Using Unipile account '.$unipileAccountId.' for user '.$user->id);
+        Log::debug('[Search] Using Unipile account '.$unipileAccountId.' for user '.$user->id);
 
         $providerKey = $this->providerManager->defaultProvider();
         /** @var UnipileProvider $provider */
@@ -70,7 +70,7 @@ class LeadController extends Controller
         // ── Route: single profile import by URL ──────────────────────────────
         $profileUrl = $data['profile_url'] ?? null;
         if ($profileUrl) {
-            Log::info('[Search] Profile-URL import', ['url' => $profileUrl]);
+            Log::debug('[Search] Profile-URL import', ['url' => $profileUrl]);
             try {
                 $profileData = $provider->getProfileByUrl($profileUrl, $unipileAccountId);
                 $elements = [$profileData];
@@ -91,7 +91,7 @@ class LeadController extends Controller
                 ], 422);
             }
 
-            Log::info('[Search] URL-based search', ['url' => $data['linkedin_url']]);
+            Log::debug('[Search] URL-based search', ['url' => $data['linkedin_url']]);
             try {
                 $result = $provider->searchFromUrl(
                     $data['linkedin_url'],
@@ -145,7 +145,7 @@ class LeadController extends Controller
             }
         }
 
-        Log::info('[Search] Results ready', [
+        Log::debug('[Search] Results ready', [
             'count'   => count($elements),
             'requested_limit' => $requestedLimit,
             'persist' => ($data['persist_results'] ?? true),
@@ -214,7 +214,7 @@ class LeadController extends Controller
             }
         }
 
-        Log::info('[Search] Stored '.$stored.' leads for user '.$user->id);
+        Log::debug('[Search] Stored '.$stored.' leads for user '.$user->id);
 
         return response()->json([
             'data'         => $result,

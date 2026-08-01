@@ -42,7 +42,6 @@ class FetchSnEmailBatchJob implements ShouldQueue
         Log::info('[FetchSnEmailBatchJob] started', [
             'user_id' => $this->userId,
             'list_hash' => $this->listHash,
-            'lead_ids' => $this->snLeadIds,
             'count' => count($this->snLeadIds),
         ]);
 

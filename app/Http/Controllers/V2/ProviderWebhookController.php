@@ -21,17 +21,14 @@ class ProviderWebhookController extends Controller
 
     public function unipile(Request $request): JsonResponse
     {
-        \Illuminate\Support\Facades\Log::info('[Unipile webhook] callback received', [
-            'path' => $request->path(),
-            'query' => $request->query(),
-            'event_type' => $request->input('type') ?? $request->input('event'),
-            'account_id' => $request->input('account_id'),
-        ]);
-
         $provider = $this->providerManager->webhook('unipile');
         $rawBody = (string) $request->getContent();
 
         if (!$provider->verifySignature($request->headers->all(), $rawBody)) {
+            \Illuminate\Support\Facades\Log::warning('[Unipile webhook] invalid signature', [
+                'path' => $request->path(),
+            ]);
+
             return response()->json(['message' => 'Invalid webhook signature.'], 401);
         }
 

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\V2\Services\OpenAiUserError;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -154,7 +155,7 @@ class ChatGPT
                 'error' => $th->getMessage(),
                 'trace' => $th->getTraceAsString()
             ]);
-            throw $th;
+            throw new \RuntimeException(OpenAiUserError::fromThrowable($th), (int) $th->getCode(), $th);
         }
 
         $words = 0;
@@ -695,7 +696,7 @@ EOD;
                 'error' => $th->getMessage(),
                 'trace' => $th->getTraceAsString()
             ]);
-            throw $th;
+            throw new \RuntimeException(OpenAiUserError::fromThrowable($th), (int) $th->getCode(), $th);
         }
 
         $words = 0;
@@ -805,7 +806,7 @@ EOD;
             ]);
             }
             
-            throw $th;
+            throw new \RuntimeException(OpenAiUserError::fromThrowable($th), (int) $th->getCode(), $th);
         }
 
         // Process the 2 completions from the single API response

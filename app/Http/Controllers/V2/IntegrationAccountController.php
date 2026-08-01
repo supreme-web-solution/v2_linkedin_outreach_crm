@@ -131,7 +131,7 @@ class IntegrationAccountController extends Controller
 
         $providerKey = $this->providerManager->defaultProvider();
         $baseUrl = config('services.unipile.base_url');
-        Log::info('[Connect] Cookie connection attempt', [
+        Log::debug('[Connect] Cookie connection attempt', [
             'user_id'  => $user->id,
             'base_url' => $baseUrl,
             'has_key'  => !empty(config('services.unipile.api_key')),
@@ -179,7 +179,7 @@ class IntegrationAccountController extends Controller
 
         $providerKey = $this->providerManager->defaultProvider();
         $baseUrl = config('services.unipile.base_url');
-        Log::info('[Connect] Credentials connection attempt', [
+        Log::debug('[Connect] Credentials connection attempt', [
             'user_id'  => $user->id,
             'email'    => $data['email'],
             'base_url' => $baseUrl,
@@ -191,7 +191,7 @@ class IntegrationAccountController extends Controller
                 $data['email'],
                 $data['password'],
             );
-            Log::info('[Connect] Credentials connection success', ['result' => $result]);
+            Log::debug('[Connect] Credentials connection success', ['result' => $result]);
         } catch (\Throwable $e) {
             Log::error('[Connect] Credentials connection failed', ['error' => $e->getMessage()]);
             $message = $e->getMessage();

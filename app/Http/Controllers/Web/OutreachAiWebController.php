@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use App\V2\Services\OpenAIContentService;
+use App\V2\Services\OpenAiUserError;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -40,7 +41,7 @@ class OutreachAiWebController extends Controller
                 trim((string) ($data['email_subject'] ?? '')),
             );
         } catch (\Throwable $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
+            return response()->json(['message' => OpenAiUserError::fromThrowable($e)], 422);
         }
 
         return response()->json([

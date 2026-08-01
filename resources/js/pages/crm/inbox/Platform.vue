@@ -1009,7 +1009,7 @@ function onComposerKeydown(e: KeyboardEvent) {
                             <button type="submit" class="w-full rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50" :disabled="settingsForm.processing">
                                 Save for this campaign
                             </button>
-                            <p v-if="!aiConfigured" class="text-[10px] text-amber-600">OPENAI_API_KEY required for AI replies.</p>
+                            <p v-if="!aiConfigured" class="text-[10px] text-amber-600">AI replies are temporarily unavailable. Contact your administrator.</p>
                         </form>
                     </div>
 

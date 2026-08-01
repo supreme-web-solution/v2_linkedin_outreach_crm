@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Web;
 use App\Http\Controllers\Controller;
 use App\Models\AiContent;
 use App\Services\ChatGPT;
+use App\V2\Services\OpenAiUserError;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
@@ -129,7 +130,7 @@ class AiMessagesWebController extends Controller
             return response()->json($result);
         } catch (\Throwable $th) {
             return response()->json([
-                'message' => $th->getMessage(),
+                'message' => OpenAiUserError::fromThrowable($th),
             ], 422);
         }
     }

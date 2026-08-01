@@ -645,7 +645,7 @@ const channelActionEntries = computed(() =>
                     </form>
                 </div>
             </div>
-            <p v-if="!aiConfigured" class="mt-3 text-xs text-amber-600">Add OPENAI_API_KEY to enable AI auto-replies on every inbox channel below.</p>
+            <p v-if="!aiConfigured" class="mt-3 text-xs text-amber-600">AI auto-replies are temporarily unavailable. Contact your administrator.</p>
         </div>
 
         <div class="rounded-xl border bg-card p-4">

@@ -48,7 +48,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
         CampaignCompletionService $completion,
         CampaignLinkedInGuard $linkedInGuard,
     ): void {
-        Log::info('[Campaign] ProcessCampaignLeadJob started', [
+        Log::debug('[Campaign] ProcessCampaignLeadJob started', [
             'campaign_id' => $this->campaignId,
             'campaign_lead_id' => $this->campaignLeadId,
             'run_id' => $this->campaignRunId,
@@ -56,7 +56,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
 
         $campaign = V2Campaign::query()->find($this->campaignId);
         if (!$campaign || !in_array($campaign->status, ['active', 'running'], true)) {
-            Log::info('[Campaign] Job skipped — campaign missing or not running', [
+            Log::debug('[Campaign] Job skipped — campaign missing or not running', [
                 'campaign_id' => $this->campaignId,
                 'status' => $campaign?->status,
             ]);
@@ -80,7 +80,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
             ->first();
 
         if (!$lead || in_array($lead->status, ['done', 'skipped'], true)) {
-            Log::info('[Campaign] Job skipped — lead missing or finished', [
+            Log::debug('[Campaign] Job skipped — lead missing or finished', [
                 'lead_id' => $this->campaignLeadId,
                 'status' => $lead?->status,
             ]);
@@ -98,13 +98,13 @@ class ProcessCampaignLeadJob implements ShouldQueue
         );
 
         if ((int) $progress->next_node_key === self::SEQUENCE_COMPLETE_KEY && (int) $progress->run_status === 4) {
-            Log::info('[Campaign] Job skipped — sequence already complete', ['lead_id' => $lead->id]);
+            Log::debug('[Campaign] Job skipped — sequence already complete', ['lead_id' => $lead->id]);
 
             return;
         }
 
         if ($progress->next_run_at !== null && $progress->next_run_at->isFuture()) {
-            Log::info('[Campaign] Job skipped — waiting for scheduled time', [
+            Log::debug('[Campaign] Job skipped — waiting for scheduled time', [
                 'lead_id' => $lead->id,
                 'next_run_at' => $progress->next_run_at->toIso8601String(),
             ]);
@@ -123,7 +123,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
         $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
         $nodeKey = (int) ($progress->next_node_key ?: 1);
         if ($nodeKey === self::SEQUENCE_COMPLETE_KEY) {
-            Log::info('[Campaign] Job skipped — no remaining steps', ['lead_id' => $lead->id]);
+            Log::debug('[Campaign] Job skipped — no remaining steps', ['lead_id' => $lead->id]);
 
             return;
         }
@@ -177,7 +177,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
         $nodeLabel = $resolver->nodeLabel($node);
         $nodeKey = (int) ($node['key'] ?? 0);
 
-        Log::info('[Campaign] Executing step', [
+        Log::debug('[Campaign] Executing step', [
             'campaign_id' => $campaign->id,
             'lead_id' => $lead->id,
             'node_key' => $nodeKey,
@@ -188,7 +188,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
         $resolved = $profileService->resolveRecipient($campaign, $lead);
         if ($resolved['provider_id'] !== '' && $resolved['provider_id'] !== $lead->provider_profile_id) {
             $lead->forceFill(['provider_profile_id' => $resolved['provider_id']])->save();
-            Log::info('[Campaign] Updated lead provider_profile_id', [
+            Log::debug('[Campaign] Updated lead provider_profile_id', [
                 'lead_id' => $lead->id,
                 'provider_id' => $resolved['provider_id'],
                 'source' => $resolved['source'],
@@ -299,7 +299,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
         $completed = is_array($progress->completed_keys) ? $progress->completed_keys : [];
         $completed[] = $nodeKey;
 
-        Log::info('[Campaign] Skipping invite — already connected', [
+        Log::debug('[Campaign] Skipping invite — already connected', [
             'lead_id' => $lead->id,
             'node_key' => $nodeKey,
         ]);
@@ -443,7 +443,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
         $nodeKey = (int) ($node['key'] ?? 0);
         $completed = is_array($progress->completed_keys) ? $progress->completed_keys : [];
 
-        Log::info('[Campaign] Step result', [
+        Log::debug('[Campaign] Step result', [
             'lead_id' => $lead->id,
             'node_key' => $nodeKey,
             'status' => $status,
@@ -514,7 +514,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
             $nextKey = $resolver->resolveNextNodeKey($nodes, $nodeKey, $progress->acceptance_status);
             $runAt = $result['next_run_at'] ?? now()->addSeconds($waitSeconds);
 
-            Log::info('[Campaign] Wait scheduled', [
+            Log::debug('[Campaign] Wait scheduled', [
                 'lead_id' => $lead->id,
                 'node_key' => $nodeKey,
                 'next_node_key' => $nextKey,

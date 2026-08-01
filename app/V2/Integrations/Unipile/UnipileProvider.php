@@ -73,10 +73,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     {
         $quiet = (bool) \Illuminate\Support\Arr::pull($payload, '_quiet', false);
         if ($this->isMock()) {
-            Log::info('[Unipile] MOCK request', [
+            Log::debug('[Unipile] MOCK request', [
                 'method' => strtoupper($method),
                 'endpoint' => $endpoint,
-                'payload' => $payload,
             ]);
             return [
                 'mock' => true,
@@ -102,9 +101,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         if (isset($logPayload['access_token'])) {
             $logPayload['access_token'] = substr((string)$logPayload['access_token'], 0, 8).'…[redacted]';
         }
-        Log::info('[Unipile] → '.$normalizedMethod.' '.$endpoint, [
+        Log::debug('[Unipile] → '.$normalizedMethod.' '.$endpoint, [
             'payload' => $logPayload,
-            'base_url' => $this->baseUrl(),
         ]);
 
         try {
@@ -114,7 +112,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             $responseBody = $exception->response?->json();
             $responseText = $exception->response?->body() ?? $exception->getMessage();
             if ($quiet && $status === 422) {
-                Log::info('[Unipile] Recipient not reachable (verify lookup)', [
+                Log::debug('[Unipile] Recipient not reachable (verify lookup)', [
                     'endpoint' => $endpoint,
                 ]);
             } else {
@@ -158,10 +156,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         $responseData = $response->json() ?? [];
-        Log::info('[Unipile] ✓ '.$normalizedMethod.' '.$endpoint.' → HTTP '.$response->status(), [
-            'response_keys' => array_keys($responseData),
-            'items_count' => count(Arr::get($responseData, 'items', Arr::get($responseData, 'data.items', []))),
-        ]);
+        Log::debug('[Unipile] ✓ '.$normalizedMethod.' '.$endpoint.' → HTTP '.$response->status());
 
         return $responseData;
     }
@@ -175,11 +170,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     private function requestMultipart(string $method, string $endpoint, array $fields = [], array $files = []): array
     {
         if ($this->isMock()) {
-            Log::info('[Unipile] MOCK multipart request', [
+            Log::debug('[Unipile] MOCK multipart request', [
                 'method' => strtoupper($method),
                 'endpoint' => $endpoint,
-                'fields' => $fields,
-                'files' => array_map(fn (array $file) => $file['filename'] ?? basename($file['path']), $files),
             ]);
 
             return [
@@ -199,13 +192,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $normalizedMethod = strtoupper($method);
         $logFields = $fields;
 
-        Log::info('[Unipile] → '.$normalizedMethod.' '.$endpoint.' (multipart)', [
-            'fields' => $logFields,
-            'files' => array_map(fn (array $file) => [
-                'field' => $file['field'] ?? 'attachments',
-                'filename' => $file['filename'] ?? basename($file['path']),
-            ], $files),
-            'base_url' => $this->baseUrl(),
+        Log::debug('[Unipile] → '.$normalizedMethod.' '.$endpoint.' (multipart)', [
+            'fields' => array_keys($logFields),
+            'files' => count($files),
         ]);
 
         try {
@@ -263,9 +252,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         $responseData = $response->json() ?? [];
-        Log::info('[Unipile] ✓ '.$normalizedMethod.' '.$endpoint.' (multipart) → HTTP '.$response->status(), [
-            'response_keys' => array_keys($responseData),
-        ]);
+        Log::debug('[Unipile] ✓ '.$normalizedMethod.' '.$endpoint.' (multipart) → HTTP '.$response->status());
 
         return $responseData;
     }
@@ -1053,9 +1040,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             throw new UnipileException('Messaging API key is missing.', 500);
         }
 
-        Log::info('[Unipile] → POST '.$endpoint.' (multipart message)', [
+        Log::debug('[Unipile] → POST '.$endpoint.' (multipart message)', [
             'fields' => array_keys($fields),
-            'files' => array_map(fn (array $f) => $f['filename'] ?? basename($f['path']), $files),
+            'files' => count($files),
         ]);
 
         try {

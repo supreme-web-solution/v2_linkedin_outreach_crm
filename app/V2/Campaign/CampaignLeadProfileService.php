@@ -31,7 +31,7 @@ class CampaignLeadProfileService
             }
         }
 
-        Log::info('[Campaign] resolveRecipient', [
+        Log::debug('[Campaign] resolveRecipient', [
             'campaign_id' => $campaign->id,
             'lead_id' => $lead->id,
             'raw_id' => $raw,
@@ -65,7 +65,7 @@ class CampaignLeadProfileService
                 $normalized = $provider->getProfileByUrl($profileUrl, $accountId);
                 $providerId = (string) ($normalized['provider_id'] ?? $normalized['id'] ?? '');
 
-                Log::info('[Campaign] Resolved via profile URL', [
+                Log::debug('[Campaign] Resolved via profile URL', [
                     'lead_id' => $lead->id,
                     'provider_id' => $providerId,
                     'network_distance' => $normalized['network_distance'] ?? null,
@@ -89,7 +89,7 @@ class CampaignLeadProfileService
                 );
             }
 
-            Log::info('[Campaign] Resolved via identifier', [
+            Log::debug('[Campaign] Resolved via identifier', [
                 'lead_id' => $lead->id,
                 'identifier' => $raw,
                 'provider_id' => $providerId,
@@ -125,7 +125,7 @@ class CampaignLeadProfileService
 
         foreach ($candidates as $value) {
             if ($this->isFirstDegree($value)) {
-                Log::info('[Campaign] Lead is 1st-degree connection', [
+                Log::debug('[Campaign] Lead is 1st-degree connection', [
                     'lead_id' => $lead->id,
                     'signal' => $value,
                 ]);
@@ -135,7 +135,7 @@ class CampaignLeadProfileService
         }
 
         if (Arr::get($profile, 'is_relationship') === true || Arr::get($profile, 'connected') === true) {
-            Log::info('[Campaign] Lead profile marks connected relationship', ['lead_id' => $lead->id]);
+            Log::debug('[Campaign] Lead profile marks connected relationship', ['lead_id' => $lead->id]);
 
             return true;
         }

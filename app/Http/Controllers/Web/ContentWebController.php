@@ -8,6 +8,7 @@ use App\Models\V2ContentPost;
 use App\Models\V2IntegrationAccount;
 use App\V2\Services\CloudinaryMediaService;
 use App\V2\Services\OpenAIContentService;
+use App\V2\Services\OpenAiUserError;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -282,17 +283,21 @@ class ContentWebController extends Controller
 
         if (!$this->openai->isConfigured()) {
             return response()->json([
-                'message' => 'OPENAI_API_KEY is missing. Add it in your .env and refresh.',
+                'message' => OpenAiUserError::NOT_CONFIGURED,
             ], 422);
         }
 
-        $result = $this->openai->generateLinkedInPost(
-            $data['topic'],
-            $data['style'] ?? 'professional',
-            $data['length'] ?? 'medium',
-            (bool) ($data['generate_image'] ?? false),
-            (int) auth()->id(),
-        );
+        try {
+            $result = $this->openai->generateLinkedInPost(
+                $data['topic'],
+                $data['style'] ?? 'professional',
+                $data['length'] ?? 'medium',
+                (bool) ($data['generate_image'] ?? false),
+                (int) auth()->id(),
+            );
+        } catch (\Throwable $e) {
+            return response()->json(['message' => OpenAiUserError::fromThrowable($e)], 422);
+        }
 
         $response = [
             'content' => $result['content'],
@@ -320,10 +325,14 @@ class ContentWebController extends Controller
         ]);
 
         if (!$this->openai->isConfigured()) {
-            return response()->json(['message' => 'OPENAI_API_KEY is missing.'], 422);
+            return response()->json(['message' => OpenAiUserError::NOT_CONFIGURED], 422);
         }
 
-        $improved = $this->openai->improvePost($data['content'], $data['action']);
+        try {
+            $improved = $this->openai->improvePost($data['content'], $data['action']);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => OpenAiUserError::fromThrowable($e)], 422);
+        }
         [$content, $hashtags] = $this->splitImprovedContent($improved);
 
         return response()->json([
@@ -342,14 +351,18 @@ class ContentWebController extends Controller
         ]);
 
         if (!$this->openai->isConfigured()) {
-            return response()->json(['message' => 'OPENAI_API_KEY is missing.'], 422);
+            return response()->json(['message' => OpenAiUserError::NOT_CONFIGURED], 422);
         }
 
-        $rewritten = $this->openai->rewritePost(
-            $data['content'],
-            $data['tone'] ?? 'professional',
-            $data['mode'] ?? null,
-        );
+        try {
+            $rewritten = $this->openai->rewritePost(
+                $data['content'],
+                $data['tone'] ?? 'professional',
+                $data['mode'] ?? null,
+            );
+        } catch (\Throwable $e) {
+            return response()->json(['message' => OpenAiUserError::fromThrowable($e)], 422);
+        }
         [$content, $hashtags] = $this->splitImprovedContent($rewritten);
 
         return response()->json([
@@ -366,10 +379,15 @@ class ContentWebController extends Controller
         ]);
 
         if (!$this->openai->isConfigured()) {
-            return response()->json(['message' => 'OPENAI_API_KEY is missing.'], 422);
+            return response()->json(['message' => OpenAiUserError::NOT_CONFIGURED], 422);
         }
 
-        $image = $this->openai->generateImage($data['prompt'], (int) auth()->id());
+        try {
+            $image = $this->openai->generateImage($data['prompt'], (int) auth()->id());
+        } catch (\Throwable $e) {
+            return response()->json(['message' => OpenAiUserError::fromThrowable($e)], 422);
+        }
+
         return response()->json($image);
     }
 

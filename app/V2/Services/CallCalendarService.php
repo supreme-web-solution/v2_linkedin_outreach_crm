@@ -965,14 +965,14 @@ class CallCalendarService
 
         $email = trim((string) Arr::get($account?->meta ?? [], 'email', ''));
         if ($email !== '') {
-            Log::info('[CallCalendar] Using connected account email as calendar id fallback', [
+            Log::debug('[CallCalendar] Using connected account email as calendar id fallback', [
                 'user_id' => $userId,
             ]);
 
             return $email;
         }
 
-        Log::info('[CallCalendar] Using "primary" as calendar id fallback', [
+        Log::debug('[CallCalendar] Using "primary" as calendar id fallback', [
             'user_id' => $userId,
         ]);
 

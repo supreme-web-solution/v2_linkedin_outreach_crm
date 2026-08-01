@@ -72,6 +72,33 @@ const linkedinAdvancedOpen = ref(false);
 
 const linkedinChannel = computed(() => props.connectedChannels?.find((c) => c.channel === 'linkedin') ?? null);
 
+const CALENDAR_CHANNELS = new Set(['google_calendar', 'outlook_calendar']);
+
+const messagingChannels = computed(() =>
+    (props.connectedChannels ?? []).filter((c) => !CALENDAR_CHANNELS.has(c.channel)),
+);
+
+const calendarChannels = computed(() =>
+    (props.connectedChannels ?? []).filter((c) => CALENDAR_CHANNELS.has(c.channel)),
+);
+
+const channelSections = computed(() =>
+    [
+        {
+            key: 'messaging',
+            title: 'Messaging & social',
+            description: 'Used for Multi-Channel Outreach and the unified inbox.',
+            channels: messagingChannels.value,
+        },
+        {
+            key: 'calendars',
+            title: 'Calendars',
+            description: 'Used by Call Manager to create events when you book calls.',
+            channels: calendarChannels.value,
+        },
+    ].filter((section) => section.channels.length > 0),
+);
+
 const connectedPlatformCount = computed(() => props.connectedChannels?.filter((c) => c.connected).length ?? 0);
 const totalPlatformCount = computed(() => props.connectedChannels?.length ?? 0);
 
@@ -294,51 +321,73 @@ function removeEsp(id: number, provider: string) {
         </p>
 
         <!-- Multi-channel outreach -->
-        <section v-if="connectedChannels?.length" class="rounded-xl border border-border bg-card shadow-sm">
+        <section v-if="channelSections.length" class="rounded-xl border border-border bg-card shadow-sm">
             <div class="border-b border-border px-4 py-3">
                 <h2 class="text-sm font-semibold">Connected channels</h2>
-                <p class="text-xs text-muted-foreground">Connect LinkedIn and other platforms for <Link href="/outreach" class="text-primary hover:underline">Multi-Channel Outreach</Link>, the unified inbox, and <Link href="/calls" class="text-primary hover:underline">Call Manager</Link> calendar sync.</p>
+                <p class="text-xs text-muted-foreground">
+                    Connect platforms for
+                    <Link href="/outreach" class="text-primary hover:underline">Multi-Channel Outreach</Link>,
+                    the unified inbox, and
+                    <Link href="/calls" class="text-primary hover:underline">Call Manager</Link>.
+                </p>
             </div>
-            <div class="grid gap-3 p-4 sm:grid-cols-2">
+
+            <div class="divide-y divide-border">
                 <div
-                    v-for="ch in connectedChannels"
-                    :key="ch.channel"
-                    class="flex items-center justify-between rounded-lg border border-border px-3 py-3"
+                    v-for="section in channelSections"
+                    :key="section.key"
+                    class="space-y-3 p-4"
                 >
-                    <div class="flex items-center gap-3">
-                        <OutreachChannelIcon :channel="ch.channel" class="h-5 w-5" />
-                        <div>
-                            <p class="text-sm font-medium">{{ ch.label }}</p>
-                            <p class="text-xs text-muted-foreground">{{ channelStatusLabel(ch) }}</p>
-                            <p v-if="ch.channel === 'google_calendar' || ch.channel === 'outlook_calendar'" class="text-[11px] text-muted-foreground">Used by Call Manager to create events when you book calls.</p>
-                        </div>
+                    <div>
+                        <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            {{ section.title }}
+                        </h3>
+                        <p class="mt-0.5 text-xs text-muted-foreground">
+                            {{ section.description }}
+                        </p>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <Button
-                            v-if="!ch.connected"
-                            type="button"
-                            size="sm"
-                            @click="handleChannelConnect(ch)"
+
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <div
+                            v-for="ch in section.channels"
+                            :key="ch.channel"
+                            class="flex items-center justify-between gap-3 rounded-lg border border-border/80 bg-muted/40 px-3 py-3 shadow-sm shadow-black/[0.02]"
                         >
-                            {{ ch.status === 'disconnected' ? 'Reconnect' : 'Connect' }}
-                        </Button>
-                        <template v-else>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                @click="handleChannelConnect(ch)"
-                            >
-                                Reconnect
-                            </Button>
-                            <button
-                                type="button"
-                                class="text-xs text-red-600 hover:underline"
-                                @click="handleChannelDisconnect(ch)"
-                            >
-                                Disconnect
-                            </button>
-                        </template>
+                            <div class="flex min-w-0 items-center gap-3">
+                                <OutreachChannelIcon :channel="ch.channel" class="h-5 w-5 shrink-0" />
+                                <div class="min-w-0">
+                                    <p class="text-sm font-medium">{{ ch.label }}</p>
+                                    <p class="truncate text-xs text-muted-foreground">{{ channelStatusLabel(ch) }}</p>
+                                </div>
+                            </div>
+                            <div class="flex shrink-0 items-center gap-2">
+                                <Button
+                                    v-if="!ch.connected"
+                                    type="button"
+                                    size="sm"
+                                    @click="handleChannelConnect(ch)"
+                                >
+                                    {{ ch.status === 'disconnected' ? 'Reconnect' : 'Connect' }}
+                                </Button>
+                                <template v-else>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        @click="handleChannelConnect(ch)"
+                                    >
+                                        Reconnect
+                                    </Button>
+                                    <button
+                                        type="button"
+                                        class="text-xs text-red-600 hover:underline"
+                                        @click="handleChannelDisconnect(ch)"
+                                    >
+                                        Disconnect
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

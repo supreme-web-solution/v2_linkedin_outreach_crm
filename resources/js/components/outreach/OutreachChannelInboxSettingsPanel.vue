@@ -134,7 +134,7 @@ function patchChannel(channel: string, patch: Partial<ChannelInboxSettings>) {
         </div>
 
         <p v-if="!aiConfigured" class="border-t border-border px-4 py-3 text-xs text-amber-600">
-            Add OPENAI_API_KEY to enable AI auto-replies.
+            AI features are temporarily unavailable. Contact your administrator.
         </p>
     </div>
 </template>

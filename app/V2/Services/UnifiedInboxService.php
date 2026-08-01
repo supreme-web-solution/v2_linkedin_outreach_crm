@@ -42,7 +42,7 @@ class UnifiedInboxService
                 return $this->enrichConversationMeta($existing, $payload);
             }
 
-            \Illuminate\Support\Facades\Log::info('[Inbox] Ignored group chat webhook for 1:1 outreach inbox', [
+            \Illuminate\Support\Facades\Log::debug('[Inbox] Ignored group chat webhook for 1:1 outreach inbox', [
                 'user_id' => $userId,
                 'provider' => $provider,
                 'chat_id' => $chatId,
@@ -1634,7 +1634,7 @@ class UnifiedInboxService
             return;
         }
 
-        \Illuminate\Support\Facades\Log::info('[Inbox] Repaired provider chat id', [
+        \Illuminate\Support\Facades\Log::debug('[Inbox] Repaired provider chat id', [
             'conversation_id' => $conversation->id,
             'provider' => $conversation->provider,
             'from' => $current !== '' ? $current : null,

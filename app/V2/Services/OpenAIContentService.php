@@ -148,7 +148,11 @@ PROMPT;
             ]);
 
         if (!$response->ok()) {
-            throw new \RuntimeException('AI image generation failed: '.$response->body());
+            Log::warning('[OpenAIContentService] Image generation failed', [
+                'status' => $response->status(),
+                'body' => substr($response->body(), 0, 400),
+            ]);
+            throw new \RuntimeException(OpenAiUserError::fromHttp($response->status(), $response->body()));
         }
 
         $b64 = Arr::get($response->json(), 'data.0.b64_json');
@@ -199,9 +203,9 @@ PROMPT;
         if (!$response->ok()) {
             Log::warning('[OpenAIContentService] Chat completion failed', [
                 'status' => $response->status(),
-                'body' => $response->body(),
+                'body' => substr($response->body(), 0, 400),
             ]);
-            throw new \RuntimeException('OpenAI request failed: '.$response->body());
+            throw new \RuntimeException(OpenAiUserError::fromHttp($response->status(), $response->body()));
         }
 
         return trim((string) Arr::get($response->json(), 'choices.0.message.content', ''));
@@ -213,7 +217,7 @@ PROMPT;
     public function generateLinkedInComment(string $postContent, string $tone = 'professional'): string
     {
         if (!$this->isConfigured()) {
-            throw new \RuntimeException('OpenAI is not configured on the server.');
+            throw new \RuntimeException(OpenAiUserError::NOT_CONFIGURED);
         }
 
         $prompt = <<<PROMPT
@@ -246,7 +250,7 @@ PROMPT;
         string $emailSubject = '',
     ): string {
         if (! $this->isConfigured()) {
-            throw new \RuntimeException('OPENAI_API_KEY is missing. Add it in your .env file.');
+            throw new \RuntimeException(OpenAiUserError::NOT_CONFIGURED);
         }
 
         $channelLabel = ucfirst(str_replace('_', ' ', $channel));
@@ -353,7 +357,7 @@ PROMPT;
         array $options = [],
     ): string {
         if (! $this->isConfigured()) {
-            throw new \RuntimeException('OpenAI is not configured on the server.');
+            throw new \RuntimeException(OpenAiUserError::NOT_CONFIGURED);
         }
 
         $channelLabel = OutreachChannelRegistry::channelLabel($channel);
@@ -436,8 +440,9 @@ PROMPT;
         if (! $response->ok()) {
             Log::warning('[OpenAIContentService] Inbox reply failed', [
                 'status' => $response->status(),
+                'body' => substr($response->body(), 0, 400),
             ]);
-            throw new \RuntimeException('OpenAI request failed.');
+            throw new \RuntimeException(OpenAiUserError::fromHttp($response->status(), $response->body()));
         }
 
         return trim((string) Arr::get($response->json(), 'choices.0.message.content', ''));
