@@ -34,14 +34,15 @@ class ExtensionAuthController extends Controller
             return response()->json(['message' => 'Invalid credentials.'], 422);
         }
 
+        // Always ensure a workspace exists (same as web registration) before license checks.
+        $organization = $this->bootstrap->ensurePersonalOrganization($user);
+
         if (! $this->entitlements->canAccessCrm($user)) {
             return response()->json([
                 'message' => 'FE license required. Activate your account at /auth/fe after purchase.',
                 'error_code' => 'no_fe_license',
             ], 403);
         }
-
-        $organization = $this->bootstrap->ensurePersonalOrganization($user);
 
         $plainToken = 'v2ext_'.Str::random(64);
         $token = V2ExtensionToken::query()->create([

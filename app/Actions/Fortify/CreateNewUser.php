@@ -32,9 +32,11 @@ class CreateNewUser implements CreatesNewUsers
             'password' => $input['password'],
         ]);
 
+        // Always create a personal workspace so the web CRM and extension share an org.
+        app(UserBootstrapService::class)->ensurePersonalOrganization($user);
+
         if (! config('billing.require_entitlement', true)) {
             app(EntitlementService::class)->grant($user, config('billing.bundles.fe', ['FE']));
-            app(UserBootstrapService::class)->ensurePersonalOrganization($user);
         }
 
         return $user;
