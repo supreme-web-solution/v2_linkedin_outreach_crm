@@ -132,8 +132,7 @@ const calendarWeeks = computed(() => {
 const upcomingEvents = computed(() =>
     [...localEvents.value]
         .filter((e) => new Date(e.start) >= new Date())
-        .sort((a, b) => a.start.localeCompare(b.start))
-        .slice(0, 8),
+        .sort((a, b) => a.start.localeCompare(b.start)),
 );
 
 function formatTime(iso: string): string {
@@ -253,27 +252,27 @@ function typeIcon(type: string) {
 <template>
     <Head title="Calendar" />
 
-    <div class="flex flex-col gap-4 p-4">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-                <h1 class="text-xl font-semibold">Calendar</h1>
-                <p class="text-sm text-muted-foreground">
-                    Calls, scheduled messages, content posts, and reminders in one view. Drag events to another day to reschedule.
+    <div class="flex h-[calc(100dvh-7rem)] min-h-[32rem] flex-col gap-2 overflow-hidden p-3 sm:p-4">
+        <div class="flex shrink-0 flex-wrap items-center justify-between gap-2">
+            <div class="min-w-0">
+                <h1 class="text-lg font-semibold tracking-tight sm:text-xl">Calendar</h1>
+                <p class="text-xs text-muted-foreground sm:text-sm">
+                    Calls, messages, content, and reminders. Drag events to reschedule.
                 </p>
             </div>
-            <div class="flex items-center gap-1 rounded-lg border border-border bg-card p-1 shadow-sm">
+            <div class="flex items-center gap-1 rounded-lg border border-border bg-card p-0.5 shadow-sm">
                 <button
                     type="button"
-                    class="rounded-md p-2 hover:bg-muted"
+                    class="rounded-md p-1.5 hover:bg-muted"
                     aria-label="Previous month"
                     @click="goMonth(-1)"
                 >
                     <ChevronLeft class="h-4 w-4" />
                 </button>
-                <span class="min-w-[10rem] px-2 text-center text-sm font-medium">{{ monthLabel }}</span>
+                <span class="min-w-[9rem] px-1.5 text-center text-sm font-medium">{{ monthLabel }}</span>
                 <button
                     type="button"
-                    class="rounded-md p-2 hover:bg-muted"
+                    class="rounded-md p-1.5 hover:bg-muted"
                     aria-label="Next month"
                     @click="goMonth(1)"
                 >
@@ -284,7 +283,7 @@ function typeIcon(type: string) {
 
         <div
             v-if="toast"
-            class="rounded-lg border px-4 py-2 text-sm"
+            class="shrink-0 rounded-lg border px-3 py-1.5 text-sm"
             :class="toast.type === 'success'
                 ? 'border-green-500/30 bg-green-500/10 text-green-800 dark:text-green-300'
                 : 'border-red-500/30 bg-red-500/10 text-red-800 dark:text-red-300'"
@@ -292,30 +291,30 @@ function typeIcon(type: string) {
             {{ toast.message }}
         </div>
 
-        <div v-if="!hasOrg" class="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-700 dark:text-yellow-400">
+        <div v-if="!hasOrg" class="shrink-0 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400">
             Link your workspace through the extension first.
         </div>
 
         <template v-else>
-            <div class="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-blue-500" /> Calls</span>
-                <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-sky-500" /> Message sends</span>
-                <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-violet-500" /> Content</span>
-                <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-amber-500" /> Reminders</span>
+            <div class="flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-blue-500" /> Calls</span>
+                <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-sky-500" /> Message sends</span>
+                <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-violet-500" /> Content</span>
+                <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-amber-500" /> Reminders</span>
             </div>
 
-            <div class="grid gap-4 lg:grid-cols-[1fr_280px]">
-                <div class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-                    <div class="grid grid-cols-7 border-b border-border bg-muted/40 text-center text-xs font-medium text-muted-foreground">
-                        <div v-for="label in weekdayLabels" :key="label" class="px-2 py-2">{{ label }}</div>
+            <div class="grid min-h-0 flex-1 gap-3 lg:grid-cols-[1fr_260px]">
+                <div class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+                    <div class="grid shrink-0 grid-cols-7 border-b border-border bg-muted/40 text-center text-[11px] font-medium text-muted-foreground">
+                        <div v-for="label in weekdayLabels" :key="label" class="px-1 py-1.5">{{ label }}</div>
                     </div>
 
-                    <div class="grid grid-cols-7">
+                    <div class="grid min-h-0 flex-1 grid-cols-7 grid-rows-6">
                         <template v-for="(week, wi) in calendarWeeks" :key="wi">
                             <div
                                 v-for="cell in week"
                                 :key="cell.key"
-                                class="min-h-[7.5rem] border-b border-r border-border p-1.5 transition-colors last:border-r-0"
+                                class="min-h-0 overflow-hidden border-b border-r border-border p-1 transition-colors"
                                 :class="[
                                     !cell.inMonth && 'bg-muted/20 text-muted-foreground',
                                     cell.key === todayKey && 'ring-1 ring-inset ring-primary/40',
@@ -326,36 +325,36 @@ function typeIcon(type: string) {
                                 @drop.prevent="onDrop(cell.key)"
                             >
                                 <div
-                                    class="mb-1 flex items-center justify-between text-xs"
+                                    class="mb-0.5 flex items-center justify-between text-[11px] leading-none"
                                     :class="cell.key === todayKey ? 'font-semibold text-primary' : ''"
                                 >
                                     <span>{{ cell.date }}</span>
                                 </div>
 
-                                <div class="flex flex-col gap-0.5">
+                                <div class="flex min-h-0 flex-col gap-0.5 overflow-hidden">
                                     <button
-                                        v-for="event in eventsForDay(cell.key).slice(0, 3)"
+                                        v-for="event in eventsForDay(cell.key).slice(0, 2)"
                                         :key="event.id"
                                         type="button"
                                         draggable="true"
-                                        class="group flex w-full items-center gap-1 rounded border px-1 py-0.5 text-left text-[10px] leading-tight transition hover:opacity-90"
+                                        class="group flex w-full items-center gap-0.5 rounded border px-1 py-0.5 text-left text-[10px] leading-tight transition hover:opacity-90"
                                         :class="colorClasses[event.color] ?? colorClasses.blue"
                                         @click.stop="openDetail(event)"
                                         @dragstart="onDragStart(event, $event)"
                                         @dragend="onDragEnd"
                                     >
-                                        <GripVertical class="h-3 w-3 shrink-0 opacity-40 group-hover:opacity-70" />
+                                        <GripVertical class="h-2.5 w-2.5 shrink-0 opacity-40 group-hover:opacity-70" />
                                         <span class="truncate">{{ formatTime(event.start) }} {{ event.title }}</span>
                                         <Loader2
                                             v-if="reschedulingId === event.id"
-                                            class="ml-auto h-3 w-3 shrink-0 animate-spin opacity-70"
+                                            class="ml-auto h-2.5 w-2.5 shrink-0 animate-spin opacity-70"
                                         />
                                     </button>
                                     <p
-                                        v-if="eventsForDay(cell.key).length > 3"
-                                        class="px-1 text-[10px] text-muted-foreground"
+                                        v-if="eventsForDay(cell.key).length > 2"
+                                        class="px-0.5 text-[10px] leading-none text-muted-foreground"
                                     >
-                                        +{{ eventsForDay(cell.key).length - 3 }} more
+                                        +{{ eventsForDay(cell.key).length - 2 }} more
                                     </p>
                                 </div>
                             </div>
@@ -363,27 +362,35 @@ function typeIcon(type: string) {
                     </div>
                 </div>
 
-                <aside class="rounded-xl border border-border bg-card p-4 shadow-sm">
-                    <div class="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <aside class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+                    <div class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5 text-sm font-semibold">
                         <CalendarDays class="h-4 w-4 text-primary" />
                         Upcoming
+                        <span
+                            v-if="upcomingEvents.length"
+                            class="ml-auto rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                        >
+                            {{ upcomingEvents.length }}
+                        </span>
                     </div>
-                    <ul v-if="upcomingEvents.length" class="space-y-2">
-                        <li v-for="event in upcomingEvents" :key="event.id">
-                            <button
-                                type="button"
-                                class="w-full rounded-lg border border-border px-3 py-2 text-left text-sm transition hover:bg-muted/50"
-                                @click="openDetail(event)"
-                            >
-                                <div class="truncate font-medium">{{ event.title }}</div>
-                                <div class="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                                    <Clock class="h-3 w-3" />
-                                    {{ formatDateTime(event.start) }}
-                                </div>
-                            </button>
-                        </li>
-                    </ul>
-                    <p v-else class="text-sm text-muted-foreground">No upcoming events this month.</p>
+                    <div class="min-h-0 flex-1 overflow-y-auto p-3">
+                        <ul v-if="upcomingEvents.length" class="space-y-2">
+                            <li v-for="event in upcomingEvents" :key="event.id">
+                                <button
+                                    type="button"
+                                    class="w-full rounded-lg border border-border px-2.5 py-2 text-left text-sm transition hover:bg-muted/50"
+                                    @click="openDetail(event)"
+                                >
+                                    <div class="truncate font-medium">{{ event.title }}</div>
+                                    <div class="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                                        <Clock class="h-3 w-3" />
+                                        {{ formatDateTime(event.start) }}
+                                    </div>
+                                </button>
+                            </li>
+                        </ul>
+                        <p v-else class="text-sm text-muted-foreground">No upcoming events this month.</p>
+                    </div>
                 </aside>
             </div>
         </template>

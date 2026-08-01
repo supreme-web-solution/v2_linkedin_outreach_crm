@@ -46,13 +46,6 @@ const todayLabel = new Intl.DateTimeFormat(undefined, {
     day: 'numeric',
 }).format(new Date());
 
-const isEmptyWorkspace = computed(() =>
-    props.stats.leads === 0
-    && props.stats.campaigns === 0
-    && props.stats.conversations === 0
-    && props.stats.calls === 0,
-);
-
 const statCards = [
     {
         href: '/leads',
@@ -148,23 +141,6 @@ function leadsSublabel(): string {
                         </p>
                     </div>
                 </div>
-            </div>
-        </div>
-
-        <div
-            v-if="isEmptyWorkspace && hasOrg"
-            class="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-10 text-center"
-        >
-            <Users2 class="h-10 w-10 text-muted-foreground/50" />
-            <div>
-                <p class="font-semibold">Your workspace is ready</p>
-                <p class="mt-1 max-w-md text-sm text-muted-foreground">
-                    Import a contact list, sync LinkedIn leads with the extension, or launch your first outreach campaign.
-                </p>
-            </div>
-            <div class="flex flex-wrap justify-center gap-2">
-                <Link href="/leads" class="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">Import contacts</Link>
-                <Link href="/outreach/create" class="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium">New outreach</Link>
             </div>
         </div>
 
