@@ -234,13 +234,22 @@ class IntegrationAccountController extends Controller
 
         $unipileAccountId = $result['account_id'] ?? $result['id'] ?? null;
 
+        if (! empty($result['mock']) || ! is_string($unipileAccountId) || $unipileAccountId === '') {
+            return response()->json([
+                'message' => ! empty($result['mock'])
+                    ? 'UNIPILE_MOCK is enabled. Set UNIPILE_MOCK=false and configure UNIPILE_API_KEY / UNIPILE_BASE_URL, then reconnect.'
+                    : 'Unipile did not return a LinkedIn account id. Check UNIPILE_API_KEY and UNIPILE_BASE_URL.',
+                'hint' => 'Production must call Unipile for real. Your local .env already has UNIPILE_MOCK=false and a real API key — mirror that on Forge.',
+            ], 422);
+        }
+
         $account = V2IntegrationAccount::query()->updateOrCreate(
             [
                 'user_id'  => $user->id,
                 'provider' => 'linkedin',
-                'provider_account_id' => $unipileAccountId ?? ('cred_'.substr(md5($data['email']), 0, 10)),
             ],
             [
+                'provider_account_id' => $unipileAccountId,
                 'status' => 'active',
                 'meta'   => [
                     'organization_id'    => $organizationId,
@@ -248,6 +257,9 @@ class IntegrationAccountController extends Controller
                     'connected_at'       => now()->toIso8601String(),
                     'connection_method'  => 'credentials',
                     'email'              => $data['email'],
+                    'live_status'        => 'connected',
+                    'disconnected_at'    => null,
+                    'disconnect_reason'  => null,
                 ],
                 'last_synced_at' => now(),
             ]

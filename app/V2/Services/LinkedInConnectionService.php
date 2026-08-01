@@ -243,13 +243,19 @@ class LinkedInConnectionService
 
     {
 
+        $unipileId = $account->getUnipileAccountId();
+
+        // Cookie-only / mock rows can be status=active without a Unipile id — treat as not connected.
+
+        $effectivelyConnected = $unipileId && $account->status === 'active';
+
         return [
 
             'id' => $account->id,
 
             'provider' => $account->provider,
 
-            'status' => $account->status,
+            'status' => $effectivelyConnected ? 'active' : 'disconnected',
 
             'provider_account_id' => $account->provider_account_id,
 
@@ -259,13 +265,21 @@ class LinkedInConnectionService
 
             'email' => $account->meta['email'] ?? null,
 
-            'unipile_account_id' => $account->getUnipileAccountId(),
+            'unipile_account_id' => $unipileId,
 
             'last_synced_at' => $account->last_synced_at?->diffForHumans(),
 
-            'live_status' => $account->meta['live_status'] ?? null,
+            'live_status' => $effectivelyConnected
 
-            'disconnect_reason' => $account->meta['disconnect_reason'] ?? null,
+                ? ($account->meta['live_status'] ?? 'connected')
+
+                : 'disconnected',
+
+            'disconnect_reason' => $unipileId
+
+                ? ($account->meta['disconnect_reason'] ?? null)
+
+                : 'LinkedIn was saved locally but never registered with Unipile. Reconnect after setting UNIPILE_API_KEY.',
 
         ];
 
@@ -333,13 +347,23 @@ class LinkedInConnectionService
 
         if (! $unipileId) {
 
+            $this->markDisconnected(
+
+                $account,
+
+                'No Unipile account id on record. Reconnect LinkedIn after configuring UNIPILE_API_KEY / UNIPILE_BASE_URL (and UNIPILE_MOCK=false).'
+
+            );
+
+
+
             return [
 
-                'live_status' => 'unknown',
+                'live_status' => 'disconnected',
 
-                'status' => $account->status,
+                'status' => 'disconnected',
 
-                'message' => 'No LinkedIn account id on record.',
+                'message' => 'No Unipile account id on record. LinkedIn is not connected for search/outreach.',
 
             ];
 
@@ -457,6 +481,10 @@ class LinkedInConnectionService
 
     {
 
+        $this->assertUnipileReadyForConnect();
+
+
+
         $provider = $this->providerManager->account($this->providerManager->defaultProvider());
 
         $existing = $this->consolidateProviderAccount($user->id, 'linkedin');
@@ -485,7 +513,7 @@ class LinkedInConnectionService
 
                 $result = $provider->connectWithCookie($liAt, $userAgent);
 
-                $unipileAccountId = $result['account_id'] ?? $result['id'] ?? $unipileAccountId;
+                $unipileAccountId = $result['account_id'] ?? $result['id'] ?? null;
 
             }
 
@@ -494,6 +522,44 @@ class LinkedInConnectionService
             $result = $provider->connectWithCookie($liAt, $userAgent);
 
             $unipileAccountId = $result['account_id'] ?? $result['id'] ?? null;
+
+        }
+
+
+
+        if (is_array($result) && ! empty($result['mock'])) {
+
+            throw new UnipileException(
+
+                'LinkedIn connection is running in Unipile mock mode. Set UNIPILE_MOCK=false and configure UNIPILE_API_KEY / UNIPILE_BASE_URL on the server, then reconnect.',
+
+                503
+
+            );
+
+        }
+
+
+
+        $unipileAccountId = is_string($unipileAccountId) && $unipileAccountId !== ''
+
+            ? $unipileAccountId
+
+            : null;
+
+
+
+        if (! $unipileAccountId) {
+
+            throw new UnipileException(
+
+                'Unipile did not return a LinkedIn account id. Check UNIPILE_API_KEY and UNIPILE_BASE_URL, then reconnect your LinkedIn session.',
+
+                502,
+
+                ['response' => $result]
+
+            );
 
         }
 
@@ -511,7 +577,7 @@ class LinkedInConnectionService
 
             [
 
-                'provider_account_id' => $unipileAccountId ?? ('cookie_'.substr(md5($liAt), 0, 10)),
+                'provider_account_id' => $unipileAccountId,
 
                 'status' => 'active',
 
@@ -540,6 +606,40 @@ class LinkedInConnectionService
         );
 
         return $this->consolidateProviderAccount($user->id, 'linkedin') ?? $account;
+
+    }
+
+
+
+    private function assertUnipileReadyForConnect(): void
+
+    {
+
+        if ((bool) config('services.unipile.mock', false)) {
+
+            throw new UnipileException(
+
+                'UNIPILE_MOCK is enabled on this server. Set UNIPILE_MOCK=false and configure UNIPILE_API_KEY / UNIPILE_BASE_URL before connecting LinkedIn.',
+
+                503
+
+            );
+
+        }
+
+
+
+        if (trim((string) config('services.unipile.api_key', '')) === '') {
+
+            throw new UnipileException(
+
+                'UNIPILE_API_KEY is missing on this server. Add it in Forge environment, clear config cache, then reconnect LinkedIn.',
+
+                503
+
+            );
+
+        }
 
     }
 
