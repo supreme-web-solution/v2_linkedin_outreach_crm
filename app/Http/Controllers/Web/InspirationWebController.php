@@ -156,15 +156,12 @@ class InspirationWebController extends Controller
         }
 
         $scanned = count($candidates);
-        $pages = (int) $result['pages_fetched'];
 
         return response()->json([
             'message' => $scanned === 0
                 ? 'No posts found for that keyword.'
-                : "Scanned {$scanned} posts across {$pages} page(s), saved top {$saved} by engagement.",
+                : "Saved {$saved} posts to your library.",
             'count' => $saved,
-            'scanned' => $scanned,
-            'pages_fetched' => $pages,
         ]);
     }
 

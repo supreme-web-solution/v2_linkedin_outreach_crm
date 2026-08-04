@@ -327,7 +327,7 @@ function fmtPosted(value: string | undefined): string {
                     <div>
                         <h2 class="text-sm font-semibold text-foreground">Discover viral posts</h2>
                         <p class="text-xs text-muted-foreground">
-                            We scan several result pages, then save the best 18 by engagement.
+                            Search a topic and add the best-performing posts to your library.
                         </p>
                     </div>
                 </div>

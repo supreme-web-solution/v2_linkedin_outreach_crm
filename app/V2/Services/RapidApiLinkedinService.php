@@ -9,8 +9,8 @@ class RapidApiLinkedinService
 {
     private const BASE_URL = 'https://fresh-linkedin-profile-data.p.rapidapi.com';
 
-    /** Max RapidAPI pages scanned per Discover click (2 credits each). */
-    public const DISCOVERY_MAX_PAGES = 3;
+    /** Max RapidAPI pages scanned per Discover click (2 credits each → 4 credits). */
+    public const DISCOVERY_MAX_PAGES = 2;
 
     public function isConfigured(): bool
     {
