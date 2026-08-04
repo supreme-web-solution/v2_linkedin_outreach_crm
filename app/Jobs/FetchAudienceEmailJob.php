@@ -31,7 +31,7 @@ class FetchAudienceEmailJob implements ShouldQueue
         public readonly int $audienceListItemId,
         public readonly string $publicIdentifier
     ) {
-        $this->onQueue('default');
+        $this->onQueue('enrichment');
     }
 
     public function tries(): int

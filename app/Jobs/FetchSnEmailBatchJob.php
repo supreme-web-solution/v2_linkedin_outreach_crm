@@ -32,7 +32,7 @@ class FetchSnEmailBatchJob implements ShouldQueue
         public readonly int $userId,
         public readonly string $listHash,
     ) {
-        $this->onQueue('default');
+        $this->onQueue('enrichment');
     }
 
     public function handle(

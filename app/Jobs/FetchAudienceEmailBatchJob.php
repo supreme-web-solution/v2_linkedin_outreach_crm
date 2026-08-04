@@ -31,7 +31,7 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
         public readonly array $audienceListItemIds,
         public readonly int $userId
     ) {
-        $this->onQueue('default');
+        $this->onQueue('enrichment');
     }
 
     public function handle(

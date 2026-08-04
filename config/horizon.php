@@ -28,6 +28,7 @@ return [
         'redis:outreach' => 30,
         'redis:campaigns' => 45,
         'redis:webhooks' => 30,
+        'redis:enrichment' => 90,
     ],
 
     /*
@@ -63,11 +64,12 @@ return [
     'memory_limit' => 64,
 
     /*
-    | One supervisor handles every app queue (priority: outreach → campaigns
-    | → webhooks → default). No need to run separate queue:work processes.
+    | Tuned for a ~4 GB Forge host shared with Nginx, PHP-FPM, MySQL, Redis
+    | and other apps. Keep total Horizon processes low.
     |
-    | Tuned for a ~4 GB Forge host shared with Nginx, PHP-FPM, MySQL, Redis.
-    | timeout 900 matches slow outreach / campaign / enrichment jobs.
+    | - supervisor-main: outreach / campaigns / webhooks / harvest / misc
+    | - supervisor-enrichment: FullEnrich + profile email/phone lookups only
+    |   (slow, isolated so enrich clicks cannot starve competitor harvest)
     */
     'defaults' => [
         'supervisor-main' => [
@@ -88,15 +90,38 @@ return [
             'force' => true,
             'nice' => 0,
         ],
+        'supervisor-enrichment' => [
+            'connection' => 'redis',
+            'queue' => ['enrichment'],
+            'balance' => 'simple',
+            'minProcesses' => 1,
+            'maxProcesses' => 1,
+            'balanceMaxShift' => 1,
+            'balanceCooldown' => 3,
+            'memory' => 256,
+            'tries' => 1,
+            'timeout' => 900,
+            'sleep' => 3,
+            'maxJobs' => 200,
+            'maxTime' => 3600,
+            'force' => true,
+            'nice' => 0,
+        ],
     ],
 
     'environments' => [
         'production' => [
+            // Cap main at 2 so enrich (1) + main (2) ≤ 3 workers total on the shared 4GB box.
             'supervisor-main' => [
                 'minProcesses' => 1,
-                'maxProcesses' => 4,
+                'maxProcesses' => 2,
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
+                'force' => true,
+            ],
+            'supervisor-enrichment' => [
+                'minProcesses' => 1,
+                'maxProcesses' => 1,
                 'force' => true,
             ],
         ],
@@ -104,7 +129,11 @@ return [
         'local' => [
             'supervisor-main' => [
                 'minProcesses' => 1,
-                'maxProcesses' => 3,
+                'maxProcesses' => 2,
+            ],
+            'supervisor-enrichment' => [
+                'minProcesses' => 1,
+                'maxProcesses' => 1,
             ],
         ],
     ],
