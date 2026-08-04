@@ -17,8 +17,9 @@ import {
     Flame,
     BarChart3,
 } from '@lucide/vue';
-import { ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import ToggleField from '@/components/ToggleField.vue';
+import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import { Button } from '@/components/ui/button';
 import { stashInspirationDraft } from '@/lib/contentDraft';
 import ListPagination from '@/components/crm/ListPagination.vue';
@@ -83,6 +84,22 @@ const remixing = ref<number | null>(null);
 const remixResult = ref<{ id: number; content: string; author: string } | null>(null);
 const copiedId = ref<number | null>(null);
 
+const selected = ref<Set<number>>(new Set());
+const bulkBusy = ref(false);
+
+const allSelected = computed(
+    () => props.posts.data.length > 0 && props.posts.data.every((p) => selected.value.has(p.id)),
+);
+const selectedCount = computed(() => selected.value.size);
+
+watch(
+    () => props.posts.data.map((p) => p.id).join(','),
+    () => {
+        const visible = new Set(props.posts.data.map((p) => p.id));
+        selected.value = new Set([...selected.value].filter((id) => visible.has(id)));
+    },
+);
+
 const avatarPalettes = [
     { bg: '#dbeafe', text: '#1d4ed8' },
     { bg: '#e0f2fe', text: '#0369a1' },
@@ -94,6 +111,20 @@ const avatarPalettes = [
 
 function xsrf(): string {
     return decodeURIComponent(document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN='))?.split('=')[1] ?? '');
+}
+
+function toggleSelect(id: number) {
+    if (selected.value.has(id)) selected.value.delete(id);
+    else selected.value.add(id);
+    selected.value = new Set(selected.value);
+}
+
+function toggleSelectAll() {
+    if (allSelected.value) {
+        selected.value = new Set();
+        return;
+    }
+    selected.value = new Set(props.posts.data.map((p) => p.id));
 }
 
 function applyFilters() {
@@ -117,7 +148,7 @@ async function runFetch() {
         const res = await fetch('/inspiration/fetch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': xsrf(), Accept: 'application/json' },
-            body: JSON.stringify({ keyword: keyword.value, limit: 18, date_posted: datePosted.value }),
+            body: JSON.stringify({ keyword: keyword.value, keep: 18, date_posted: datePosted.value }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -148,7 +179,33 @@ async function toggleFavorite(post: InspirationPost) {
 
 function destroy(id: number) {
     if (!confirm('Remove this post from your library?')) return;
-    router.delete(`/inspiration/${id}`, { preserveScroll: true });
+    router.delete(`/inspiration/${id}`, {
+        preserveScroll: true,
+        onSuccess: () => {
+            selected.value.delete(id);
+            selected.value = new Set(selected.value);
+        },
+    });
+}
+
+function deleteSelected() {
+    if (selected.value.size === 0) return;
+    if (!confirm(`Delete ${selected.value.size} selected post(s)?`)) return;
+
+    bulkBusy.value = true;
+    router.post(
+        '/inspiration/bulk-delete',
+        { ids: Array.from(selected.value) },
+        {
+            preserveScroll: true,
+            onFinish: () => {
+                bulkBusy.value = false;
+            },
+            onSuccess: () => {
+                selected.value = new Set();
+            },
+        },
+    );
 }
 
 async function remix(post: InspirationPost) {
@@ -269,7 +326,9 @@ function fmtPosted(value: string | undefined): string {
                     </div>
                     <div>
                         <h2 class="text-sm font-semibold text-foreground">Discover viral posts</h2>
-                        <p class="text-xs text-muted-foreground">Search LinkedIn topics and add winning posts to your library.</p>
+                        <p class="text-xs text-muted-foreground">
+                            We scan several result pages, then save the best 18 by engagement.
+                        </p>
                     </div>
                 </div>
                 <div v-if="!rapidConfigured" class="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800/40 dark:bg-amber-900/30 dark:text-amber-300">
@@ -340,6 +399,26 @@ function fmtPosted(value: string | undefined): string {
                 >
                     Favorites only
                 </ToggleField>
+                <button
+                    v-if="posts.data.length"
+                    type="button"
+                    class="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5 text-sm shadow-sm transition hover:bg-muted"
+                    @click="toggleSelectAll"
+                >
+                    <AppSelectionCheckbox :checked="allSelected" />
+                    {{ allSelected ? 'Clear page' : 'Select page' }}
+                </button>
+                <button
+                    v-if="selectedCount > 0"
+                    type="button"
+                    :disabled="bulkBusy"
+                    class="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+                    @click="deleteSelected"
+                >
+                    <Loader2 v-if="bulkBusy" class="h-4 w-4 animate-spin" />
+                    <Trash2 v-else class="h-4 w-4" />
+                    Delete {{ selectedCount }}
+                </button>
             </div>
 
             <!-- Empty -->
@@ -361,10 +440,21 @@ function fmtPosted(value: string | undefined): string {
                 <article
                     v-for="post in posts.data"
                     :key="post.id"
-                    class="group flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-sky-200/80 hover:shadow-md"
-                    :class="post.is_favorite ? 'ring-1 ring-rose-200/70' : ''"
+                    class="group relative flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-sky-200/80 hover:shadow-md"
+                    :class="[
+                        post.is_favorite ? 'ring-1 ring-rose-200/70' : '',
+                        selected.has(post.id) ? 'ring-2 ring-sky-400/70' : '',
+                    ]"
                 >
                     <div class="flex items-start gap-3 border-b border-border/60 bg-gradient-to-r from-slate-50/80 to-transparent px-4 py-3.5">
+                        <button
+                            type="button"
+                            class="mt-0.5 shrink-0 rounded-md p-0.5 transition hover:bg-white/80"
+                            :title="selected.has(post.id) ? 'Deselect' : 'Select'"
+                            @click="toggleSelect(post.id)"
+                        >
+                            <AppSelectionCheckbox :checked="selected.has(post.id)" />
+                        </button>
                         <div
                             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold tracking-wide"
                             :style="{ backgroundColor: avatarStyle(post.meta?.author_name).bg, color: avatarStyle(post.meta?.author_name).text }"

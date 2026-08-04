@@ -57,10 +57,23 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
                         'public_identifier' => 'jane-doe',
                         'profile_url' => 'https://www.linkedin.com/in/jane-doe',
                     ],
+                ], [
+                    // Some Unipile payloads omit `name` and only send first/last.
+                    'author' => [
+                        'id' => 'ACoAAA333',
+                        'type' => 'INDIVIDUAL',
+                        'first_name' => 'Alex',
+                        'last_name' => 'Rivera',
+                        'headline' => 'Operator',
+                        'public_identifier' => 'alex-rivera',
+                        'profile_url' => 'https://www.linkedin.com/in/alex-rivera',
+                        'network_distance' => 'THIRD_DEGREE',
+                    ],
                 ]],
             ]),
             'unipile.test/api/v1/posts/urn%3Ali%3Aactivity%3A111/comments*' => Http::response([
                 'items' => [[
+                    // Name lives on string `author`; profile fields on author_details.
                     'author_details' => [
                         'id' => 'ACoAAA222',
                         'is_company' => false,
@@ -68,6 +81,15 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
                         'profile_url' => 'https://www.linkedin.com/in/john-smith',
                     ],
                     'author' => 'John Smith',
+                ], [
+                    // No name fields — fall back to public identifier slug.
+                    'author_details' => [
+                        'id' => 'ACoAAA444',
+                        'headline' => 'Bookkeeper',
+                        'public_identifier' => 'sam-taylor-a1b2c3d4',
+                        'profile_url' => 'https://www.linkedin.com/in/sam-taylor-a1b2c3d4',
+                        'network_distance' => 'SECOND_DEGREE',
+                    ],
                 ]],
             ]),
         ]);
@@ -99,15 +121,31 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
             'https://www.linkedin.com/company/microsoft/'
         );
 
-        $this->assertSame(2, $result['stored_count']);
+        $this->assertSame(4, $result['stored_count']);
         $this->assertSame(1, $result['posts_scanned']);
         $this->assertDatabaseHas('audience_lists', [
             'audience_id' => $audience->audience_id,
             'con_public_identifier' => 'jane-doe',
+            'con_first_name' => 'Jane',
+            'con_last_name' => 'Doe',
+        ]);
+        $this->assertDatabaseHas('audience_lists', [
+            'audience_id' => $audience->audience_id,
+            'con_public_identifier' => 'alex-rivera',
+            'con_first_name' => 'Alex',
+            'con_last_name' => 'Rivera',
         ]);
         $this->assertDatabaseHas('audience_lists', [
             'audience_id' => $audience->audience_id,
             'con_public_identifier' => 'john-smith',
+            'con_first_name' => 'John',
+            'con_last_name' => 'Smith',
+        ]);
+        $this->assertDatabaseHas('audience_lists', [
+            'audience_id' => $audience->audience_id,
+            'con_public_identifier' => 'sam-taylor-a1b2c3d4',
+            'con_first_name' => 'Sam',
+            'con_last_name' => 'Taylor',
         ]);
     }
 

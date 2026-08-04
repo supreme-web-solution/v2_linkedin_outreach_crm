@@ -81,7 +81,7 @@ class InspirationWebController extends Controller
 
         $data = $request->validate([
             'keyword' => ['required', 'string', 'max:200'],
-            'limit' => ['nullable', 'integer', 'min:1', 'max:30'],
+            'keep' => ['nullable', 'integer', 'min:1', 'max:30'],
             'date_posted' => ['nullable', 'in:Past 24 hours,Past week,Past month,Past year'],
         ]);
 
@@ -89,24 +89,41 @@ class InspirationWebController extends Controller
             return response()->json(['message' => 'RAPIDAPI_KEY is missing. Add it in your .env and refresh.'], 422);
         }
 
+        $keep = (int) ($data['keep'] ?? 18);
+
         try {
-            $items = $this->rapidApi->searchPosts(
+            $result = $this->rapidApi->searchPosts(
                 $data['keyword'],
                 1,
-                $data['limit'] ?? 18,
+                150,
                 $data['date_posted'] ?? 'Past month',
+                RapidApiLinkedinService::DISCOVERY_MAX_PAGES,
             );
         } catch (\Throwable $th) {
             return response()->json(['message' => 'Fetch failed: '.$th->getMessage()], 422);
         }
 
-        $saved = 0;
-        foreach ($items as $item) {
+        $candidates = [];
+        foreach ($result['items'] as $item) {
             if (trim((string) $item['content']) === '') {
                 continue;
             }
 
-            $engagement = $this->engagementScore($item['likes'], $item['comments'], $item['shares'], $item['views']);
+            $engagement = $this->engagementScore(
+                (int) $item['likes'],
+                (int) $item['comments'],
+                (int) $item['shares'],
+                (int) $item['views'],
+            );
+
+            $candidates[] = array_merge($item, ['engagement' => $engagement]);
+        }
+
+        usort($candidates, fn (array $a, array $b) => $b['engagement'] <=> $a['engagement']);
+        $top = array_slice($candidates, 0, $keep);
+
+        $saved = 0;
+        foreach ($top as $item) {
             $postId = $item['post_id'] ?: Str::slug($item['author_name']).'_'.substr(md5($item['content']), 0, 10);
 
             V2InspirationPost::updateOrCreate(
@@ -119,7 +136,7 @@ class InspirationWebController extends Controller
                     'user_id' => $user->id,
                     'content' => $item['content'],
                     'category' => $this->autoCategorize($item['content']),
-                    'engagement' => $engagement,
+                    'engagement' => $item['engagement'],
                     'meta' => [
                         'author_name' => $item['author_name'],
                         'author_headline' => $item['author_headline'],
@@ -138,7 +155,17 @@ class InspirationWebController extends Controller
             $saved++;
         }
 
-        return response()->json(['message' => "Saved {$saved} posts to your library.", 'count' => $saved]);
+        $scanned = count($candidates);
+        $pages = (int) $result['pages_fetched'];
+
+        return response()->json([
+            'message' => $scanned === 0
+                ? 'No posts found for that keyword.'
+                : "Scanned {$scanned} posts across {$pages} page(s), saved top {$saved} by engagement.",
+            'count' => $saved,
+            'scanned' => $scanned,
+            'pages_fetched' => $pages,
+        ]);
     }
 
     public function toggleFavorite(int $id): JsonResponse
@@ -154,6 +181,22 @@ class InspirationWebController extends Controller
         $this->owned($id)->delete();
 
         return back()->with('success', 'Post removed from inspiration library.');
+    }
+
+    public function bulkDestroy(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:100'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $user = Auth::user();
+        $deleted = V2InspirationPost::query()
+            ->where('organization_id', (int) $user->current_organization_id)
+            ->whereIn('id', $data['ids'])
+            ->delete();
+
+        return back()->with('success', "Removed {$deleted} post(s) from your library.");
     }
 
     public function remix(Request $request, int $id): JsonResponse

@@ -78,7 +78,8 @@ class CompetitorEngagerHarvestService
                 if (! is_array($reaction)) {
                     continue;
                 }
-                $mapped = $this->mapEngager(Arr::get($reaction, 'author', []), 'reaction');
+                $author = Arr::get($reaction, 'author', Arr::get($reaction, 'sender', []));
+                $mapped = $this->mapEngager(is_array($author) ? $author : [], 'reaction');
                 if ($mapped === null) {
                     continue;
                 }
@@ -100,11 +101,8 @@ class CompetitorEngagerHarvestService
                 if (! is_array($comment)) {
                     continue;
                 }
-                $author = Arr::get($comment, 'author_details', Arr::get($comment, 'author', Arr::get($comment, 'written_by', [])));
-                if (is_string($author)) {
-                    $author = Arr::get($comment, 'author_details', []);
-                }
-                $mapped = $this->mapEngager(is_array($author) ? $author : [], 'comment');
+                [$author, $nameFallback] = $this->extractCommentAuthor($comment);
+                $mapped = $this->mapEngager($author, 'comment', $nameFallback);
                 if ($mapped === null) {
                     continue;
                 }
@@ -304,17 +302,49 @@ class CompetitorEngagerHarvestService
     }
 
     /**
+     * Unipile comment payloads vary: name may live on string `author` while
+     * profile fields live on `author_details` / `written_by` / `sender`.
+     *
+     * @param  array<string, mixed>  $comment
+     * @return array{0: array<string, mixed>, 1: ?string}
+     */
+    private function extractCommentAuthor(array $comment): array
+    {
+        $nameFallback = null;
+        $rawAuthor = Arr::get($comment, 'author');
+        if (is_string($rawAuthor) && trim($rawAuthor) !== '') {
+            $nameFallback = trim($rawAuthor);
+        }
+
+        $author = Arr::get($comment, 'author_details');
+        if (! is_array($author) || $author === []) {
+            $author = is_array($rawAuthor) ? $rawAuthor : null;
+        }
+        if (! is_array($author) || $author === []) {
+            $author = Arr::get($comment, 'written_by');
+        }
+        if (! is_array($author) || $author === []) {
+            $author = Arr::get($comment, 'sender');
+        }
+        if (! is_array($author)) {
+            $author = [];
+        }
+
+        return [$author, $nameFallback];
+    }
+
+    /**
      * @param  array<string, mixed>  $author
      * @return array<string, mixed>|null
      */
-    private function mapEngager(array $author, string $source): ?array
+    private function mapEngager(array $author, string $source, ?string $nameFallback = null): ?array
     {
-        if ($author === []) {
+        if ($author === [] && ($nameFallback === null || $nameFallback === '')) {
             return null;
         }
 
         $type = strtoupper((string) (Arr::get($author, 'type') ?? ''));
-        if ($type === 'COMPANY' || Arr::get($author, 'is_company') === true) {
+        if ($type === 'COMPANY' || $type === 'ORGANIZATION' || Arr::get($author, 'is_company') === true) {
             return null;
         }
 
@@ -333,21 +363,90 @@ class CompetitorEngagerHarvestService
             return null;
         }
 
-        [$firstName, $lastName] = $this->splitName((string) (Arr::get($author, 'name') ?? ''));
+        [$firstName, $lastName] = $this->resolveAuthorName($author, $nameFallback, $publicId);
+
+        $headline = Arr::get($author, 'headline')
+            ?? Arr::get($author, 'description')
+            ?? Arr::get($author, 'occupation');
+
+        $networkDistance = Arr::get($author, 'network_distance')
+            ?? Arr::get($author, 'specifics.network_distance');
 
         return array_filter([
             'con_id' => $providerId !== '' ? $providerId : null,
             'con_public_identifier' => $publicId !== '' ? $publicId : null,
             'con_first_name' => $firstName,
             'con_last_name' => $lastName,
-            'con_job_title' => Arr::get($author, 'headline'),
+            'con_job_title' => is_string($headline) && trim($headline) !== '' ? trim($headline) : null,
             'con_profile_url' => $profileUrl !== ''
                 ? $profileUrl
                 : ($publicId !== '' ? 'https://www.linkedin.com/in/'.$publicId : null),
-            'con_distance' => $this->mapNetworkDistance(Arr::get($author, 'network_distance')),
+            'con_distance' => $this->mapNetworkDistance($networkDistance),
             'con_last_activity' => now(),
             'engagement_source' => $source,
         ], fn ($value) => $value !== null && $value !== '');
+    }
+
+    /**
+     * @param  array<string, mixed>  $author
+     * @return array{0: ?string, 1: ?string}
+     */
+    private function resolveAuthorName(array $author, ?string $nameFallback, string $publicId): array
+    {
+        $full = trim((string) (
+            Arr::get($author, 'name')
+            ?? Arr::get($author, 'display_name')
+            ?? Arr::get($author, 'full_name')
+            ?? ''
+        ));
+
+        if ($full === '') {
+            $first = trim((string) (
+                Arr::get($author, 'first_name')
+                ?? Arr::get($author, 'firstname')
+                ?? Arr::get($author, 'given_name')
+                ?? ''
+            ));
+            $last = trim((string) (
+                Arr::get($author, 'last_name')
+                ?? Arr::get($author, 'lastname')
+                ?? Arr::get($author, 'family_name')
+                ?? ''
+            ));
+            $full = trim($first.' '.$last);
+        }
+
+        if ($full === '' && is_string($nameFallback) && trim($nameFallback) !== '') {
+            $full = trim($nameFallback);
+        }
+
+        if ($full === '' && $publicId !== '') {
+            $full = $this->humanizePublicIdentifier($publicId);
+        }
+
+        return $this->splitName($full);
+    }
+
+    private function humanizePublicIdentifier(string $publicId): string
+    {
+        $slug = trim($publicId);
+        if ($slug === '' || str_starts_with($slug, 'ACo') || str_starts_with($slug, 'ADo')) {
+            return '';
+        }
+
+        // Drop trailing opaque LinkedIn id segments (e.g. jane-doe-a1b2c3d4).
+        $slug = (string) preg_replace('/-[a-z0-9]{6,}$/i', '', $slug);
+        $parts = preg_split('/[-_]+/', $slug) ?: [];
+        $words = [];
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part === '' || ctype_digit($part)) {
+                continue;
+            }
+            $words[] = mb_convert_case($part, MB_CASE_TITLE, 'UTF-8');
+        }
+
+        return implode(' ', $words);
     }
 
     /**
@@ -357,7 +456,13 @@ class CompetitorEngagerHarvestService
     private function storeEngager(int|string $audienceId, array $mapped, array &$seen): bool
     {
         $key = strtolower((string) ($mapped['con_id'] ?? $mapped['con_public_identifier'] ?? ''));
-        if ($key === '' || isset($seen[$key])) {
+        if ($key === '') {
+            return false;
+        }
+
+        if (isset($seen[$key])) {
+            $this->backfillMissingEngagerFields($audienceId, $mapped);
+
             return false;
         }
 
@@ -376,6 +481,54 @@ class CompetitorEngagerHarvestService
         ]);
 
         return true;
+    }
+
+    /**
+     * Fill blank name/headline on an existing engager when a later API page
+     * (or improved mapping) finally provides them.
+     *
+     * @param  array<string, mixed>  $mapped
+     */
+    private function backfillMissingEngagerFields(int|string $audienceId, array $mapped): void
+    {
+        $query = AudienceList::query()->where('audience_id', $audienceId);
+        if (! empty($mapped['con_id'])) {
+            $query->where('con_id', $mapped['con_id']);
+        } elseif (! empty($mapped['con_public_identifier'])) {
+            $query->where('con_public_identifier', $mapped['con_public_identifier']);
+        } else {
+            return;
+        }
+
+        /** @var AudienceList|null $row */
+        $row = $query->first();
+        if (! $row) {
+            return;
+        }
+
+        $updates = [];
+        $existingName = trim(($row->con_first_name ?? '').' '.($row->con_last_name ?? ''));
+        if ($existingName === '') {
+            if (! empty($mapped['con_first_name'])) {
+                $updates['con_first_name'] = $mapped['con_first_name'];
+            }
+            if (! empty($mapped['con_last_name'])) {
+                $updates['con_last_name'] = $mapped['con_last_name'];
+            }
+        }
+        if (trim((string) ($row->con_job_title ?? '')) === '' && ! empty($mapped['con_job_title'])) {
+            $updates['con_job_title'] = $mapped['con_job_title'];
+        }
+        if (trim((string) ($row->con_public_identifier ?? '')) === '' && ! empty($mapped['con_public_identifier'])) {
+            $updates['con_public_identifier'] = $mapped['con_public_identifier'];
+        }
+        if (trim((string) ($row->con_profile_url ?? '')) === '' && ! empty($mapped['con_profile_url'])) {
+            $updates['con_profile_url'] = $mapped['con_profile_url'];
+        }
+
+        if ($updates !== []) {
+            $row->fill($updates)->save();
+        }
     }
 
     /**

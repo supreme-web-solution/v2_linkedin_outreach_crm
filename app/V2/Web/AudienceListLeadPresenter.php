@@ -15,6 +15,9 @@ class AudienceListLeadPresenter
     public function transformRow(AudienceList $row, array $overlays = []): array
     {
         $name = trim(($row->con_first_name ?? '').' '.($row->con_last_name ?? ''));
+        if ($name === '') {
+            $name = $this->displayNameFromPublicIdentifier((string) ($row->con_public_identifier ?? ''));
+        }
         $resolver = app(OutreachLeadContactResolver::class);
         $profileId = trim((string) ($row->con_public_identifier ?: $row->con_id ?: ''));
         $linkedinKey = $resolver->normalizeLinkedinKey($profileId);
@@ -54,6 +57,27 @@ class AudienceListLeadPresenter
             'company_domain' => $company['company_domain'],
             'company_logo_url' => $company['company_logo_url'],
         ];
+    }
+
+    private function displayNameFromPublicIdentifier(string $publicId): string
+    {
+        $slug = trim($publicId);
+        if ($slug === '' || str_starts_with($slug, 'ACo') || str_starts_with($slug, 'ADo')) {
+            return '';
+        }
+
+        $slug = (string) preg_replace('/-[a-z0-9]{6,}$/i', '', $slug);
+        $parts = preg_split('/[-_]+/', $slug) ?: [];
+        $words = [];
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part === '' || ctype_digit($part)) {
+                continue;
+            }
+            $words[] = mb_convert_case($part, MB_CASE_TITLE, 'UTF-8');
+        }
+
+        return implode(' ', $words);
     }
 
     /**

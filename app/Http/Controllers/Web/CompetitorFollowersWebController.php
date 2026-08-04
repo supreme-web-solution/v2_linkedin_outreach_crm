@@ -310,8 +310,24 @@ class CompetitorFollowersWebController extends Controller
             fputcsv($handle, ['Name', 'Job Title', 'Company', 'Location', 'Profile URL', 'Email']);
             foreach ($rows as $r) {
                 $name = trim(($r->con_first_name ?? '').' '.($r->con_last_name ?? ''));
+                if ($name === '') {
+                    $slug = trim((string) ($r->con_public_identifier ?? ''));
+                    if ($slug !== '' && ! str_starts_with($slug, 'ACo') && ! str_starts_with($slug, 'ADo')) {
+                        $slug = (string) preg_replace('/-[a-z0-9]{6,}$/i', '', $slug);
+                        $parts = preg_split('/[-_]+/', $slug) ?: [];
+                        $words = [];
+                        foreach ($parts as $part) {
+                            $part = trim($part);
+                            if ($part === '' || ctype_digit($part)) {
+                                continue;
+                            }
+                            $words[] = mb_convert_case($part, MB_CASE_TITLE, 'UTF-8');
+                        }
+                        $name = implode(' ', $words);
+                    }
+                }
                 fputcsv($handle, [
-                    $name,
+                    $name !== '' ? $name : 'Unknown',
                     $r->con_job_title,
                     $r->con_company_name,
                     $r->con_location,

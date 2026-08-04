@@ -42,11 +42,8 @@ class UnifiedInboxService
                 return $this->enrichConversationMeta($existing, $payload);
             }
 
-            \Illuminate\Support\Facades\Log::debug('[Inbox] Ignored group chat webhook for 1:1 outreach inbox', [
-                'user_id' => $userId,
-                'provider' => $provider,
-                'chat_id' => $chatId,
-            ]);
+            // Group chats are intentionally skipped for the 1:1 outreach inbox.
+            // Do not log here — Telegram/WhatsApp group noise floods production logs.
 
             return null;
         }

@@ -68,6 +68,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     // Inspiration (viral-post discovery library via RapidAPI)
     Route::get('inspiration', [InspirationWebController::class, 'index'])->name('inspiration.index');
     Route::post('inspiration/fetch', [InspirationWebController::class, 'fetch'])->name('inspiration.fetch');
+    Route::post('inspiration/bulk-delete', [InspirationWebController::class, 'bulkDestroy'])->name('inspiration.bulk-destroy');
     Route::post('inspiration/{id}/favorite', [InspirationWebController::class, 'toggleFavorite'])->whereNumber('id')->name('inspiration.favorite');
     Route::post('inspiration/{id}/remix', [InspirationWebController::class, 'remix'])->whereNumber('id')->name('inspiration.remix');
     Route::delete('inspiration/{id}', [InspirationWebController::class, 'destroy'])->whereNumber('id')->name('inspiration.delete');
