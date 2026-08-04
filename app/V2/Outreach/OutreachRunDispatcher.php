@@ -18,12 +18,13 @@ class OutreachRunDispatcher
     ) {}
 
     /**
-     * @return array{run_id: int, queued_leads: int, blocked?: bool, missing_channels?: array<int, string>}
+     * @return array{run_id: int, queued_leads: int, inflight_limit: int, blocked?: bool, missing_channels?: array<int, string>}
      */
     public function dispatch(V2OutreachCampaign $campaign, ?int $organizationId = null): array
     {
         $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
         $missing = $this->guard->missingChannels((int) $campaign->user_id, $nodes);
+        $inflightLimit = app(OutreachConcurrencyLimiter::class)->maxInFlight();
 
         if ($missing !== []) {
             Log::warning('[Outreach] Dispatch blocked — channels not connected', [
@@ -34,6 +35,7 @@ class OutreachRunDispatcher
             return [
                 'run_id' => 0,
                 'queued_leads' => 0,
+                'inflight_limit' => $inflightLimit,
                 'blocked' => true,
                 'missing_channels' => $missing,
             ];
@@ -57,7 +59,7 @@ class OutreachRunDispatcher
             $run->id,
             null,
             'started',
-            "Outreach \"{$campaign->name}\" started — queuing leads.",
+            "Outreach \"{$campaign->name}\" started — queuing leads (up to {$inflightLimit} run at once).",
         );
 
         $leads = V2OutreachLead::query()
@@ -82,6 +84,10 @@ class OutreachRunDispatcher
             $this->completion->maybeFinish($campaign, $run);
         }
 
-        return ['run_id' => $run->id, 'queued_leads' => $queued];
+        return [
+            'run_id' => $run->id,
+            'queued_leads' => $queued,
+            'inflight_limit' => $inflightLimit,
+        ];
     }
 }

@@ -16,6 +16,7 @@ class LeadEnrichmentResult
         public readonly bool $emailLookupAttempted = false,
         public readonly bool $phoneLookupAttempted = false,
         public readonly array $sources = [],
+        public readonly bool $timedOut = false,
     ) {}
 
     public function hasAnyContact(): bool
@@ -25,6 +26,14 @@ class LeadEnrichmentResult
             || ($this->instagramHandle ?? '') !== ''
             || ($this->twitterHandle ?? '') !== ''
             || ($this->telegramHandle ?? '') !== '';
+    }
+
+    /**
+     * Soft FullEnrich poll timeout with no contact found — safe to retry, do not burn quota.
+     */
+    public function isSoftTimeout(): bool
+    {
+        return $this->timedOut && ! $this->hasAnyContact();
     }
 
     /**
@@ -41,20 +50,26 @@ class LeadEnrichmentResult
             emailLookupAttempted: $this->emailLookupAttempted,
             phoneLookupAttempted: $this->phoneLookupAttempted,
             sources: array_values(array_unique([...$this->sources, ...$sources])),
+            timedOut: $this->timedOut,
         );
     }
 
     public function merge(self $other): self
     {
+        $email = $this->email ?: $other->email;
+        $phone = $this->phone ?: $other->phone;
+
         return new self(
-            email: $this->email ?: $other->email,
-            phone: $this->phone ?: $other->phone,
+            email: $email,
+            phone: $phone,
             instagramHandle: $this->instagramHandle ?: $other->instagramHandle,
             twitterHandle: $this->twitterHandle ?: $other->twitterHandle,
             telegramHandle: $this->telegramHandle ?: $other->telegramHandle,
             emailLookupAttempted: $this->emailLookupAttempted || $other->emailLookupAttempted,
             phoneLookupAttempted: $this->phoneLookupAttempted || $other->phoneLookupAttempted,
             sources: array_values(array_unique([...$this->sources, ...$other->sources])),
+            // Timeout only sticks if we still have no usable contact.
+            timedOut: ($this->timedOut || $other->timedOut) && ($email ?? '') === '' && ($phone ?? '') === '',
         );
     }
 }

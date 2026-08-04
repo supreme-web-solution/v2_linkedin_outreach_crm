@@ -106,7 +106,10 @@ class FetchAudienceEmailJob implements ShouldQueue
             throw $e;
         }
 
-        $user->increment('daily_profile_email_scraping_count');
+        // Soft FullEnrich timeouts are retryable — do not burn daily quota.
+        if (! $result->isSoftTimeout()) {
+            $user->increment('daily_profile_email_scraping_count');
+        }
     }
 
     private function checkAndResetDailyLimit(User $user): void

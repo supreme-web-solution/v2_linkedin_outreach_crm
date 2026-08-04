@@ -630,7 +630,9 @@ class LeadsWebController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Failed to enrich: '.$th->getMessage()], 500);
         }
 
-        $user->increment('daily_profile_email_scraping_count');
+        if (! $result->isSoftTimeout()) {
+            $user->increment('daily_profile_email_scraping_count');
+        }
         $lead->refresh();
 
         if ($result->hasAnyContact()) {

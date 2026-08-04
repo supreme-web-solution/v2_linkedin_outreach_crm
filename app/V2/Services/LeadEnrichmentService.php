@@ -47,15 +47,19 @@ class LeadEnrichmentService
 
     private function finalizeEnrichmentResult(LeadEnrichmentInput $input, LeadEnrichmentResult $result): LeadEnrichmentResult
     {
+        $softTimeout = $result->isSoftTimeout();
+
         return new LeadEnrichmentResult(
             email: $result->email,
             phone: $result->phone,
             instagramHandle: $result->instagramHandle,
             twitterHandle: $result->twitterHandle,
             telegramHandle: $result->telegramHandle,
-            emailLookupAttempted: $result->emailLookupAttempted || $input->needsEmail(),
-            phoneLookupAttempted: $result->phoneLookupAttempted || $input->needsPhone(),
+            // Soft timeout is retryable — do not mark the lookup as a finished "not found".
+            emailLookupAttempted: $softTimeout ? false : ($result->emailLookupAttempted || $input->needsEmail()),
+            phoneLookupAttempted: $softTimeout ? $result->phoneLookupAttempted : ($result->phoneLookupAttempted || $input->needsPhone()),
             sources: $result->sources,
+            timedOut: $softTimeout,
         );
     }
 

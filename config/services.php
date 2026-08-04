@@ -108,6 +108,11 @@ return [
         // Random pause between paginated harvest calls (competitor engagers)
         'harvest_page_delay_min_ms' => (int) env('UNIPILE_HARVEST_PAGE_DELAY_MIN_MS', 800),
         'harvest_page_delay_max_ms' => (int) env('UNIPILE_HARVEST_PAGE_DELAY_MAX_MS', 2500),
+        // Serialize Unipile calls per LinkedIn account across features (enrich/harvest/outreach).
+        'account_lock_seconds' => (int) env('UNIPILE_ACCOUNT_LOCK_SECONDS', 25),
+        'account_lock_wait_seconds' => (int) env('UNIPILE_ACCOUNT_LOCK_WAIT_SECONDS', 20),
+        // Max ProcessOutreachLeadJob handlers running at once per user (others wait in queue).
+        'outreach_inflight_per_user' => (int) env('OUTREACH_INFLIGHT_PER_USER', 2),
         // Lead readiness / Prepare contacts — same as EMAIL_ENRICHMENT_BATCH_SIZE unless overridden.
         'contact_prep_batch_size' => (int) env(
             'OUTREACH_CONTACT_PREP_BATCH_SIZE',

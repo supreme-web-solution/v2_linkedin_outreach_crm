@@ -13,6 +13,7 @@ use App\V2\Contracts\Providers\WebhookProviderInterface;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -90,6 +91,37 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             throw new UnipileException('Messaging API key is missing.', 500);
         }
 
+        $accountId = trim((string) ($payload['account_id'] ?? ''));
+        if ($accountId === '') {
+            return $this->sendRequest($method, $endpoint, $payload, $quiet);
+        }
+
+        // One LinkedIn/Unipile account at a time across enrich, harvest, outreach, etc.
+        $lockSeconds = max(5, (int) config('services.unipile_pacing.account_lock_seconds', 25));
+        $waitSeconds = max(1, (int) config('services.unipile_pacing.account_lock_wait_seconds', 20));
+        $lock = Cache::lock('unipile:account:'.$accountId, $lockSeconds);
+
+        if (! $lock->block($waitSeconds)) {
+            throw new UnipileException(
+                'This LinkedIn account is busy with another action. Please retry in a moment.',
+                429,
+                ['account_id' => $accountId, 'endpoint' => $endpoint]
+            );
+        }
+
+        try {
+            return $this->sendRequest($method, $endpoint, $payload, $quiet);
+        } finally {
+            optional($lock)->release();
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function sendRequest(string $method, string $endpoint, array $payload, bool $quiet = false): array
+    {
         $normalizedMethod = strtoupper($method);
 
         $options = in_array($normalizedMethod, ['GET', 'DELETE'], true)

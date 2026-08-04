@@ -21,12 +21,15 @@ class LeadEnrichmentPersister
     {
         $updates = [];
 
-        if ($result->emailLookupAttempted) {
+        if ($result->isSoftTimeout()) {
+            $updates['email_fetch_status'] = 'timed_out';
+            $updates['email_fetch_attempted_at'] = now();
+        } elseif ($result->emailLookupAttempted) {
             $updates['email_fetch_status'] = 'completed';
             $updates['email_fetch_attempted_at'] = now();
         }
 
-        if ($result->phoneLookupAttempted) {
+        if ($result->phoneLookupAttempted && ! $result->isSoftTimeout()) {
             $updates['phone_fetch_status'] = 'completed';
             $updates['phone_fetch_attempted_at'] = now();
         }
@@ -58,12 +61,15 @@ class LeadEnrichmentPersister
             $updates['phone'] = $result->phone;
         }
 
-        if ($result->phoneLookupAttempted) {
+        if ($result->phoneLookupAttempted && ! $result->isSoftTimeout()) {
             $updates['phone_fetch_status'] = 'completed';
             $updates['phone_fetch_attempted_at'] = now();
         }
 
-        if ($result->emailLookupAttempted) {
+        if ($result->isSoftTimeout()) {
+            $updates['email_fetch_status'] = 'timed_out';
+            $updates['email_fetch_attempted_at'] = now();
+        } elseif ($result->emailLookupAttempted) {
             $updates['email_fetch_status'] = 'completed';
             $updates['email_fetch_attempted_at'] = now();
         }

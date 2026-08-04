@@ -30,8 +30,10 @@ const searchingLabel = computed(() => {
     return 'Searching';
 });
 
+const isTimedOut = computed(() => props.fetchStatus === 'timed_out');
+
 const isNotFound = computed(() => {
-    if (props.value) {
+    if (props.value || isTimedOut.value) {
         return false;
     }
 
@@ -43,7 +45,11 @@ const isNotFound = computed(() => {
 });
 
 const showFetch = computed(() =>
-    props.type === 'email' && props.canFetch && !props.value && !isSearching.value && !isNotFound.value,
+    props.type === 'email'
+    && props.canFetch
+    && !props.value
+    && !isSearching.value
+    && (!isNotFound.value || isTimedOut.value),
 );
 </script>
 
@@ -57,6 +63,20 @@ const showFetch = computed(() =>
         <div v-else-if="isSearching" class="inline-flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 class="h-4 w-4 animate-spin" />
             {{ searchingLabel }}
+        </div>
+        <div v-else-if="isTimedOut" class="flex flex-col items-start gap-1.5">
+            <span class="text-sm text-amber-700 dark:text-amber-400">Timed out</span>
+            <button
+                v-if="showFetch"
+                type="button"
+                class="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 transition-colors hover:from-blue-500 hover:to-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="fetchDisabled || fetching"
+                @click="emit('fetch')"
+            >
+                <Loader2 v-if="fetching" class="h-3.5 w-3.5 animate-spin" />
+                <Sparkles v-else class="h-3.5 w-3.5" />
+                Retry
+            </button>
         </div>
         <span v-else-if="isNotFound" class="text-sm text-muted-foreground">Not found</span>
         <button

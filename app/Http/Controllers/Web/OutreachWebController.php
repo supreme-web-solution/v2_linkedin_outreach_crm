@@ -261,6 +261,7 @@ class OutreachWebController extends Controller
             ],
             'aiConfigured' => app(\App\V2\Services\OpenAIContentService::class)->isConfigured(),
             'stats' => $statsService->statsFor($campaign),
+            'concurrency' => app(\App\V2\Outreach\OutreachConcurrencyLimiter::class)->snapshot((int) $campaign->user_id),
         ]);
     }
 
@@ -496,7 +497,7 @@ class OutreachWebController extends Controller
 
         return redirect("/outreach/{$campaign->id}")->with(
             'success',
-            "Launched with {$added} new lead(s). Processing {$result['queued_leads']} lead(s)."
+            "Launched with {$added} new lead(s). Queued {$result['queued_leads']} lead(s) — up to {$result['inflight_limit']} run at once to protect your LinkedIn account."
         );
     }
 

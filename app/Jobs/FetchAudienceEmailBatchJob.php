@@ -101,8 +101,10 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
                 continue;
             }
 
-            $user->increment('daily_profile_email_scraping_count');
-            $user->refresh();
+            if (! $result->isSoftTimeout()) {
+                $user->increment('daily_profile_email_scraping_count');
+                $user->refresh();
+            }
         }
     }
 

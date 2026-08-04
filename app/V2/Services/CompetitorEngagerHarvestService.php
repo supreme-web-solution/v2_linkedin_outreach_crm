@@ -16,9 +16,11 @@ class CompetitorEngagerHarvestService
     }
 
     /**
-     * @return array{stored_count: int, posts_scanned: int, total_fetched: int}
+     * Resolve company + select posts, then return social IDs for chunked processing.
+     *
+     * @return array{post_social_ids: list<string>, company_id: string|null, company_name: string|null}
      */
-    public function harvest(Audience $audience, int $userId, string $companyUrl): array
+    public function prepareHarvest(Audience $audience, int $userId, string $companyUrl): array
     {
         $accountId = V2IntegrationAccount::activeUnipileAccountId($userId);
         if (! $accountId) {
@@ -33,7 +35,6 @@ class CompetitorEngagerHarvestService
 
         $postsLimit = max(1, (int) config('services.competitor_followers.company_posts_limit', 15));
         $pageSize = max(1, min(100, (int) config('services.competitor_followers.page_size', 100)));
-        $maxEngagersPerPost = max(50, (int) config('services.competitor_followers.max_engagers_per_post', 500));
 
         $meta = json_decode((string) $audience->source_meta, true) ?? [];
         $meta['company_id'] = $company['id'] ?? null;
@@ -48,74 +49,183 @@ class CompetitorEngagerHarvestService
             throw new \RuntimeException('No posts found for this company. Check the URL and LinkedIn connection.');
         }
 
-        $seen = $this->existingEngagerKeys($audience->audience_id);
-        $storedCount = 0;
-        $totalFetched = 0;
-
-        foreach ($posts as $index => $post) {
-            $postLabel = (string) ($index + 1);
+        $postSocialIds = [];
+        foreach ($posts as $post) {
             $socialId = $this->resolvePostSocialId($post);
-            if ($socialId === '') {
+            if ($socialId !== '') {
+                $postSocialIds[] = $socialId;
+            }
+        }
+
+        if ($postSocialIds === []) {
+            throw new \RuntimeException('No harvestable posts found for this company.');
+        }
+
+        $meta = json_decode((string) $audience->fresh()->source_meta, true) ?? [];
+        $meta['post_social_ids'] = $postSocialIds;
+        $meta['next_post_index'] = 0;
+        $meta['stored_count'] = (int) ($meta['stored_count'] ?? 0);
+        $meta['total_fetched'] = (int) ($meta['total_fetched'] ?? 0);
+        $meta['posts_scanned'] = 0;
+        $audience->source_meta = json_encode($meta);
+        $audience->save();
+
+        $this->updateProgress(
+            $audience,
+            'processing',
+            'Queued '.count($postSocialIds).' post(s) for engager scan…',
+            ['posts_scanned' => 0, 'stored_count' => (int) ($meta['stored_count'] ?? 0)]
+        );
+
+        return [
+            'post_social_ids' => $postSocialIds,
+            'company_id' => isset($company['id']) ? (string) $company['id'] : null,
+            'company_name' => $company['name'] ?? null,
+        ];
+    }
+
+    /**
+     * Harvest reactions + comments for one prepared post, then advance the cursor.
+     *
+     * @return array{done: bool, stored_count: int, total_fetched: int, posts_scanned: int, next_index: int, total_posts: int}
+     */
+    public function harvestPreparedPost(Audience $audience, int $userId, int $postIndex): array
+    {
+        $accountId = V2IntegrationAccount::activeUnipileAccountId($userId);
+        if (! $accountId) {
+            throw new \RuntimeException('Connect LinkedIn via Integrations before harvesting.');
+        }
+
+        $meta = json_decode((string) $audience->source_meta, true) ?? [];
+        $postSocialIds = $meta['post_social_ids'] ?? [];
+        if (! is_array($postSocialIds) || $postSocialIds === []) {
+            throw new \RuntimeException('Harvest posts are not prepared. Restart the competitor pull.');
+        }
+
+        $totalPosts = count($postSocialIds);
+        if ($postIndex < 0 || $postIndex >= $totalPosts) {
+            return [
+                'done' => true,
+                'stored_count' => (int) ($meta['stored_count'] ?? 0),
+                'total_fetched' => (int) ($meta['total_fetched'] ?? 0),
+                'posts_scanned' => (int) ($meta['posts_scanned'] ?? $totalPosts),
+                'next_index' => $totalPosts,
+                'total_posts' => $totalPosts,
+            ];
+        }
+
+        $socialId = (string) $postSocialIds[$postIndex];
+        $pageSize = max(1, min(100, (int) config('services.competitor_followers.page_size', 100)));
+        $maxEngagersPerPost = max(50, (int) config('services.competitor_followers.max_engagers_per_post', 500));
+
+        /** @var UnipileProvider $provider */
+        $provider = $this->providers->get('unipile', UnipileProvider::class);
+        $context = ['account_id' => $accountId];
+
+        $storedCount = (int) ($meta['stored_count'] ?? 0);
+        $totalFetched = (int) ($meta['total_fetched'] ?? 0);
+        $seen = $this->existingEngagerKeys($audience->audience_id);
+
+        $this->updateProgress(
+            $audience,
+            'processing',
+            'Scanning post '.($postIndex + 1).'/'.$totalPosts.' for reactions and comments…',
+            ['posts_scanned' => $postIndex, 'stored_count' => $storedCount]
+        );
+
+        $reactions = $this->paginateItems(
+            fn (?string $cursor) => $provider->listPostReactions($socialId, array_filter([
+                'limit' => $pageSize,
+                'cursor' => $cursor,
+            ]), $context),
+            $maxEngagersPerPost
+        );
+
+        foreach ($reactions as $reaction) {
+            if (! is_array($reaction)) {
                 continue;
             }
-
-            $this->updateProgress(
-                $audience,
-                'processing',
-                "Scanning post {$postLabel}/".count($posts).' for reactions and comments…',
-                ['posts_scanned' => $index, 'stored_count' => $storedCount]
-            );
-
-            $reactions = $this->paginateItems(
-                fn (?string $cursor) => $provider->listPostReactions($socialId, array_filter([
-                    'limit' => $pageSize,
-                    'cursor' => $cursor,
-                ]), $context),
-                $maxEngagersPerPost
-            );
-
-            foreach ($reactions as $reaction) {
-                if (! is_array($reaction)) {
-                    continue;
-                }
-                $author = Arr::get($reaction, 'author', Arr::get($reaction, 'sender', []));
-                $mapped = $this->mapEngager(is_array($author) ? $author : [], 'reaction');
-                if ($mapped === null) {
-                    continue;
-                }
-                $totalFetched++;
-                if ($this->storeEngager($audience->audience_id, $mapped, $seen)) {
-                    $storedCount++;
-                }
+            $author = Arr::get($reaction, 'author', Arr::get($reaction, 'sender', []));
+            $mapped = $this->mapEngager(is_array($author) ? $author : [], 'reaction');
+            if ($mapped === null) {
+                continue;
             }
-
-            $comments = $this->paginateItems(
-                fn (?string $cursor) => $provider->listPostComments($socialId, array_filter([
-                    'limit' => $pageSize,
-                    'cursor' => $cursor,
-                ]), $context),
-                $maxEngagersPerPost
-            );
-
-            foreach ($comments as $comment) {
-                if (! is_array($comment)) {
-                    continue;
-                }
-                [$author, $nameFallback] = $this->extractCommentAuthor($comment);
-                $mapped = $this->mapEngager($author, 'comment', $nameFallback);
-                if ($mapped === null) {
-                    continue;
-                }
-                $totalFetched++;
-                if ($this->storeEngager($audience->audience_id, $mapped, $seen)) {
-                    $storedCount++;
-                }
+            $totalFetched++;
+            if ($this->storeEngager($audience->audience_id, $mapped, $seen)) {
+                $storedCount++;
             }
+        }
+
+        $comments = $this->paginateItems(
+            fn (?string $cursor) => $provider->listPostComments($socialId, array_filter([
+                'limit' => $pageSize,
+                'cursor' => $cursor,
+            ]), $context),
+            $maxEngagersPerPost
+        );
+
+        foreach ($comments as $comment) {
+            if (! is_array($comment)) {
+                continue;
+            }
+            [$author, $nameFallback] = $this->extractCommentAuthor($comment);
+            $mapped = $this->mapEngager($author, 'comment', $nameFallback);
+            if ($mapped === null) {
+                continue;
+            }
+            $totalFetched++;
+            if ($this->storeEngager($audience->audience_id, $mapped, $seen)) {
+                $storedCount++;
+            }
+        }
+
+        $nextIndex = $postIndex + 1;
+        $done = $nextIndex >= $totalPosts;
+
+        $this->updateProgress(
+            $audience,
+            $done ? 'processing' : 'processing',
+            $done
+                ? "Finishing — scanned {$totalPosts} post(s)…"
+                : 'Scanning post '.($nextIndex + 1).'/'.$totalPosts.' for reactions and comments…',
+            [
+                'posts_scanned' => $nextIndex,
+                'stored_count' => $storedCount,
+                'total_fetched' => $totalFetched,
+                'next_post_index' => $nextIndex,
+            ]
+        );
+
+        return [
+            'done' => $done,
+            'stored_count' => $storedCount,
+            'total_fetched' => $totalFetched,
+            'posts_scanned' => $nextIndex,
+            'next_index' => $nextIndex,
+            'total_posts' => $totalPosts,
+        ];
+    }
+
+    /**
+     * @return array{stored_count: int, posts_scanned: int, total_fetched: int}
+     */
+    public function harvest(Audience $audience, int $userId, string $companyUrl): array
+    {
+        $prepared = $this->prepareHarvest($audience, $userId, $companyUrl);
+        $storedCount = 0;
+        $totalFetched = 0;
+        $postsScanned = 0;
+
+        foreach (array_keys($prepared['post_social_ids']) as $index) {
+            $result = $this->harvestPreparedPost($audience->fresh(), $userId, $index);
+            $storedCount = $result['stored_count'];
+            $totalFetched = $result['total_fetched'];
+            $postsScanned = $result['posts_scanned'];
         }
 
         return [
             'stored_count' => $storedCount,
-            'posts_scanned' => count($posts),
+            'posts_scanned' => $postsScanned,
             'total_fetched' => $totalFetched,
         ];
     }

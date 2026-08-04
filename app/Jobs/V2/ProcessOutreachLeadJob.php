@@ -9,6 +9,7 @@ use App\Models\V2OutreachRun;
 use App\V2\Outreach\OutreachActivityLogger;
 use App\V2\Outreach\OutreachChannelGuard;
 use App\V2\Outreach\OutreachCompletionService;
+use App\V2\Outreach\OutreachConcurrencyLimiter;
 use App\V2\Outreach\OutreachConditionEvaluator;
 use App\V2\Outreach\OutreachSendProof;
 use App\V2\Outreach\OutreachSequenceResolver;
@@ -18,6 +19,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -78,6 +80,56 @@ class ProcessOutreachLeadJob implements ShouldQueue
             $progress->update(['next_run_at' => null]);
         }
 
+        $userId = (int) $campaign->user_id;
+        $limiter = app(OutreachConcurrencyLimiter::class);
+        if (! $limiter->acquire($userId)) {
+            $delaySeconds = random_int(20, 40);
+            if (Cache::add('outreach:concurrency-notice:'.$campaign->id, 1, now()->addMinutes(30))) {
+                $max = $limiter->maxInFlight();
+                $logger->log(
+                    $campaign->id,
+                    null,
+                    $this->outreachRunId,
+                    null,
+                    'scheduled',
+                    "Pacing active — up to {$max} leads run at once to protect your LinkedIn account. Other leads wait automatically.",
+                );
+            }
+
+            self::dispatch($this->outreachCampaignId, $this->outreachLeadId, $this->outreachRunId)
+                ->delay(now()->addSeconds($delaySeconds));
+
+            return;
+        }
+
+        try {
+            $this->processLeadWithSlot(
+                $campaign,
+                $lead,
+                $progress,
+                $resolver,
+                $executor,
+                $logger,
+                $completion,
+                $guard,
+                $conditionEvaluator,
+            );
+        } finally {
+            $limiter->release($userId);
+        }
+    }
+
+    private function processLeadWithSlot(
+        V2OutreachCampaign $campaign,
+        V2OutreachLead $lead,
+        V2OutreachLeadProgress $progress,
+        OutreachSequenceResolver $resolver,
+        OutreachStepExecutor $executor,
+        OutreachActivityLogger $logger,
+        OutreachCompletionService $completion,
+        OutreachChannelGuard $guard,
+        OutreachConditionEvaluator $conditionEvaluator,
+    ): void {
         $run = $this->outreachRunId ? V2OutreachRun::query()->find($this->outreachRunId) : null;
         $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
 

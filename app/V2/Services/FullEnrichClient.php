@@ -131,7 +131,7 @@ class FullEnrichClient
             'poll_attempts' => $pollAttempt,
         ]);
 
-        return new LeadEnrichmentResult;
+        return new LeadEnrichmentResult(timedOut: true);
     }
 
     /**

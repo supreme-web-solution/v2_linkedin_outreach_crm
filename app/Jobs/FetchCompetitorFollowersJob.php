@@ -11,11 +11,14 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Orchestrator: resolve company/posts, then chain per-post harvest jobs.
+ */
 class FetchCompetitorFollowersJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 900;
+    public int $timeout = 300;
 
     public int $tries = 1;
 
@@ -48,29 +51,19 @@ class FetchCompetitorFollowersJob implements ShouldQueue
         $audience->save();
 
         try {
-            $result = $harvest->harvest($audience, $this->userId, $this->companyUrl);
+            $prepared = $harvest->prepareHarvest($audience, $this->userId, $this->companyUrl);
 
-            $meta = json_decode((string) $audience->fresh()->source_meta, true) ?? [];
-            $meta['fetch_status'] = 'completed';
-            $meta['fetch_progress'] = sprintf(
-                'Done — stored %d engager(s) from %d post(s).',
-                $result['stored_count'],
-                $result['posts_scanned']
+            HarvestCompetitorPostJob::dispatch(
+                $this->userId,
+                $this->audiencePkId,
+                0,
+                $this->companyUrl,
             );
-            $meta['fetch_completed_at'] = now()->toIso8601String();
-            $meta['stored_count'] = $result['stored_count'];
-            $meta['total_fetched'] = $result['total_fetched'];
-            $meta['posts_scanned'] = $result['posts_scanned'];
-            $meta['last_error'] = null;
-            $meta['last_error_type'] = null;
-            $audience->source_meta = json_encode($meta);
-            $audience->save();
 
-            Log::info('FetchCompetitorFollowersJob: completed', [
+            Log::info('FetchCompetitorFollowersJob: prepared posts', [
                 'audience_id' => $audience->audience_id,
                 'company_url' => $this->companyUrl,
-                'stored_count' => $result['stored_count'],
-                'posts_scanned' => $result['posts_scanned'],
+                'posts' => count($prepared['post_social_ids']),
             ]);
         } catch (\Throwable $exception) {
             $meta = json_decode((string) $audience->fresh()->source_meta, true) ?? [];

@@ -379,6 +379,7 @@ class CompetitorFollowersWebController extends Controller
                     'already_completed' => true,
                 ], 409);
             }
+            // timed_out (and other non-completed statuses) may be retried.
         }
 
         $publicIdentifier = $audienceListItem->con_public_identifier;

@@ -68,6 +68,7 @@ const props = defineProps<{
             conversion_rate: number;
         }>;
     };
+    concurrency?: { limit: number; in_flight: number; available: number };
 }>();
 
 const page = usePage();
@@ -195,7 +196,7 @@ async function fetchActivity(initial = false) {
 async function refreshLiveData() {
     if (!isRunning.value) return;
     router.reload({
-        only: ['campaign', 'leads', 'stats', 'inboxSummary'],
+        only: ['campaign', 'leads', 'stats', 'inboxSummary', 'concurrency'],
         preserveScroll: true,
     });
 }
@@ -282,6 +283,21 @@ const channelActionEntries = computed(() =>
             <AlertCircle class="mt-0.5 h-4 w-4" /> {{ flashError }}
         </div>
         <div v-if="flashSuccess" class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{{ flashSuccess }}</div>
+
+        <div
+            v-if="isRunning && concurrency"
+            class="flex items-start gap-3 rounded-xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-sm text-sky-900"
+        >
+            <Info class="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+            <div>
+                <p class="font-medium">LinkedIn-safe pacing</p>
+                <p class="mt-0.5 text-sky-800/90">
+                    Up to {{ concurrency.limit }} leads run at once
+                    <span v-if="concurrency.in_flight > 0"> ({{ concurrency.in_flight }} active now)</span>.
+                    The rest stay queued and start automatically when a slot frees — this protects your account and keeps the server fair for other users.
+                </p>
+            </div>
+        </div>
 
         <!-- Live campaign banner -->
         <div
