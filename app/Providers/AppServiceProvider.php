@@ -129,7 +129,7 @@ class AppServiceProvider extends ServiceProvider
             return;
         }
 
-        $appName = (string) config('app.name', 'Call Manager');
+        $appName = (string) config('app.name', 'Socifusion');
 
         seo()
             ->site($appName)

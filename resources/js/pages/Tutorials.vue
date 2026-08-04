@@ -38,7 +38,7 @@ const tutorials: Tutorial[] = [
         <div>
             <h1 class="text-xl font-semibold text-foreground">Tutorials</h1>
             <p class="text-sm text-muted-foreground">
-                Step-by-step walkthroughs to get the most out of LinkedEmpire.
+                Step-by-step walkthroughs to get the most out of Socifusion.
             </p>
         </div>
 

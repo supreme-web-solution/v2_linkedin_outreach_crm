@@ -32,7 +32,7 @@ const props = defineProps<{
 }>();
 
 const page = usePage();
-const appName = computed(() => (page.props.name as string) || 'Call Manager');
+const appName = computed(() => (page.props.name as string) || 'Socifusion');
 const flashSuccess = computed(() => (page.props.flash as { success?: string })?.success);
 const flashError = computed(() => (page.props.flash as { error?: string })?.error);
 

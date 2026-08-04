@@ -1,9 +1,9 @@
 ; Production queue workers — install Supervisor and copy to /etc/supervisor/conf.d/
 ; Adjust paths and user for your server.
 
-[program:linkedempire-webhooks]
+[program:socifusion-webhooks]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/linkedempire/artisan queue:work redis --queue=webhooks --sleep=1 --tries=5 --timeout=120 --max-jobs=500 --max-time=3600
+command=php /var/www/socifusion/artisan queue:work redis --queue=webhooks --sleep=1 --tries=5 --timeout=120 --max-jobs=500 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -11,12 +11,12 @@ killasgroup=true
 user=www-data
 numprocs=2
 redirect_stderr=true
-stdout_logfile=/var/www/linkedempire/storage/logs/worker-webhooks.log
+stdout_logfile=/var/www/socifusion/storage/logs/worker-webhooks.log
 stopwaitsecs=3600
 
-[program:linkedempire-campaigns]
+[program:socifusion-campaigns]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/linkedempire/artisan queue:work redis --queue=campaigns,outreach --sleep=2 --tries=3 --timeout=300 --max-jobs=200 --max-time=3600
+command=php /var/www/socifusion/artisan queue:work redis --queue=campaigns,outreach --sleep=2 --tries=3 --timeout=300 --max-jobs=200 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -24,12 +24,12 @@ killasgroup=true
 user=www-data
 numprocs=2
 redirect_stderr=true
-stdout_logfile=/var/www/linkedempire/storage/logs/worker-campaigns.log
+stdout_logfile=/var/www/socifusion/storage/logs/worker-campaigns.log
 stopwaitsecs=3600
 
-[program:linkedempire-default]
+[program:socifusion-default]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/linkedempire/artisan queue:work redis --queue=default --sleep=3 --tries=3 --timeout=120 --max-jobs=200 --max-time=3600
+command=php /var/www/socifusion/artisan queue:work redis --queue=default --sleep=3 --tries=3 --timeout=120 --max-jobs=200 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -37,15 +37,15 @@ killasgroup=true
 user=www-data
 numprocs=1
 redirect_stderr=true
-stdout_logfile=/var/www/linkedempire/storage/logs/worker-default.log
+stdout_logfile=/var/www/socifusion/storage/logs/worker-default.log
 stopwaitsecs=3600
 
 ; Laravel scheduler (queue:recover runs every 5 minutes via schedule)
-[program:linkedempire-scheduler]
+[program:socifusion-scheduler]
 process_name=%(program_name)s
-command=/bin/bash -c "while true; do php /var/www/linkedempire/artisan schedule:run --verbose --no-interaction; sleep 60; done"
+command=/bin/bash -c "while true; do php /var/www/socifusion/artisan schedule:run --verbose --no-interaction; sleep 60; done"
 autostart=true
 autorestart=true
 user=www-data
 redirect_stderr=true
-stdout_logfile=/var/www/linkedempire/storage/logs/scheduler.log
+stdout_logfile=/var/www/socifusion/storage/logs/scheduler.log

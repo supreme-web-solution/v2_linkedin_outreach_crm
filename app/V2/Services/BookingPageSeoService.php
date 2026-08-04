@@ -19,7 +19,7 @@ class BookingPageSeoService
         int $durationMinutes,
         string $token,
     ): void {
-        $appName = (string) config('app.name', 'Call Manager');
+        $appName = (string) config('app.name', 'Socifusion');
         $hostName = trim($host->name) !== '' ? trim($host->name) : 'your host';
         $duration = max(15, $durationMinutes);
 

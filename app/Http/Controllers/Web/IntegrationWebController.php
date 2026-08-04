@@ -160,7 +160,7 @@ class IntegrationWebController extends Controller
             $this->linkedin->connectViaCookie(
                 $user,
                 $data['li_at'],
-                trim((string) ($data['user_agent'] ?? $request->userAgent() ?? '')) ?: 'LinkedEmpire/2.0',
+                trim((string) ($data['user_agent'] ?? $request->userAgent() ?? '')) ?: 'Socifusion/2.0',
                 $orgId
             );
         } catch (\Throwable $e) {

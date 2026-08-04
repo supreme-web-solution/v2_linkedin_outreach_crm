@@ -3,7 +3,7 @@ import { usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
 
 const page = usePage();
-const appName = computed(() => (page.props.name as string) ?? 'Supreme LinkedIn');
+const appName = computed(() => (page.props.name as string) ?? 'Socifusion');
 </script>
 
 <template>
@@ -16,6 +16,6 @@ const appName = computed(() => (page.props.name as string) ?? 'Supreme LinkedIn'
         <span class="truncate text-sm font-semibold text-sidebar-foreground">{{
             appName
         }}</span>
-        <span class="truncate text-xs text-muted-foreground">LinkedIn CRM Studio</span>
+        <span class="truncate text-xs text-muted-foreground">Multi-channel CRM</span>
     </div>
 </template>

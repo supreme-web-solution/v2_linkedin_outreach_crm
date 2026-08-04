@@ -8,7 +8,7 @@
 {
   "email": "user@example.com",
   "password": "your-password",
-  "device_name": "LinkedEmpire V2 Extension"
+  "device_name": "Socifusion Extension"
 }
 ```
 

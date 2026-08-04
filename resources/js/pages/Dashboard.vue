@@ -107,7 +107,7 @@ function leadsSublabel(): string {
     <div class="flex flex-col gap-6 p-4 sm:p-5 md:p-6 lg:p-8">
         <div v-if="!hasOrg" class="rounded-2xl border border-yellow-500/40 bg-yellow-500/10 p-4 text-sm text-yellow-700 dark:text-yellow-400">
             <strong>No organisation linked yet.</strong>
-            Connect the LinkedEmpire v2 extension to this account to auto-create your workspace, or use the extension to sign in.
+            Connect the Socifusion extension to this account to auto-create your workspace, or use the extension to sign in.
         </div>
 
         <!-- Welcome banner -->

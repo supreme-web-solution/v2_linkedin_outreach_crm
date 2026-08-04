@@ -15,7 +15,7 @@ class AuthPageSeoService
      */
     public function apply(Request $request, array $overrides = []): void
     {
-        $appName = (string) config('app.name', 'Call Manager');
+        $appName = (string) config('app.name', 'Socifusion');
 
         $title = $overrides['title'] ?? "{$appName} — Sign in";
         $description = $overrides['description']
@@ -39,7 +39,7 @@ class AuthPageSeoService
 
     public function login(Request $request): void
     {
-        $appName = (string) config('app.name', 'Call Manager');
+        $appName = (string) config('app.name', 'Socifusion');
 
         $this->apply($request, [
             'title' => "Log in — {$appName}",
@@ -51,7 +51,7 @@ class AuthPageSeoService
 
     public function register(Request $request): void
     {
-        $appName = (string) config('app.name', 'Call Manager');
+        $appName = (string) config('app.name', 'Socifusion');
 
         $this->apply($request, [
             'title' => "Create account — {$appName}",
@@ -63,7 +63,7 @@ class AuthPageSeoService
 
     public function forgotPassword(Request $request): void
     {
-        $appName = (string) config('app.name', 'Call Manager');
+        $appName = (string) config('app.name', 'Socifusion');
 
         $this->apply($request, [
             'title' => "Reset password — {$appName}",
@@ -74,7 +74,7 @@ class AuthPageSeoService
 
     public function licenseSignup(Request $request, string $variant): void
     {
-        $appName = (string) config('app.name', 'Call Manager');
+        $appName = (string) config('app.name', 'Socifusion');
 
         $labels = [
             'fe' => 'Activate FE access',
