@@ -29,6 +29,8 @@ Route::get('/', function () {
     return redirect()->route(request()->user() ? 'dashboard' : 'login');
 })->name('home');
 
+Route::inertia('privacy-policy', 'public/PrivacyPolicy')->name('privacy-policy');
+
 require __DIR__.'/billing.php';
 
 Route::get('team/accept/{token}', [TeamWebController::class, 'showAcceptInvite'])->name('team.accept.show');
