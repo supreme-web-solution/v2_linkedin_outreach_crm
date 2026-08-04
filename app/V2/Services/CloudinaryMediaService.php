@@ -11,6 +11,11 @@ class CloudinaryMediaService
 {
     public function isConfigured(): bool
     {
+        $url = trim((string) config('services.cloudinary.url', ''));
+        if ($url !== '' && str_starts_with($url, 'cloudinary://')) {
+            return true;
+        }
+
         return $this->cloudName() !== '' && $this->apiKey() !== '' && $this->apiSecret() !== '';
     }
 
