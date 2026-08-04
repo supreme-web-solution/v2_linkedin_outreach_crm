@@ -52,6 +52,7 @@ Expected queues (verify Horizon supervisors):
 Scheduled tasks (`routes/console.php`):
 
 - `queue:recover --release-stale` — every 5 min
+- `queue:monitor-depth` — every 5 min (Redis pending/delayed/reserved depth)
 - `horizon:snapshot` — every 5 min
 - `calls:dispatch-due` — every minute
 
@@ -69,8 +70,9 @@ OPS_SLACK_WEBHOOK_URL=https://hooks.slack.com/...
 OPS_ALERT_DAILY_LIMITS=true
 OPS_ALERT_QUEUE_HEALTH=true
 OPS_ALERT_FAILED_JOBS_THRESHOLD=10
+OPS_ALERT_QUEUE_DEPTH_THRESHOLD=200
+OPS_MONITORED_QUEUES=outreach,campaigns,webhooks,default,enrichment
 ```
-
 ## Rollback
 
 1. Revert deploy artifact / previous release tag

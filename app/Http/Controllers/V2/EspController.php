@@ -66,12 +66,10 @@ class EspController extends Controller
             $query->whereIn('id', $leadIds);
         }
 
-        $rows = $query->get();
-
-        return response()->streamDownload(function () use ($rows) {
+        return response()->streamDownload(function () use ($query) {
             $handle = fopen('php://output', 'wb');
             fputcsv($handle, ['id', 'name', 'headline', 'company', 'location', 'email', 'public_identifier']);
-            foreach ($rows as $row) {
+            $query->orderBy('id')->cursor()->each(function ($row) use ($handle) {
                 fputcsv($handle, [
                     $row->id,
                     $row->full_name,
@@ -81,7 +79,7 @@ class EspController extends Controller
                     $row->email,
                     $row->public_identifier,
                 ]);
-            }
+            });
             fclose($handle);
         }, 'v2-leads-export.csv');
     }

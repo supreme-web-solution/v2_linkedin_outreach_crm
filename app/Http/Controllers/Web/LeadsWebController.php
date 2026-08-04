@@ -23,6 +23,7 @@ use App\V2\Outreach\OutreachLeadContactResolver;
 use App\V2\Outreach\OutreachLeadReadinessService;
 use App\V2\Services\DashboardStatsService;
 use App\V2\Services\EmailEnrichmentLimiter;
+use App\V2\Services\LeadListService;
 use App\V2\Web\LeadListStatsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -31,42 +32,28 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class LeadsWebController extends Controller
 {
-    public function index(DashboardStatsService $dashboardStats, OutreachImportListService $importListService): Response
-    {
+    public function index(
+        DashboardStatsService $dashboardStats,
+        OutreachImportListService $importListService,
+        LeadListService $leadListService,
+    ): Response {
         $userId = Auth::id();
 
-        $audiences = Audience::where('user_id', $userId)
-            ->select('id', 'audience_name', 'audience_id', 'source', 'created_at')
-            ->selectRaw('(select count(*) from audience_lists where audience_lists.audience_id = audiences.audience_id) as total_leads')
-            ->get()
-            ->map(fn ($a) => [
-                'id' => $a->id,
-                'list_name' => $a->audience_name ?: 'Untitled audience',
-                'list_hash' => (string) $a->audience_id,
-                'total_leads' => (int) $a->total_leads,
-                'source' => 'Audience',
-                'src' => 'aud',
-                'created_at' => optional($a->created_at)->toIso8601String(),
-            ]);
-
-        $snLists = SnLeadList::where('user_id', $userId)
-            ->select('id', 'name', 'list_hash', 'created_at')
-            ->selectRaw('(select count(*) from sn_leads where sn_leads.sn_list_id = sn_leads_lists.list_hash) as total_leads')
-            ->get()
-            ->map(fn ($l) => [
-                'id' => $l->id,
-                'list_name' => $l->name ?: 'Untitled list',
-                'list_hash' => (string) $l->list_hash,
-                'total_leads' => (int) $l->total_leads,
-                'source' => 'Sales Navigator',
-                'src' => 'sn',
-                'created_at' => optional($l->created_at)->toIso8601String(),
-            ]);
-
-        $lists = $audiences->concat($snLists)->sortBy('list_name')->values();
+        $lists = $leadListService->listsForUser($userId)
+            ->map(fn (array $list) => [
+                'id' => $list['id'],
+                'list_name' => $list['list_name'],
+                'list_hash' => $list['list_id'],
+                'total_leads' => $list['total_leads'],
+                'source' => $list['source'],
+                'src' => $list['src'],
+                'created_at' => $list['created_at'],
+            ])
+            ->values();
 
         $importLists = collect($importListService->listsForUser($userId))
             ->map(fn (array $list) => [
@@ -83,8 +70,8 @@ class LeadsWebController extends Controller
 
         $stats = [
             'total_lists' => $lists->count() + $importLists->count(),
-            'audience_lists' => $audiences->count(),
-            'sn_lists' => $snLists->count(),
+            'audience_lists' => $lists->where('src', 'aud')->count(),
+            'sn_lists' => $lists->where('src', 'sn')->count(),
             'import_lists' => $importLists->count(),
             'total_leads' => $dashboardStats->leadCountForUser($userId),
             'linkedin_leads' => $dashboardStats->linkedinLeadCountForUser($userId),
@@ -240,41 +227,7 @@ class LeadsWebController extends Controller
     public function removeList(Request $request, string $listId): RedirectResponse
     {
         $src = $request->query('src', 'aud');
-
-        if ($src === 'aud') {
-            $audience = Audience::where('audience_id', $listId)->where('user_id', Auth::id())->first();
-            if ($audience) {
-                AudienceList::where('audience_id', $listId)->delete();
-                $audience->delete();
-            }
-        } elseif ($src === 'csv') {
-            $importList = V2OutreachImportList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
-            if ($importList) {
-                V2OutreachImportLead::where('import_list_id', $importList->id)->delete();
-                $importList->delete();
-            }
-        } else {
-            $list = SnLeadList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
-            if ($list) {
-                $snLids = SnLead::where('sn_list_id', $listId)->pluck('sn_lid')->filter()->values();
-                $leadIds = SnLead::where('sn_list_id', $listId)->pluck('id');
-                SnLeadsCompany::whereIn('sn_lead_id', $leadIds)->delete();
-                SnLead::where('sn_list_id', $listId)->delete();
-                if ($snLids->isNotEmpty()) {
-                    $v2LeadIds = V2Lead::query()
-                        ->where('user_id', Auth::id())
-                        ->whereIn('provider_profile_id', $snLids)
-                        ->pluck('id');
-                    if ($v2LeadIds->isNotEmpty()) {
-                        V2LeadSource::query()
-                            ->where('source_external_id', $listId)
-                            ->whereIn('lead_id', $v2LeadIds)
-                            ->delete();
-                    }
-                }
-                $list->delete();
-            }
-        }
+        $this->deleteOwnedList((string) Auth::id(), $listId, (string) $src);
 
         return redirect()->route('leads')->with('success', 'Lead list removed successfully.');
     }
@@ -288,47 +241,11 @@ class LeadsWebController extends Controller
         ]);
 
         $removed = 0;
+        $userId = (string) Auth::id();
 
         foreach ($data['lists'] as $list) {
-            $listId = (string) $list['list_hash'];
-            $src = (string) $list['src'];
-
-            if ($src === 'aud') {
-                $audience = Audience::where('audience_id', $listId)->where('user_id', Auth::id())->first();
-                if ($audience) {
-                    AudienceList::where('audience_id', $listId)->delete();
-                    $audience->delete();
-                    $removed++;
-                }
-            } elseif ($src === 'csv') {
-                $importList = V2OutreachImportList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
-                if ($importList) {
-                    V2OutreachImportLead::where('import_list_id', $importList->id)->delete();
-                    $importList->delete();
-                    $removed++;
-                }
-            } else {
-                $listModel = SnLeadList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
-                if ($listModel) {
-                    $snLids = SnLead::where('sn_list_id', $listId)->pluck('sn_lid')->filter()->values();
-                    $leadIds = SnLead::where('sn_list_id', $listId)->pluck('id');
-                    SnLeadsCompany::whereIn('sn_lead_id', $leadIds)->delete();
-                    SnLead::where('sn_list_id', $listId)->delete();
-                    if ($snLids->isNotEmpty()) {
-                        $v2LeadIds = V2Lead::query()
-                            ->where('user_id', Auth::id())
-                            ->whereIn('provider_profile_id', $snLids)
-                            ->pluck('id');
-                        if ($v2LeadIds->isNotEmpty()) {
-                            V2LeadSource::query()
-                                ->where('source_external_id', $listId)
-                                ->whereIn('lead_id', $v2LeadIds)
-                                ->delete();
-                        }
-                    }
-                    $listModel->delete();
-                    $removed++;
-                }
+            if ($this->deleteOwnedList($userId, (string) $list['list_hash'], (string) $list['src'])) {
+                $removed++;
             }
         }
 
@@ -406,63 +323,111 @@ class LeadsWebController extends Controller
         return back()->with('success', count($data['ids']).' leads removed.');
     }
 
-    public function export(Request $request, string $listId): JsonResponse
+    public function export(Request $request, string $listId): StreamedResponse
     {
         $src = $request->query('src', 'aud');
+        $userId = Auth::id();
+        $safeName = preg_replace('/[^a-z0-9]+/i', '_', $listId) ?: 'leads';
+        $filename = "{$safeName}_leads.csv";
 
         if ($src === 'csv') {
             $importList = V2OutreachImportList::query()
                 ->where('list_hash', $listId)
-                ->where('user_id', Auth::id())
+                ->where('user_id', $userId)
                 ->firstOrFail();
 
-            $rows = V2OutreachImportLead::query()
-                ->where('import_list_id', $importList->id)
-                ->get()
-                ->map(fn (V2OutreachImportLead $r) => [
-                    'full_name' => $r->full_name,
-                    'email' => $r->email,
-                    'phone' => $r->phone,
-                    'linkedin_url' => $r->profile_url,
-                    'instagram' => $r->instagram_handle,
-                    'telegram' => $r->telegram_handle,
-                    'twitter' => $r->twitter_handle,
-                ]);
-        } elseif ($src === 'sn') {
-            $rows = SnLead::where('sn_list_id', $listId)
-                ->leftJoin('sn_leads_companies as c', 'c.sn_lead_id', '=', 'sn_leads.id')
-                ->get([
-                    'sn_leads.first_name', 'sn_leads.last_name', 'sn_leads.email', 'sn_leads.headline',
-                    'sn_leads.geolocation', 'sn_leads.lid', 'c.company_name', 'c.company_website',
-                    'c.company_industries', 'c.company_headquaters',
-                ])
-                ->map(fn ($r) => [
-                    'first_name' => $r->first_name,
-                    'last_name' => $r->last_name,
-                    'email' => $r->email,
-                    'headline' => $r->headline,
-                    'location' => $r->geolocation,
-                    'profile_url' => $r->lid ? 'https://www.linkedin.com/in/'.$r->lid : '',
-                    'company_name' => $r->company_name,
-                    'company_website' => $r->company_website,
-                    'company_industries' => $r->company_industries,
-                    'company_headquarters' => $r->company_headquaters,
-                ]);
-        } else {
-            $rows = AudienceList::where('audience_id', $listId)->get()
-                ->map(fn (AudienceList $r) => [
-                    'first_name' => $r->con_first_name,
-                    'last_name' => $r->con_last_name,
-                    'email' => $r->con_email,
-                    'occupation' => $r->con_job_title,
-                    'location' => $r->con_location,
-                    'profile_url' => $r->con_public_identifier ? 'https://www.linkedin.com/in/'.$r->con_public_identifier : ($r->con_profile_url ?? ''),
-                    'company_url' => $r->con_company_url,
-                    'network_distance' => $r->con_distance,
-                ]);
+            $headers = ['full_name', 'email', 'phone', 'linkedin_url', 'instagram', 'telegram', 'twitter'];
+
+            return response()->streamDownload(function () use ($importList, $headers) {
+                $handle = fopen('php://output', 'wb');
+                fputcsv($handle, $headers);
+                V2OutreachImportLead::query()
+                    ->where('import_list_id', $importList->id)
+                    ->orderBy('id')
+                    ->cursor()
+                    ->each(function (V2OutreachImportLead $r) use ($handle) {
+                        fputcsv($handle, [
+                            $r->full_name,
+                            $r->email,
+                            $r->phone,
+                            $r->profile_url,
+                            $r->instagram_handle,
+                            $r->telegram_handle,
+                            $r->twitter_handle,
+                        ]);
+                    });
+                fclose($handle);
+            }, $filename);
         }
 
-        return response()->json(['data' => $rows]);
+        if ($src === 'sn') {
+            SnLeadList::where('list_hash', $listId)->where('user_id', $userId)->firstOrFail();
+            $headers = [
+                'first_name', 'last_name', 'email', 'headline', 'location', 'profile_url',
+                'company_name', 'company_website', 'company_industries', 'company_headquarters',
+            ];
+
+            return response()->streamDownload(function () use ($listId, $headers) {
+                $handle = fopen('php://output', 'wb');
+                fputcsv($handle, $headers);
+                SnLead::query()
+                    ->where('sn_list_id', $listId)
+                    ->leftJoin('sn_leads_companies as c', 'c.sn_lead_id', '=', 'sn_leads.id')
+                    ->orderBy('sn_leads.id')
+                    ->select([
+                        'sn_leads.id',
+                        'sn_leads.first_name', 'sn_leads.last_name', 'sn_leads.email', 'sn_leads.headline',
+                        'sn_leads.geolocation', 'sn_leads.lid', 'c.company_name', 'c.company_website',
+                        'c.company_industries', 'c.company_headquaters',
+                    ])
+                    ->cursor()
+                    ->each(function ($r) use ($handle) {
+                        fputcsv($handle, [
+                            $r->first_name,
+                            $r->last_name,
+                            $r->email,
+                            $r->headline,
+                            $r->geolocation,
+                            $r->lid ? 'https://www.linkedin.com/in/'.$r->lid : '',
+                            $r->company_name,
+                            $r->company_website,
+                            $r->company_industries,
+                            $r->company_headquaters,
+                        ]);
+                    });
+                fclose($handle);
+            }, $filename);
+        }
+
+        Audience::where('audience_id', $listId)->where('user_id', $userId)->firstOrFail();
+        $headers = [
+            'first_name', 'last_name', 'email', 'occupation', 'location',
+            'profile_url', 'company_url', 'network_distance',
+        ];
+
+        return response()->streamDownload(function () use ($listId, $headers) {
+            $handle = fopen('php://output', 'wb');
+            fputcsv($handle, $headers);
+            AudienceList::query()
+                ->where('audience_id', $listId)
+                ->orderBy('id')
+                ->cursor()
+                ->each(function (AudienceList $r) use ($handle) {
+                    fputcsv($handle, [
+                        $r->con_first_name,
+                        $r->con_last_name,
+                        $r->con_email,
+                        $r->con_job_title,
+                        $r->con_location,
+                        $r->con_public_identifier
+                            ? 'https://www.linkedin.com/in/'.$r->con_public_identifier
+                            : ($r->con_profile_url ?? ''),
+                        $r->con_company_url,
+                        $r->con_distance,
+                    ]);
+                });
+            fclose($handle);
+        }, $filename);
     }
 
     public function fetchEmail(Request $request, string $listId): JsonResponse
@@ -1325,6 +1290,80 @@ class LeadsWebController extends Controller
                 'daily_profile_email_scraping_reset_at' => $today,
             ]);
         }
+    }
+
+    /**
+     * Chunked member deletes so large lists do not load all IDs into PHP.
+     */
+    private function deleteOwnedList(int|string $userId, string $listId, string $src): bool
+    {
+        if ($src === 'aud') {
+            $audience = Audience::where('audience_id', $listId)->where('user_id', $userId)->first();
+            if (! $audience) {
+                return false;
+            }
+
+            AudienceList::query()
+                ->where('audience_id', $listId)
+                ->orderBy('id')
+                ->chunkById(500, function ($rows) {
+                    AudienceList::whereIn('id', $rows->pluck('id'))->delete();
+                });
+            $audience->delete();
+
+            return true;
+        }
+
+        if ($src === 'csv') {
+            $importList = V2OutreachImportList::where('list_hash', $listId)->where('user_id', $userId)->first();
+            if (! $importList) {
+                return false;
+            }
+
+            V2OutreachImportLead::query()
+                ->where('import_list_id', $importList->id)
+                ->orderBy('id')
+                ->chunkById(500, function ($rows) {
+                    V2OutreachImportLead::whereIn('id', $rows->pluck('id'))->delete();
+                });
+            $importList->delete();
+
+            return true;
+        }
+
+        $list = SnLeadList::where('list_hash', $listId)->where('user_id', $userId)->first();
+        if (! $list) {
+            return false;
+        }
+
+        SnLead::query()
+            ->where('sn_list_id', $listId)
+            ->orderBy('id')
+            ->chunkById(500, function ($leads) use ($listId, $userId) {
+                $leadIds = $leads->pluck('id');
+                $snLids = $leads->pluck('sn_lid')->filter()->values();
+
+                SnLeadsCompany::whereIn('sn_lead_id', $leadIds)->delete();
+
+                if ($snLids->isNotEmpty()) {
+                    $v2LeadIds = V2Lead::query()
+                        ->where('user_id', $userId)
+                        ->whereIn('provider_profile_id', $snLids)
+                        ->pluck('id');
+                    if ($v2LeadIds->isNotEmpty()) {
+                        V2LeadSource::query()
+                            ->where('source_external_id', $listId)
+                            ->whereIn('lead_id', $v2LeadIds)
+                            ->delete();
+                    }
+                }
+
+                SnLead::whereIn('id', $leadIds)->delete();
+            });
+
+        $list->delete();
+
+        return true;
     }
 }
 

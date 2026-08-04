@@ -33,6 +33,8 @@ class UnifiedInboxWebController extends Controller
 {
     private const CONVERSATIONS_PER_PAGE = 20;
 
+    private const MESSAGES_WINDOW = 80;
+
     public function __construct(
         private readonly UnifiedInboxService $inbox,
         private readonly InboxUnreadService $unread,
@@ -48,32 +50,50 @@ class UnifiedInboxWebController extends Controller
         $user = auth()->user();
 
         $platforms = OutreachChannelRegistry::inboxPlatforms();
-
         $unreadByPlatform = $this->unread->unreadCountsByPlatform($user->id, $platforms);
+
+        $conversationCounts = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->forUnifiedInbox()
+            ->whereIn('provider', $platforms)
+            ->selectRaw('provider, COUNT(*) as aggregate')
+            ->groupBy('provider')
+            ->pluck('aggregate', 'provider');
+
+        $recentInboundCounts = DB::table('v2_messages')
+            ->join('v2_conversations', 'v2_conversations.id', '=', 'v2_messages.conversation_id')
+            ->where('v2_conversations.user_id', $user->id)
+            ->whereIn('v2_conversations.provider', $platforms)
+            ->whereNotNull('v2_conversations.meta->outreach_campaign_id')
+            ->where(function ($q) {
+                $q->whereNull('v2_conversations.meta->source')
+                    ->orWhereIn('v2_conversations.meta->source', ['unified_inbox', 'outreach']);
+            })
+            ->where('v2_messages.direction', 'inbound')
+            ->where('v2_messages.created_at', '>=', now()->subDays(7))
+            ->groupBy('v2_conversations.provider')
+            ->selectRaw('v2_conversations.provider as provider, COUNT(*) as aggregate')
+            ->pluck('aggregate', 'provider');
+
+        $connectedProviders = V2IntegrationAccount::query()
+            ->where('user_id', $user->id)
+            ->where('status', 'active')
+            ->whereIn('provider', $platforms)
+            ->pluck('provider')
+            ->unique()
+            ->all();
+        $connectedSet = array_fill_keys($connectedProviders, true);
 
         $platformCards = [];
         foreach ($platforms as $platform) {
             $config = OutreachChannelRegistry::channels()[$platform] ?? [];
-            $count = V2Conversation::query()
-                ->where('user_id', $user->id)
-                ->forInboxPlatform($platform)
-                ->count();
-
-            $recentInbound = V2Message::query()
-                ->whereHas('conversation', fn ($q) => $q
-                    ->where('user_id', $user->id)
-                    ->forInboxPlatform($platform))
-                ->where('direction', 'inbound')
-                ->where('created_at', '>=', now()->subDays(7))
-                ->count();
-
             $platformCards[] = [
                 'key' => $platform,
                 'label' => (string) ($config['label'] ?? ucfirst($platform)),
                 'color' => (string) ($config['color'] ?? '#64748b'),
-                'connected' => (bool) V2IntegrationAccount::activeUnipileAccountIdForProvider($user->id, $platform),
-                'conversations_count' => $count,
-                'recent_inbound_count' => $recentInbound,
+                'connected' => isset($connectedSet[$platform]),
+                'conversations_count' => (int) ($conversationCounts[$platform] ?? 0),
+                'recent_inbound_count' => (int) ($recentInboundCounts[$platform] ?? 0),
                 'unread_count' => $unreadByPlatform[$platform] ?? 0,
                 'href' => route('inbox.platform', $platform),
             ];
@@ -109,6 +129,7 @@ class UnifiedInboxWebController extends Controller
 
         $selected = null;
         $messages = [];
+        $hasOlderMessages = false;
         $outreachContext = null;
 
         if ($selectedId > 0) {
@@ -125,7 +146,9 @@ class UnifiedInboxWebController extends Controller
                 $this->unread->markAsRead($thread);
                 $thread->refresh();
                 $selected = $this->serializeThread($thread);
-                $messages = $this->serializeMessages($thread);
+                $messagePayload = $this->serializeMessagesWindow($thread);
+                $messages = $messagePayload['messages'];
+                $hasOlderMessages = $messagePayload['has_older'];
                 $outreachContext = $this->buildOutreachContext($thread, $user);
             }
         }
@@ -140,8 +163,9 @@ class UnifiedInboxWebController extends Controller
             'conversations' => $conversations,
             'selected' => $selected,
             'messages' => $messages,
+            'has_older_messages' => $hasOlderMessages,
             'outreachContext' => $outreachContext,
-            'unread_count' => $this->unread->unreadCountForUser($user->id, $platform),
+            'unread_count' => $this->unread->unreadCountForUserCached($user->id, $platform),
             'aiConfigured' => app(OpenAIContentService::class)->isConfigured(),
             'supportsAttachments' => InboxAttachmentSupport::supportsAttachments($platform),
             'filters' => [
@@ -174,6 +198,7 @@ class UnifiedInboxWebController extends Controller
 
         $config = OutreachChannelRegistry::channels()[$platform] ?? [];
         $outreachContext = $this->buildOutreachContext($thread, $user);
+        $messagePayload = $this->serializeMessagesWindow($thread);
 
         return Inertia::render('crm/inbox/Platform', [
             'platform' => $platform,
@@ -182,9 +207,10 @@ class UnifiedInboxWebController extends Controller
             'connected' => (bool) V2IntegrationAccount::activeUnipileAccountIdForProvider($user->id, $platform),
             'conversations' => $this->paginateConversations($user, $platform, $request),
             'selected' => $this->serializeThread($thread),
-            'messages' => $this->serializeMessages($thread),
+            'messages' => $messagePayload['messages'],
+            'has_older_messages' => $messagePayload['has_older'],
             'outreachContext' => $outreachContext,
-            'unread_count' => $this->unread->unreadCountForUser($user->id, $platform),
+            'unread_count' => $this->unread->unreadCountForUserCached($user->id, $platform),
             'aiConfigured' => app(OpenAIContentService::class)->isConfigured(),
             'supportsAttachments' => InboxAttachmentSupport::supportsAttachments($platform),
             'filters' => [
@@ -192,6 +218,28 @@ class UnifiedInboxWebController extends Controller
                 'campaign' => null,
                 'id' => $id,
             ],
+        ]);
+    }
+
+    public function olderMessages(Request $request, string $platform, int $id): JsonResponse
+    {
+        $this->channelSettings->assertInboxChannel($platform);
+
+        /** @var User $user */
+        $user = auth()->user();
+        $beforeId = max(0, (int) $request->query('before_id', 0));
+
+        $thread = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->forInboxPlatform($platform)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $payload = $this->serializeMessagesWindow($thread, $beforeId > 0 ? $beforeId : null);
+
+        return response()->json([
+            'messages' => $payload['messages'],
+            'has_older' => $payload['has_older'],
         ]);
     }
 
@@ -215,15 +263,17 @@ class UnifiedInboxWebController extends Controller
         $thread->refresh();
 
         $outreachContext = $this->buildOutreachContext($thread, $user);
+        $messagePayload = $this->serializeMessagesWindow($thread);
 
         return response()->json([
-            'messages' => $this->serializeMessages($thread),
+            'messages' => $messagePayload['messages'],
+            'has_older' => $messagePayload['has_older'],
             'conversations' => $this->serializeConversationsPaginator(
                 $this->paginateConversations($user, $platform, $request)
             ),
             'selected' => $this->serializeThread($thread),
             'outreachContext' => $outreachContext,
-            'unread_count' => $this->unread->unreadCountForUser($user->id, $platform),
+            'unread_count' => $this->unread->unreadCountForUserCached($user->id, $platform),
         ]);
     }
 
@@ -603,63 +653,94 @@ class UnifiedInboxWebController extends Controller
     }
 
     /**
-     * @return array<int, array<string, mixed>>
+     * Latest message window (default 80). Pass beforeId to page older history.
+     *
+     * @return array{messages: array<int, array<string, mixed>>, has_older: bool}
      */
-    private function serializeMessages(V2Conversation $conversation): array
+    private function serializeMessagesWindow(V2Conversation $conversation, ?int $beforeId = null): array
     {
         $normalizer = app(\App\V2\Services\UnipileMessageNormalizer::class);
 
-        return V2Message::query()
-            ->where('conversation_id', $conversation->id)
-            ->orderByRaw('COALESCE(received_at, sent_at, created_at) ASC')
-            ->orderBy('id')
-            ->get()
-            ->filter(fn (V2Message $message) => ! $normalizer->isReactionAnnouncementText((string) ($message->body ?? '')))
-            ->map(function (V2Message $message) use ($conversation, $normalizer) {
-                $rawBody = (string) ($message->body ?? '');
-                $formatted = $conversation->provider === 'email'
-                    ? $this->emailBodyFormatter->format($rawBody)
-                    : null;
+        $query = V2Message::query()
+            ->where('conversation_id', $conversation->id);
 
-                return [
-                'id' => $message->id,
-                'provider_message_id' => $message->provider_message_id,
-                'direction' => $message->direction,
-                'body' => $rawBody,
-                'formatted' => $formatted,
-                'at' => ($message->received_at ?? $message->sent_at ?? $message->created_at)?->toIso8601String(),
-                'source' => Arr::get($message->meta ?? [], 'source'),
-                'attachments' => collect(is_array($message->attachments) ? $message->attachments : [])
-                    ->filter(fn ($item) => is_array($item) && ! empty($item['id']))
-                    ->map(fn (array $item) => [
-                        'id' => (string) $item['id'],
-                        'filename' => (string) ($item['filename'] ?? 'file'),
-                        'mimetype' => (string) ($item['mimetype'] ?? 'application/octet-stream'),
-                        'type' => (string) ($item['type'] ?? 'file'),
-                        'unavailable' => (bool) ($item['unavailable'] ?? false),
-                        'url' => $message->provider_message_id
-                            ? route('inbox.attachment', [
-                                'platform' => $conversation->provider,
-                                'id' => $conversation->id,
-                                'messageId' => $message->provider_message_id,
-                                'attachmentId' => $item['id'],
-                            ])
-                            : null,
-                    ])
-                    ->values()
-                    ->all(),
-                'reactions' => collect(is_array(Arr::get($message->meta, 'reactions')) ? Arr::get($message->meta, 'reactions') : [])
-                    ->filter(fn ($item) => is_array($item) && ! empty($item['value']))
-                    ->map(fn (array $item) => [
-                        'value' => (string) $item['value'],
-                        'is_sender' => (bool) ($item['is_sender'] ?? false),
-                    ])
-                    ->values()
-                    ->all(),
-                ];
-            })
+        if ($beforeId !== null && $beforeId > 0) {
+            $query->where('id', '<', $beforeId);
+        }
+
+        $rows = $query
+            ->orderByDesc('id')
+            ->limit(self::MESSAGES_WINDOW)
+            ->get()
+            ->sortBy('id')
+            ->values();
+
+        $oldestId = $rows->first()?->id;
+        $hasOlder = $oldestId
+            ? V2Message::query()
+                ->where('conversation_id', $conversation->id)
+                ->where('id', '<', $oldestId)
+                ->exists()
+            : false;
+
+        $messages = $rows
+            ->filter(fn (V2Message $message) => ! $normalizer->isReactionAnnouncementText((string) ($message->body ?? '')))
+            ->map(fn (V2Message $message) => $this->serializeMessageRow($conversation, $message))
             ->values()
             ->all();
+
+        return [
+            'messages' => $messages,
+            'has_older' => $hasOlder,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeMessageRow(V2Conversation $conversation, V2Message $message): array
+    {
+        $rawBody = (string) ($message->body ?? '');
+        $formatted = $conversation->provider === 'email'
+            ? $this->emailBodyFormatter->format($rawBody)
+            : null;
+
+        return [
+            'id' => $message->id,
+            'provider_message_id' => $message->provider_message_id,
+            'direction' => $message->direction,
+            'body' => $rawBody,
+            'formatted' => $formatted,
+            'at' => ($message->received_at ?? $message->sent_at ?? $message->created_at)?->toIso8601String(),
+            'source' => Arr::get($message->meta ?? [], 'source'),
+            'attachments' => collect(is_array($message->attachments) ? $message->attachments : [])
+                ->filter(fn ($item) => is_array($item) && ! empty($item['id']))
+                ->map(fn (array $item) => [
+                    'id' => (string) $item['id'],
+                    'filename' => (string) ($item['filename'] ?? 'file'),
+                    'mimetype' => (string) ($item['mimetype'] ?? 'application/octet-stream'),
+                    'type' => (string) ($item['type'] ?? 'file'),
+                    'unavailable' => (bool) ($item['unavailable'] ?? false),
+                    'url' => $message->provider_message_id
+                        ? route('inbox.attachment', [
+                            'platform' => $conversation->provider,
+                            'id' => $conversation->id,
+                            'messageId' => $message->provider_message_id,
+                            'attachmentId' => $item['id'],
+                        ])
+                        : null,
+                ])
+                ->values()
+                ->all(),
+            'reactions' => collect(is_array(Arr::get($message->meta, 'reactions')) ? Arr::get($message->meta, 'reactions') : [])
+                ->filter(fn ($item) => is_array($item) && ! empty($item['value']))
+                ->map(fn (array $item) => [
+                    'value' => (string) $item['value'],
+                    'is_sender' => (bool) ($item['is_sender'] ?? false),
+                ])
+                ->values()
+                ->all(),
+        ];
     }
 
     private function prospectName(V2Conversation $conversation): ?string

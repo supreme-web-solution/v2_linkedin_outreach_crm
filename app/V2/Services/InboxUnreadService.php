@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class InboxUnreadService
@@ -34,10 +35,23 @@ class InboxUnreadService
 
     public function markAsRead(V2Conversation $conversation): void
     {
+        $now = now();
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
-        $meta['last_read_at'] = now()->toIso8601String();
+        $meta['last_read_at'] = $now->toIso8601String();
 
-        $conversation->forceFill(['meta' => $meta])->save();
+        $conversation->forceFill([
+            'last_read_at' => $now,
+            'meta' => $meta,
+        ])->save();
+
+        $this->forgetUnreadCache((int) $conversation->user_id, (string) $conversation->provider);
+    }
+
+    public function unreadCountForUserCached(int $userId, ?string $platform = null): int
+    {
+        $key = $this->unreadCacheKey($userId, $platform);
+
+        return (int) Cache::remember($key, now()->addSeconds(20), fn () => $this->unreadCountForUser($userId, $platform));
     }
 
     public function unreadCountForUser(int $userId, ?string $platform = null): int
@@ -53,6 +67,21 @@ class InboxUnreadService
         $this->constrainToUnread($query);
 
         return (int) $query->count();
+    }
+
+    public function forgetUnreadCache(int $userId, ?string $platform = null): void
+    {
+        Cache::forget($this->unreadCacheKey($userId, null));
+        if ($platform !== null && $platform !== '') {
+            Cache::forget($this->unreadCacheKey($userId, $platform));
+        }
+    }
+
+    private function unreadCacheKey(int $userId, ?string $platform): string
+    {
+        return $platform
+            ? "inbox:unread:{$userId}:{$platform}"
+            : "inbox:unread:{$userId}";
     }
 
     public function firstUnreadConversationId(int $userId, string $platform): ?int
@@ -140,7 +169,7 @@ class InboxUnreadService
     }
 
     /**
-     * Conversations with a newer inbound message than meta.last_read_at (or never read).
+     * Conversations with a newer inbound message than last_read_at (or never read).
      */
     private function constrainToUnread(Builder $query): void
     {
@@ -150,25 +179,18 @@ class InboxUnreadService
                 ->whereColumn('m.conversation_id', 'v2_conversations.id')
                 ->where('m.direction', 'inbound')
                 ->whereRaw(
-                    'COALESCE(m.received_at, m.created_at) > COALESCE(
-                        CAST(
-                            REPLACE(
-                                LEFT(
-                                    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(v2_conversations.meta, \'$.last_read_at\')), \'\'),
-                                    19
-                                ),
-                                \'T\',
-                                \' \'
-                            ) AS DATETIME
-                        ),
-                        \'1970-01-01 00:00:00\'
-                    )'
+                    'COALESCE(m.received_at, m.created_at) > COALESCE(v2_conversations.last_read_at, \'1970-01-01 00:00:00\')'
                 );
         });
     }
 
     private function lastReadAt(V2Conversation $conversation): ?Carbon
     {
+        if ($conversation->last_read_at) {
+            return Carbon::parse($conversation->last_read_at);
+        }
+
+        // Pre-migration / legacy rows may still only have meta.
         $raw = Arr::get($conversation->meta ?? [], 'last_read_at');
         if (! is_string($raw) || trim($raw) === '') {
             return null;

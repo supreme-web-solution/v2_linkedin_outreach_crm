@@ -138,6 +138,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     Route::get('inbox/{platform}', [UnifiedInboxWebController::class, 'platform'])->where('platform', $enabledInboxPlatforms)->name('inbox.platform');
     Route::get('inbox/{platform}/{id}', [UnifiedInboxWebController::class, 'show'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.show');
     Route::get('inbox/{platform}/{id}/poll', [UnifiedInboxWebController::class, 'poll'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.poll');
+    Route::get('inbox/{platform}/{id}/messages', [UnifiedInboxWebController::class, 'olderMessages'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.messages');
     Route::post('inbox/{platform}/{id}/send', [UnifiedInboxWebController::class, 'send'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.send');
     Route::delete('inbox/{platform}/{id}', [UnifiedInboxWebController::class, 'destroy'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.destroy');
     Route::delete('inbox/{platform}/{id}/messages/{messageId}', [UnifiedInboxWebController::class, 'destroyMessage'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->whereNumber('messageId')->name('inbox.message.destroy');

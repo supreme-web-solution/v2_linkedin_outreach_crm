@@ -11,34 +11,19 @@ use App\V2\Services\EntitlementService;
 use App\V2\Services\InboxUnreadService;
 use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
 {
-    /**
-     * The root template that's loaded on the first page visit.
-     *
-     * @see https://inertiajs.com/server-side-setup#root-template
-     *
-     * @var string
-     */
     protected $rootView = 'app';
 
-    /**
-     * Determines the current asset version.
-     *
-     * @see https://inertiajs.com/asset-versioning
-     */
     public function version(Request $request): ?string
     {
         return parent::version($request);
     }
 
     /**
-     * Define the props that are shared by default.
-     *
-     * @see https://inertiajs.com/shared-data
-     *
      * @return array<string, mixed>
      */
     public function share(Request $request): array
@@ -69,10 +54,32 @@ class HandleInertiaRequests extends Middleware
                 ? app(ChannelConnectionService::class)->summarizeForUser($user)
                 : [],
             'enabledChannels' => OutreachChannelRegistry::enabledChannelKeys(),
-            'notifications' => fn () => $user && $user->current_organization_id
-                ? V2UserActivity::query()
+            'notifications' => fn () => $this->cachedNotifications($user),
+            'dailyEnrichmentQuota' => fn () => $this->cachedDailyQuota($user),
+            'inboxUnreadCount' => fn () => $user
+                ? app(InboxUnreadService::class)->unreadCountForUserCached($user->id)
+                : 0,
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function cachedNotifications(?User $user): array
+    {
+        if (! $user || ! $user->current_organization_id) {
+            return [];
+        }
+
+        $orgId = (int) $user->current_organization_id;
+
+        return Cache::remember(
+            "inertia:notifications:{$user->id}:{$orgId}",
+            now()->addSeconds(20),
+            function () use ($user, $orgId) {
+                return V2UserActivity::query()
                     ->where('user_id', $user->id)
-                    ->where('organization_id', $user->current_organization_id)
+                    ->where('organization_id', $orgId)
                     ->latest()
                     ->limit(15)
                     ->get(['id', 'module', 'identifier', 'stat', 'meta', 'created_at'])
@@ -85,12 +92,21 @@ class HandleInertiaRequests extends Middleware
                         'created_at' => $row->created_at?->toIso8601String(),
                     ])
                     ->values()
-                    ->all()
-                : [],
-            'dailyEnrichmentQuota' => fn () => app(DailyEnrichmentQuotaService::class)->payloadForUser($user),
-            'inboxUnreadCount' => fn () => $user
-                ? app(InboxUnreadService::class)->unreadCountForUser($user->id)
-                : 0,
-        ];
+                    ->all();
+            }
+        );
+    }
+
+    private function cachedDailyQuota(?User $user): ?array
+    {
+        if (! $user) {
+            return null;
+        }
+
+        return Cache::remember(
+            "inertia:enrichment-quota:{$user->id}",
+            now()->addSeconds(15),
+            fn () => app(DailyEnrichmentQuotaService::class)->payloadForUser($user)
+        );
     }
 }

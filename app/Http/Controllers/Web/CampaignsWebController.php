@@ -3,10 +3,8 @@
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
-use App\Models\Audience;
 use App\Models\AudienceList;
 use App\Models\SnLead;
-use App\Models\SnLeadList;
 use App\Models\V2Campaign;
 use App\Models\V2CampaignLead;
 use App\Models\V2CampaignLeadProgress;
@@ -19,6 +17,7 @@ use App\V2\Campaign\CampaignLeadSyncService;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Campaign\CampaignRunDispatcher;
 use App\V2\Campaign\CampaignSequenceResolver;
+use App\V2\Services\LeadListService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -436,37 +435,19 @@ class CampaignsWebController extends Controller
     {
         /** @var \App\Models\User $user */
         $user = auth()->user();
-        $userId = $user->id;
 
-        $audiences = Audience::where('user_id', $userId)
-            ->select('id', 'audience_name', 'audience_id', 'created_at')
-            ->selectRaw('(select count(*) from audience_lists where audience_lists.audience_id = audiences.audience_id) as total_leads')
-            ->get()
-            ->map(fn ($a) => [
-                'id' => $a->id,
-                'list_name' => $a->audience_name ?: 'Untitled audience',
-                'list_hash' => (string) $a->audience_id,
-                'total_leads' => (int) $a->total_leads,
-                'source' => 'Audience',
-                'src' => 'aud',
-                'type' => $a->audience_id.'-aud',
-            ]);
-
-        $snLists = SnLeadList::where('user_id', $userId)
-            ->select('id', 'name', 'list_hash', 'created_at')
-            ->selectRaw('(select count(*) from sn_leads where sn_leads.sn_list_id = sn_leads_lists.list_hash) as total_leads')
-            ->get()
-            ->map(fn ($l) => [
-                'id' => $l->id,
-                'list_name' => $l->name ?: 'Untitled list',
-                'list_hash' => (string) $l->list_hash,
-                'total_leads' => (int) $l->total_leads,
-                'source' => 'Sales Navigator',
-                'src' => 'sn',
-                'type' => $l->list_hash.'-sn',
-            ]);
-
-        return $audiences->concat($snLists)->sortBy('list_name')->values()->all();
+        return app(LeadListService::class)->listsForUser($user->id)
+            ->map(fn (array $list) => [
+                'id' => $list['id'],
+                'list_name' => $list['list_name'],
+                'list_hash' => $list['list_id'],
+                'total_leads' => $list['total_leads'],
+                'source' => $list['source'],
+                'src' => $list['src'],
+                'type' => $list['list_id'].'-'.$list['src'],
+            ])
+            ->values()
+            ->all();
     }
 
     private function attachListToCampaign(V2Campaign $campaign, string $listHash, string $listSrc, ?string $listName): V2CampaignList

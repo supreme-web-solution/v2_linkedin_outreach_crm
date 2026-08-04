@@ -311,45 +311,50 @@ class CompetitorFollowersWebController extends Controller
         $user = Auth::user();
         $audience = Audience::where('user_id', $user->id)->where('id', $audienceId)->firstOrFail();
 
-        $rows = AudienceList::where('audience_id', $audience->audience_id)->get([
-            'con_first_name', 'con_last_name', 'con_job_title', 'con_company_name', 'con_location', 'con_profile_url', 'con_email',
-        ]);
-
         $headers = [
             'Content-Type' => 'text/csv',
             'Content-Disposition' => 'attachment; filename="competitor_followers_'.$audience->id.'.csv"',
         ];
 
-        $callback = function () use ($rows) {
+        $audienceExternalId = $audience->audience_id;
+
+        $callback = function () use ($audienceExternalId) {
             $handle = fopen('php://output', 'w');
             fputcsv($handle, ['Name', 'Job Title', 'Company', 'Location', 'Profile URL', 'Email']);
-            foreach ($rows as $r) {
-                $name = trim(($r->con_first_name ?? '').' '.($r->con_last_name ?? ''));
-                if ($name === '') {
-                    $slug = trim((string) ($r->con_public_identifier ?? ''));
-                    if ($slug !== '' && ! str_starts_with($slug, 'ACo') && ! str_starts_with($slug, 'ADo')) {
-                        $slug = (string) preg_replace('/-[a-z0-9]{6,}$/i', '', $slug);
-                        $parts = preg_split('/[-_]+/', $slug) ?: [];
-                        $words = [];
-                        foreach ($parts as $part) {
-                            $part = trim($part);
-                            if ($part === '' || ctype_digit($part)) {
-                                continue;
+            AudienceList::where('audience_id', $audienceExternalId)
+                ->orderBy('id')
+                ->select([
+                    'id', 'con_first_name', 'con_last_name', 'con_job_title', 'con_company_name',
+                    'con_location', 'con_profile_url', 'con_email', 'con_public_identifier',
+                ])
+                ->cursor()
+                ->each(function ($r) use ($handle) {
+                    $name = trim(($r->con_first_name ?? '').' '.($r->con_last_name ?? ''));
+                    if ($name === '') {
+                        $slug = trim((string) ($r->con_public_identifier ?? ''));
+                        if ($slug !== '' && ! str_starts_with($slug, 'ACo') && ! str_starts_with($slug, 'ADo')) {
+                            $slug = (string) preg_replace('/-[a-z0-9]{6,}$/i', '', $slug);
+                            $parts = preg_split('/[-_]+/', $slug) ?: [];
+                            $words = [];
+                            foreach ($parts as $part) {
+                                $part = trim($part);
+                                if ($part === '' || ctype_digit($part)) {
+                                    continue;
+                                }
+                                $words[] = mb_convert_case($part, MB_CASE_TITLE, 'UTF-8');
                             }
-                            $words[] = mb_convert_case($part, MB_CASE_TITLE, 'UTF-8');
+                            $name = implode(' ', $words);
                         }
-                        $name = implode(' ', $words);
                     }
-                }
-                fputcsv($handle, [
-                    $name !== '' ? $name : 'Unknown',
-                    $r->con_job_title,
-                    $r->con_company_name,
-                    $r->con_location,
-                    $r->con_profile_url,
-                    $r->con_email ?? '',
-                ]);
-            }
+                    fputcsv($handle, [
+                        $name !== '' ? $name : 'Unknown',
+                        $r->con_job_title,
+                        $r->con_company_name,
+                        $r->con_location,
+                        $r->con_profile_url,
+                        $r->con_email ?? '',
+                    ]);
+                });
             fclose($handle);
         };
 

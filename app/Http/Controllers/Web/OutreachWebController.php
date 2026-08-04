@@ -3,10 +3,8 @@
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
-use App\Models\Audience;
 use App\Models\AudienceList;
 use App\Models\SnLead;
-use App\Models\SnLeadList;
 use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
@@ -26,6 +24,7 @@ use App\V2\Outreach\OutreachProgressReconciler;
 use App\V2\Outreach\OutreachRunDispatcher;
 use App\V2\Outreach\OutreachSequenceResolver;
 use App\V2\Services\ChannelConnectionService;
+use App\V2\Services\LeadListService;
 use App\V2\Services\OutreachChannelInboxSettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -625,35 +624,19 @@ class OutreachWebController extends Controller
         /** @var \App\Models\User $user */
         $user = auth()->user();
 
-        $audiences = Audience::where('user_id', $user->id)
-            ->select('id', 'audience_name', 'audience_id', 'created_at')
-            ->selectRaw('(select count(*) from audience_lists where audience_lists.audience_id = audiences.audience_id) as total_leads')
-            ->get()
-            ->map(fn ($a) => [
-                'list_name' => $a->audience_name ?: 'Untitled audience',
-                'list_hash' => (string) $a->audience_id,
-                'total_leads' => (int) $a->total_leads,
-                'source' => 'Audience',
-                'src' => 'aud',
-                'type' => $a->audience_id.'-aud',
-            ]);
-
-        $snLists = SnLeadList::where('user_id', $user->id)
-            ->select('id', 'name', 'list_hash', 'created_at')
-            ->selectRaw('(select count(*) from sn_leads where sn_leads.sn_list_id = sn_leads_lists.list_hash) as total_leads')
-            ->get()
-            ->map(fn ($l) => [
-                'list_name' => $l->name ?: 'Untitled list',
-                'list_hash' => (string) $l->list_hash,
-                'total_leads' => (int) $l->total_leads,
-                'source' => 'Sales Navigator',
-                'src' => 'sn',
-                'type' => $l->list_hash.'-sn',
+        $base = app(LeadListService::class)->listsForUser($user->id)
+            ->map(fn (array $list) => [
+                'list_name' => $list['list_name'],
+                'list_hash' => $list['list_id'],
+                'total_leads' => $list['total_leads'],
+                'source' => $list['source'],
+                'src' => $list['src'],
+                'type' => $list['list_id'].'-'.$list['src'],
             ]);
 
         $importLists = collect(app(OutreachImportListService::class)->listsForUser($user->id));
 
-        return $audiences->concat($snLists)->concat($importLists)->sortBy('list_name')->values()->all();
+        return $base->concat($importLists)->sortBy('list_name')->values()->all();
     }
 
     private function attachList(V2OutreachCampaign $campaign, string $listHash, string $listSrc, ?string $listName): V2OutreachList

@@ -12,39 +12,59 @@ use Illuminate\Support\Collection;
 class LeadListService
 {
     /**
+     * Audience + SN lists with lead counts via one GROUP BY per source (not correlated subselects).
+     *
      * @return Collection<int, array<string, mixed>>
      */
     public function listsForUser(int $userId): Collection
     {
         $audiences = Audience::where('user_id', $userId)
             ->select('id', 'audience_name', 'audience_id', 'source', 'created_at')
-            ->selectRaw('(select count(*) from audience_lists where audience_lists.audience_id = audiences.audience_id) as total_leads')
-            ->get()
-            ->map(fn ($a) => [
-                'id' => $a->id,
-                'list_id' => (string) $a->audience_id,
-                'list_name' => $a->audience_name ?: 'Untitled audience',
-                'total_leads' => (int) $a->total_leads,
-                'source' => 'Audience',
-                'src' => 'aud',
-                'created_at' => optional($a->created_at)->toIso8601String(),
-            ]);
+            ->get();
+
+        $audienceIds = $audiences->pluck('audience_id')->filter()->values()->all();
+        $audienceCounts = $audienceIds === []
+            ? collect()
+            : AudienceList::query()
+                ->whereIn('audience_id', $audienceIds)
+                ->selectRaw('audience_id, COUNT(*) as aggregate')
+                ->groupBy('audience_id')
+                ->pluck('aggregate', 'audience_id');
+
+        $mappedAudiences = $audiences->map(fn ($a) => [
+            'id' => $a->id,
+            'list_id' => (string) $a->audience_id,
+            'list_name' => $a->audience_name ?: 'Untitled audience',
+            'total_leads' => (int) ($audienceCounts[$a->audience_id] ?? 0),
+            'source' => 'Audience',
+            'src' => 'aud',
+            'created_at' => optional($a->created_at)->toIso8601String(),
+        ]);
 
         $snLists = SnLeadList::where('user_id', $userId)
             ->select('id', 'name', 'list_hash', 'created_at')
-            ->selectRaw('(select count(*) from sn_leads where sn_leads.sn_list_id = sn_leads_lists.list_hash) as total_leads')
-            ->get()
-            ->map(fn ($l) => [
-                'id' => $l->id,
-                'list_id' => (string) $l->list_hash,
-                'list_name' => $l->name ?: 'Untitled list',
-                'total_leads' => (int) $l->total_leads,
-                'source' => 'Sales Navigator',
-                'src' => 'sn',
-                'created_at' => optional($l->created_at)->toIso8601String(),
-            ]);
+            ->get();
 
-        return $audiences->concat($snLists)->sortBy('list_name')->values();
+        $listHashes = $snLists->pluck('list_hash')->filter()->values()->all();
+        $snCounts = $listHashes === []
+            ? collect()
+            : SnLead::query()
+                ->whereIn('sn_list_id', $listHashes)
+                ->selectRaw('sn_list_id, COUNT(*) as aggregate')
+                ->groupBy('sn_list_id')
+                ->pluck('aggregate', 'sn_list_id');
+
+        $mappedSn = $snLists->map(fn ($l) => [
+            'id' => $l->id,
+            'list_id' => (string) $l->list_hash,
+            'list_name' => $l->name ?: 'Untitled list',
+            'total_leads' => (int) ($snCounts[$l->list_hash] ?? 0),
+            'source' => 'Sales Navigator',
+            'src' => 'sn',
+            'created_at' => optional($l->created_at)->toIso8601String(),
+        ]);
+
+        return $mappedAudiences->concat($mappedSn)->sortBy('list_name')->values();
     }
 
     /**

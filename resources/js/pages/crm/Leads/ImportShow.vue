@@ -187,23 +187,12 @@ function deleteList() {
 async function exportCsv() {
     busy.value = true;
     try {
-        const res = await fetch(`/leads/${props.listId}/export?src=csv`, { headers: { Accept: 'application/json' } });
-        const json = await res.json();
-        const rows: Record<string, unknown>[] = json.data ?? [];
-        if (rows.length === 0) {
-            setFlash('Nothing to export.', true);
-            return;
-        }
-        const headers = Object.keys(rows[0]);
-        const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-        const csv = [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))].join('\n');
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
+        a.href = `/leads/${props.listId}/export?src=csv`;
         a.download = `${props.listName.replace(/[^a-z0-9]+/gi, '_')}_contacts.csv`;
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        a.remove();
     } catch {
         setFlash('Export failed.', true);
     } finally {

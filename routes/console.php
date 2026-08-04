@@ -21,4 +21,9 @@ Schedule::command('queue:recover --release-stale')
     ->withoutOverlapping()
     ->runInBackground();
 
+Schedule::command('queue:monitor-depth')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
 Schedule::command('horizon:snapshot')->everyFiveMinutes();

@@ -16,6 +16,7 @@ class V2Conversation extends Model
         'lead_id',
         'status',
         'last_message_at',
+        'last_read_at',
         'meta',
     ];
 
@@ -23,6 +24,7 @@ class V2Conversation extends Model
     {
         return [
             'last_message_at' => 'datetime',
+            'last_read_at' => 'datetime',
             'meta' => 'array',
         ];
     }
@@ -68,16 +70,16 @@ class V2Conversation extends Model
 
     /**
      * Outreach campaign inbox threads only — never Call Manager.
+     * Meta filters only (no whereDoesntHave('calls') subquery).
      */
     public function scopeForOutreachInbox(Builder $query): Builder
     {
         return $query
-            ->whereDoesntHave('calls')
+            ->whereNotNull('meta->outreach_campaign_id')
             ->where(function (Builder $q) {
                 $q->whereNull('meta->source')
-                    ->orWhere('meta->source', '!=', 'call_manager');
-            })
-            ->whereNotNull('meta->outreach_campaign_id');
+                    ->orWhereIn('meta->source', ['unified_inbox', 'outreach']);
+            });
     }
 
     /**

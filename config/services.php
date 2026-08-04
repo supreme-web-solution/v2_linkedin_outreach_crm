@@ -40,6 +40,11 @@ return [
         'alert_daily_limit_hits' => env('OPS_ALERT_DAILY_LIMITS', true),
         'alert_queue_health' => env('OPS_ALERT_QUEUE_HEALTH', true),
         'alert_failed_jobs_threshold' => (int) env('OPS_ALERT_FAILED_JOBS_THRESHOLD', 10),
+        'alert_queue_depth_threshold' => (int) env('OPS_ALERT_QUEUE_DEPTH_THRESHOLD', 200),
+        'monitored_queues' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('OPS_MONITORED_QUEUES', 'outreach,campaigns,webhooks,default,enrichment'))
+        ))),
     ],
 
     'openai' => [

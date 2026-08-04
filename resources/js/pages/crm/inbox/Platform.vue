@@ -61,6 +61,7 @@ const props = defineProps<{
     conversations: ConversationsPaginator;
     selected: { id: number; prospect_name: string | null; prospect_email?: string | null; has_channel: boolean } | null;
     messages: MessageItem[];
+    has_older_messages?: boolean;
     outreachContext: OutreachContext | null;
     unread_count: number;
     aiConfigured: boolean;
@@ -108,6 +109,8 @@ type MessageItem = {
 const expandedQuotes = ref<Record<number, boolean>>({});
 
 const localMessages = ref<MessageItem[]>([...props.messages]);
+const localHasOlderMessages = ref(Boolean(props.has_older_messages));
+const loadingOlder = ref(false);
 const localConversations = ref<ConversationsPaginator>({ ...props.conversations, data: [...props.conversations.data] });
 const localOutreachContext = ref<OutreachContext | null>(props.outreachContext);
 const localUnreadCount = ref(props.unread_count ?? 0);
@@ -115,11 +118,24 @@ const localUnreadCount = ref(props.unread_count ?? 0);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let searchReady = false;
+let preserveScrollOnMessageGrow = false;
+
+function mergeMessages(existing: MessageItem[], incoming: MessageItem[]): MessageItem[] {
+    const byId = new Map<number, MessageItem>();
+    for (const msg of existing) {
+        byId.set(msg.id, msg);
+    }
+    for (const msg of incoming) {
+        byId.set(msg.id, msg);
+    }
+    return [...byId.values()].sort((a, b) => a.id - b.id);
+}
 
 watch(
-    () => props.messages,
-    (messages) => {
+    () => [props.selected?.id, props.messages, props.has_older_messages] as const,
+    ([, messages, hasOlder]) => {
         localMessages.value = [...messages];
+        localHasOlderMessages.value = Boolean(hasOlder);
     },
 );
 
@@ -452,10 +468,62 @@ watch(() => props.selected?.id, () => {
 });
 
 watch(() => localMessages.value.length, (next, prev) => {
-    if (next > prev) {
+    if (next > prev && !preserveScrollOnMessageGrow) {
         scrollToBottom();
     }
 });
+
+async function loadOlderMessages() {
+    if (typeof window === 'undefined' || !props.selected || loadingOlder.value || !localHasOlderMessages.value) {
+        return;
+    }
+
+    const oldestId = localMessages.value[0]?.id;
+    if (!oldestId) {
+        return;
+    }
+
+    loadingOlder.value = true;
+    preserveScrollOnMessageGrow = true;
+    const el = messageScroll.value;
+    const prevHeight = el?.scrollHeight ?? 0;
+    const prevTop = el?.scrollTop ?? 0;
+
+    try {
+        const response = await fetch(
+            `/inbox/${props.platform}/${props.selected.id}/messages?before_id=${oldestId}`,
+            {
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            },
+        );
+
+        if (!response.ok) {
+            return;
+        }
+
+        const data = await response.json() as {
+            messages: MessageItem[];
+            has_older: boolean;
+        };
+
+        localMessages.value = mergeMessages(localMessages.value, data.messages ?? []);
+        localHasOlderMessages.value = Boolean(data.has_older);
+
+        await nextTick();
+        if (el) {
+            el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+        }
+    } catch {
+        // ignore transient network errors
+    } finally {
+        loadingOlder.value = false;
+        preserveScrollOnMessageGrow = false;
+    }
+}
 
 async function pollThread() {
     if (typeof window === 'undefined' || !props.selected || sending.value || polling.value) {
@@ -493,12 +561,17 @@ async function pollThread() {
 
         const data = await response.json() as {
             messages: MessageItem[];
+            has_older?: boolean;
             conversations: ConversationsPaginator;
             outreachContext: OutreachContext | null;
             unread_count?: number;
         };
 
-        localMessages.value = data.messages ?? localMessages.value;
+        // Keep any previously loaded older pages; refresh/merge the latest window.
+        localMessages.value = mergeMessages(localMessages.value, data.messages ?? []);
+        if (typeof data.has_older === 'boolean' && localMessages.value.length <= (data.messages?.length ?? 0)) {
+            localHasOlderMessages.value = data.has_older;
+        }
         if (data.conversations) {
             localConversations.value = data.conversations;
         }
@@ -782,6 +855,17 @@ function onComposerKeydown(e: KeyboardEvent) {
                             </div>
                         </div>
                         <div ref="messageScroll" class="min-h-0 flex-1 space-y-3 overflow-y-auto bg-gradient-to-b from-muted/10 to-background p-4">
+                            <div v-if="localHasOlderMessages" class="flex justify-center py-1">
+                                <button
+                                    type="button"
+                                    class="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-60"
+                                    :disabled="loadingOlder"
+                                    @click="loadOlderMessages"
+                                >
+                                    <Loader2 v-if="loadingOlder" class="h-3 w-3 animate-spin" />
+                                    {{ loadingOlder ? 'Loading…' : 'Load older messages' }}
+                                </button>
+                            </div>
                             <template v-for="(msg, msgIndex) in localMessages" :key="msg.id">
                                 <div
                                     v-if="showDateDivider(msgIndex)"
