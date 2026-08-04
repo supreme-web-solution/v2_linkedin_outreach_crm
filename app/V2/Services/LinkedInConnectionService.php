@@ -12,6 +12,8 @@ use App\Models\V2IntegrationAccount;
 
 use App\V2\Integrations\ProviderManager;
 use App\V2\Integrations\Unipile\UnipileException;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 use Illuminate\Http\Request;
 
@@ -303,7 +305,11 @@ class LinkedInConnectionService
 
 
 
-        return $e->statusCode === 401 || $type === 'errors/disconnected_account';
+        return $e->statusCode === 401
+            || $e->statusCode === 404
+            || $type === 'errors/disconnected_account'
+            || $type === 'errors/resource_not_found'
+            || str_contains(strtolower($e->getMessage()), 'account not found');
 
     }
 
@@ -312,6 +318,8 @@ class LinkedInConnectionService
     public function markDisconnected(V2IntegrationAccount $account, ?string $reason = null): void
 
     {
+        $wasConnected = ($account->status === 'active')
+            || (($account->meta['live_status'] ?? null) === 'connected');
 
         $account->update([
 
@@ -329,6 +337,42 @@ class LinkedInConnectionService
 
         ]);
 
+        if ($wasConnected) {
+            $this->notifyReconnectRequired($account, $reason);
+        }
+
+    }
+
+    private function notifyReconnectRequired(V2IntegrationAccount $account, ?string $reason = null): void
+    {
+        $user = User::query()->find($account->user_id);
+        $email = trim((string) ($user?->email ?? ''));
+
+        if ($email === '') {
+            return;
+        }
+
+        $subject = 'Action needed: reconnect your LinkedIn integration';
+        $message = "We detected that your LinkedIn integration is disconnected and needs reconnection.\n\n"
+            ."Please reconnect from Integrations or the extension Settings using a fresh LinkedIn session.\n\n"
+            ."Provider account: linkedin\n"
+            .'Time: '.now()->toDateTimeString()."\n";
+
+        if ($reason) {
+            $message .= "\nReason: ".trim($reason)."\n";
+        }
+
+        try {
+            Mail::raw($message, function ($mail) use ($email, $subject): void {
+                $mail->to($email)->subject($subject);
+            });
+        } catch (\Throwable $e) {
+            Log::warning('[LinkedInConnection] Reconnect email failed', [
+                'user_id' => $account->user_id,
+                'email' => $email,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
 

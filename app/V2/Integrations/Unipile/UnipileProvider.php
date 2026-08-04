@@ -577,8 +577,10 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             $apiFilters['open_link'] = (bool) $filters['open_link'];
         }
 
+        $requestedLimit = max(1, min(100, (int) ($filters['limit'] ?? 20)));
+
         // Always send count — Unipile defaults to ~10 when omitted.
-        $apiFilters['count'] = max(1, min(100, (int) ($filters['limit'] ?? 10)));
+        $apiFilters['count'] = $requestedLimit;
 
         if (! empty($filters['location'])) {
             $locationIds = $this->normalizeLocationFilter($accountId, $filters['location']);
@@ -602,7 +604,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'category' => 'people',
         ], array_filter($apiFilters, fn ($v) => $v !== null && $v !== '' && $v !== []));
 
-        return $this->accountScopedRequest('POST', $this->endpoint('search'), $accountId, $payload);
+        return $this->searchUntilLimit($accountId, $payload, $requestedLimit);
     }
 
     /**
@@ -700,12 +702,125 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             );
         }
 
+        $requestedLimit = max(1, min(100, $limit));
+
         $payload = array_filter([
             'url'   => $url,
-            'count' => $limit,
+            'count' => $requestedLimit,
         ]);
 
-        return $this->accountScopedRequest('POST', $this->endpoint('search'), $accountId, $payload);
+        return $this->searchUntilLimit($accountId, $payload, $requestedLimit);
+    }
+
+    /**
+     * Some Unipile DSNs page people search responses in chunks (~10 by default),
+     * even when count is higher. Iterate until requested limit or no next cursor.
+     *
+     * @param  array<string, mixed>  $basePayload
+     * @return array<string, mixed>
+     */
+    private function searchUntilLimit(string $accountId, array $basePayload, int $requestedLimit): array
+    {
+        $target = max(1, min(100, $requestedLimit));
+        $allItems = [];
+        $seenIds = [];
+        $seenCursors = [];
+        $cursor = null;
+        $lastResponse = [];
+        $maxPages = 12;
+
+        for ($page = 1; $page <= $maxPages; $page++) {
+            $remaining = $target - count($allItems);
+            if ($remaining <= 0) {
+                break;
+            }
+
+            $payload = $basePayload;
+            $payload['count'] = max(1, min(100, (int) ($payload['count'] ?? $remaining), $remaining));
+
+            if ($cursor) {
+                $payload['cursor'] = $cursor;
+            } else {
+                unset($payload['cursor']);
+            }
+
+            $response = $this->accountScopedRequest('POST', $this->endpoint('search'), $accountId, $payload);
+            $lastResponse = $response;
+            $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
+            $items = is_array($items) ? array_values($items) : [];
+
+            foreach ($items as $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+
+                $id = (string) (
+                    Arr::get($item, 'provider_id')
+                    ?? Arr::get($item, 'id')
+                    ?? Arr::get($item, 'public_identifier')
+                    ?? ''
+                );
+
+                if ($id !== '') {
+                    if (isset($seenIds[$id])) {
+                        continue;
+                    }
+                    $seenIds[$id] = true;
+                }
+
+                $allItems[] = $item;
+                if (count($allItems) >= $target) {
+                    break 2;
+                }
+            }
+
+            $nextCursor = $this->extractSearchCursor($response);
+            if (! $nextCursor || isset($seenCursors[$nextCursor])) {
+                break;
+            }
+
+            $seenCursors[$nextCursor] = true;
+            $cursor = $nextCursor;
+        }
+
+        $allItems = array_slice($allItems, 0, $target);
+
+        if (isset($lastResponse['items']) && is_array($lastResponse['items'])) {
+            $lastResponse['items'] = $allItems;
+        } elseif (isset($lastResponse['data']['items']) && is_array($lastResponse['data']['items'])) {
+            $lastResponse['data']['items'] = $allItems;
+        } else {
+            $lastResponse['items'] = $allItems;
+        }
+
+        return $lastResponse;
+    }
+
+    /**
+     * @param  array<string, mixed>  $response
+     */
+    private function extractSearchCursor(array $response): ?string
+    {
+        $candidates = [
+            Arr::get($response, 'next_cursor'),
+            Arr::get($response, 'cursor'),
+            Arr::get($response, 'next'),
+            Arr::get($response, 'paging.next_cursor'),
+            Arr::get($response, 'paging.cursor'),
+            Arr::get($response, 'pagination.next_cursor'),
+            Arr::get($response, 'pagination.cursor'),
+            Arr::get($response, 'data.next_cursor'),
+            Arr::get($response, 'data.cursor'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $value = trim((string) $candidate);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     /**
