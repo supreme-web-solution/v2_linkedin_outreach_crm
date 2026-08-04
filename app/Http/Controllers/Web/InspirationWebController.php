@@ -54,7 +54,7 @@ class InspirationWebController extends Controller
         $stats = [
             'total_posts' => (clone $base)->count(),
             'favorites' => (clone $base)->where('is_favorite', true)->count(),
-            'viral_posts' => (clone $base)->where('engagement', '>=', 1000)->count(),
+            'viral_posts' => (clone $base)->where('engagement', '>=', 500)->count(),
             'avg_engagement' => $avgEngagement ? (int) round($avgEngagement) : 0,
         ];
 

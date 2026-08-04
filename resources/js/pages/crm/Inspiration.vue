@@ -306,7 +306,7 @@ function fmtPosted(value: string | undefined): string {
                     <div class="mb-2 flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
                         <Flame class="h-4 w-4" />
                     </div>
-                    <p class="text-xs font-medium text-muted-foreground">Viral (1k+)</p>
+                    <p class="text-xs font-medium text-muted-foreground">Viral (500+)</p>
                     <p class="mt-0.5 text-2xl font-semibold tracking-tight">{{ stats.viral_posts.toLocaleString() }}</p>
                 </div>
                 <div class="rounded-2xl border border-border/80 bg-card/90 p-4 shadow-sm backdrop-blur-sm">
