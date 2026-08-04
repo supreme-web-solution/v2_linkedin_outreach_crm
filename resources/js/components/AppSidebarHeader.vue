@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Link, router, usePage } from '@inertiajs/vue3';
-import { Bell, ChevronDown, Phone, Search, Sparkles } from '@lucide/vue';
-import { computed, ref } from 'vue';
+import { Bell, ChevronDown, Moon, Phone, Search, Sparkles, Sun } from '@lucide/vue';
+import { computed, onMounted, ref } from 'vue';
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
 import DailyEnrichmentQuotaBar from '@/components/crm/DailyEnrichmentQuotaBar.vue';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { useInitials } from '@/composables/useInitials';
+import { useAppearance } from '@/composables/useAppearance';
 import UserMenuContent from '@/components/UserMenuContent.vue';
 import { useDailyEnrichmentQuota } from '@/composables/useDailyEnrichmentQuota';
 import type { BreadcrumbItem, User } from '@/types';
@@ -42,6 +43,19 @@ const hasNotifications = computed(() => notifications.value.length > 0);
 const searchQuery = ref('');
 const { getInitials } = useInitials();
 const showAvatar = computed(() => Boolean(user.value?.avatar));
+const { resolvedAppearance, updateAppearance } = useAppearance();
+const isDarkMode = computed(() => resolvedAppearance.value === 'dark');
+const themeReady = ref(false);
+const themeToggleIcon = computed(() => (isDarkMode.value ? Sun : Moon));
+const themeToggleLabel = computed(() => (isDarkMode.value ? 'Switch to light mode' : 'Switch to dark mode'));
+
+onMounted(() => {
+    themeReady.value = true;
+});
+
+function toggleAppearance() {
+    updateAppearance(isDarkMode.value ? 'light' : 'dark');
+}
 
 function submitSearch() {
     const q = searchQuery.value.trim();
@@ -84,7 +98,7 @@ function formatNotificationTime(at: string | null): string {
 
 <template>
     <header
-        class="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-border/60 bg-white/90 px-6 backdrop-blur-md transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 md:px-4"
+        class="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-border/60 bg-background/90 px-6 backdrop-blur-md transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 md:px-4"
     >
         <div class="flex min-w-0 items-center gap-2">
             <SidebarTrigger class="-ml-1" />
@@ -103,9 +117,20 @@ function formatNotificationTime(at: string | null): string {
                     v-model="searchQuery"
                     type="search"
                     placeholder="Search leads, campaigns…"
-                    class="h-9 w-44 rounded-lg border border-border/70 bg-muted/40 pr-3 pl-8 text-sm text-foreground outline-none transition-all placeholder:text-muted-foreground focus:w-64 focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-500/15 lg:w-56"
+                    class="h-9 w-44 rounded-lg border border-border/70 bg-background/80 pr-3 pl-8 text-sm text-foreground outline-none transition-all placeholder:text-muted-foreground/90 focus:w-64 focus:border-blue-400 focus:bg-background focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700/80 dark:bg-slate-900/80 dark:placeholder:text-slate-400 dark:focus:border-blue-500 dark:focus:bg-slate-900 lg:w-56"
                 />
             </form>
+
+            <button
+                type="button"
+                class="relative flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background/80 text-foreground transition-colors hover:bg-black/4 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-white/6"
+                :aria-label="themeToggleLabel"
+                :title="themeToggleLabel"
+                @click="toggleAppearance"
+            >
+                <component :is="themeToggleIcon" v-if="themeReady" class="size-4.5" />
+                <Moon v-else class="size-4.5" />
+            </button>
 
             <!-- Notifications -->
             <DropdownMenu>
