@@ -122,13 +122,19 @@ class OutreachWebController extends Controller
             );
         }
 
+        $activate = (bool) ($data['activate'] ?? false);
+        unset($data['activate']);
+
+        // Draft when launching — queueLeadSyncAndRun moves it to preparing/running.
         $campaign = V2OutreachCampaign::create([
             'user_id' => $user->id,
             'organization_id' => $orgId,
             'name' => $data['name'],
             'template_type' => $data['template_type'],
             'node_model' => $data['node_model'],
-            'status' => ($data['activate'] ?? false) ? 'active' : ($data['status'] ?? 'draft'),
+            'status' => $activate || ($data['status'] ?? '') === 'active'
+                ? 'draft'
+                : ($data['status'] ?? 'draft'),
             'meta' => $data['meta'] ?? null,
         ]);
 
@@ -136,18 +142,19 @@ class OutreachWebController extends Controller
             $this->attachList($campaign, $list['list_hash'], $list['list_src'], $list['list_name'] ?? null);
         }
 
-        if ($data['activate'] ?? false) {
+        if ($activate || ($data['status'] ?? '') === 'active') {
+            if ($campaign->outreachLists()->count() === 0) {
+                return redirect("/outreach/{$campaign->id}")->withErrors([
+                    'campaign' => 'Add at least one lead list before launching.',
+                ]);
+            }
+
             $this->queueLeadSyncAndRun($campaign, $orgId);
 
             return redirect("/outreach/{$campaign->id}")->with(
                 'success',
                 'Outreach created — preparing leads in the background, then the run starts automatically.'
             );
-        }
-
-        if (($data['status'] ?? '') === 'active') {
-            app(OutreachLeadSyncService::class)->syncAllLists($campaign);
-            app(OutreachLeadSyncService::class)->initProgress($campaign);
         }
 
         return redirect("/outreach/{$campaign->id}")->with('success', 'Outreach campaign created.');

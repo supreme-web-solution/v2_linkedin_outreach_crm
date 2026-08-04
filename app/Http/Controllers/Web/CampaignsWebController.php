@@ -120,7 +120,7 @@ class CampaignsWebController extends Controller
         ]);
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(Request $request, CampaignLinkedInGuard $linkedInGuard): RedirectResponse
     {
         /** @var \App\Models\User $user */
         $user = auth()->user();
@@ -137,8 +137,20 @@ class CampaignsWebController extends Controller
             'lead_lists.*.list_hash' => ['required_with:lead_lists', 'string'],
             'lead_lists.*.list_src' => ['required_with:lead_lists', 'in:aud,sn'],
             'lead_lists.*.list_name' => ['nullable', 'string'],
+            'activate' => ['nullable', 'boolean'],
         ]);
 
+        $activate = (bool) ($data['activate'] ?? false);
+        unset($data['activate']);
+
+        if ($activate && $linkedInGuard->isUserDisconnected((int) $user->id)) {
+            return back()->with(
+                'error',
+                'Your LinkedIn account is disconnected. Reconnect on Integrations before launching this campaign.',
+            );
+        }
+
+        // Create as draft when launching — queueLeadSyncAndRun moves it to preparing/running.
         $campaign = V2Campaign::create([
             'user_id' => $user->id,
             'organization_id' => $orgId,
@@ -146,7 +158,7 @@ class CampaignsWebController extends Controller
             'sequence_type' => $data['sequence_type'],
             'node_model' => $data['node_model'],
             'link_model' => $data['link_model'] ?? null,
-            'status' => $data['status'] ?? 'draft',
+            'status' => $activate ? 'draft' : ($data['status'] ?? 'draft'),
             'meta' => $data['meta'] ?? null,
         ]);
 
@@ -154,9 +166,19 @@ class CampaignsWebController extends Controller
             $this->attachListToCampaign($campaign, $list['list_hash'], $list['list_src'], $list['list_name'] ?? null);
         }
 
-        if (($data['status'] ?? 'draft') === 'active') {
-            $this->syncLeadsFromLists($campaign);
-            $this->initProgressForCampaign($campaign);
+        if ($activate || ($data['status'] ?? 'draft') === 'active') {
+            if ($campaign->campaignLists()->count() === 0) {
+                return redirect("/campaigns/{$campaign->id}")->withErrors([
+                    'campaign' => 'Add at least one lead list before launching.',
+                ]);
+            }
+
+            $this->queueLeadSyncAndRun($campaign, $orgId);
+
+            return redirect("/campaigns/{$campaign->id}")->with(
+                'success',
+                'Preparing leads in the background — up to '.app(CampaignConcurrencyLimiter::class)->maxInFlight().' will run at once once sync finishes.'
+            );
         }
 
         return redirect("/campaigns/{$campaign->id}")->with('success', 'Campaign created.');
