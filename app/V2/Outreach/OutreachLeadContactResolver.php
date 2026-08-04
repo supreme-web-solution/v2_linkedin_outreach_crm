@@ -35,7 +35,18 @@ class OutreachLeadContactResolver
      */
     public function overlaysForLists(int $userId, array $leadLists): array
     {
-        $keys = collect($this->collectLinkedinKeys($leadLists))->filter()->unique()->values()->all();
+        return $this->overlaysForKeys($userId, $this->collectLinkedinKeys($leadLists));
+    }
+
+    /**
+     * Load overlays for a page of leads only — never scan the full list.
+     *
+     * @param  array<int, string>  $keys
+     * @return array<string, array<string, mixed>>
+     */
+    public function overlaysForKeys(int $userId, array $keys): array
+    {
+        $keys = collect($keys)->filter()->map(fn ($k) => strtolower((string) $k))->unique()->values()->all();
         if ($keys === []) {
             return [];
         }
@@ -52,6 +63,28 @@ class OutreachLeadContactResolver
                 'twitter_handle', 'twitter_provider_id',
             ]))
             ->all();
+    }
+
+    /**
+     * @param  iterable<int, AudienceList|SnLead|object>  $rows
+     * @return array<int, string>
+     */
+    public function linkedinKeysFromRows(iterable $rows, string $src): array
+    {
+        $keys = [];
+        foreach ($rows as $row) {
+            if ($src === 'aud') {
+                $profileId = trim((string) (($row->con_public_identifier ?? '') ?: ($row->con_id ?? '')));
+            } else {
+                $profileId = trim((string) (($row->lid ?? '') ?: ($row->sn_lid ?? '')));
+            }
+            $key = $this->normalizeLinkedinKey($profileId);
+            if ($key !== '') {
+                $keys[] = $key;
+            }
+        }
+
+        return $keys;
     }
 
     /**

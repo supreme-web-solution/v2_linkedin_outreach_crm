@@ -7,6 +7,8 @@ use App\Models\V2Message;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class InboxUnreadService
 {
@@ -45,31 +47,25 @@ class InboxUnreadService
             ->forUnifiedInbox();
 
         if ($platform !== null && $platform !== '') {
-            $query->forInboxPlatform($platform);
+            $query->where('provider', $platform);
         }
 
-        return $query
-            ->get()
-            ->filter(fn (V2Conversation $conversation) => $this->isUnread($conversation))
-            ->count();
+        $this->constrainToUnread($query);
+
+        return (int) $query->count();
     }
 
     public function firstUnreadConversationId(int $userId, string $platform): ?int
     {
-        $conversations = V2Conversation::query()
+        $query = V2Conversation::query()
             ->where('user_id', $userId)
             ->forInboxPlatform($platform)
             ->orderByDesc('last_message_at')
-            ->orderByDesc('id')
-            ->get();
+            ->orderByDesc('id');
 
-        foreach ($conversations as $conversation) {
-            if ($this->isUnread($conversation)) {
-                return $conversation->id;
-            }
-        }
+        $this->constrainToUnread($query);
 
-        return null;
+        return $query->value('id');
     }
 
     /**
@@ -77,12 +73,98 @@ class InboxUnreadService
      */
     public function unreadCountsByPlatform(int $userId, array $platforms): array
     {
-        $counts = [];
-        foreach ($platforms as $platform) {
-            $counts[$platform] = $this->unreadCountForUser($userId, $platform);
+        if ($platforms === []) {
+            return [];
         }
 
-        return $counts;
+        $query = V2Conversation::query()
+            ->where('user_id', $userId)
+            ->forUnifiedInbox()
+            ->whereIn('provider', $platforms);
+
+        $this->constrainToUnread($query);
+
+        $counts = $query
+            ->selectRaw('provider, COUNT(*) as aggregate')
+            ->groupBy('provider')
+            ->pluck('aggregate', 'provider');
+
+        $result = [];
+        foreach ($platforms as $platform) {
+            $result[$platform] = (int) ($counts[$platform] ?? 0);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Batch unread flags for a page of conversations (avoids N+1).
+     *
+     * @param  Collection<int, V2Conversation>  $conversations
+     * @return array<int, bool> keyed by conversation id
+     */
+    public function unreadMap(Collection $conversations): array
+    {
+        if ($conversations->isEmpty()) {
+            return [];
+        }
+
+        $ids = $conversations->pluck('id')->all();
+        $latestInboundAt = V2Message::query()
+            ->whereIn('conversation_id', $ids)
+            ->where('direction', 'inbound')
+            ->selectRaw('conversation_id, MAX(COALESCE(received_at, created_at)) as latest_at')
+            ->groupBy('conversation_id')
+            ->pluck('latest_at', 'conversation_id');
+
+        $map = [];
+        foreach ($conversations as $conversation) {
+            $rawAt = $latestInboundAt[$conversation->id] ?? null;
+            if ($rawAt === null || $rawAt === '') {
+                $map[$conversation->id] = false;
+                continue;
+            }
+
+            try {
+                $inboundAt = Carbon::parse($rawAt);
+            } catch (\Throwable) {
+                $map[$conversation->id] = false;
+                continue;
+            }
+
+            $lastReadAt = $this->lastReadAt($conversation);
+            $map[$conversation->id] = $lastReadAt === null || $lastReadAt->lt($inboundAt);
+        }
+
+        return $map;
+    }
+
+    /**
+     * Conversations with a newer inbound message than meta.last_read_at (or never read).
+     */
+    private function constrainToUnread(Builder $query): void
+    {
+        $query->whereExists(function ($sub) {
+            $sub->select(DB::raw(1))
+                ->from('v2_messages as m')
+                ->whereColumn('m.conversation_id', 'v2_conversations.id')
+                ->where('m.direction', 'inbound')
+                ->whereRaw(
+                    'COALESCE(m.received_at, m.created_at) > COALESCE(
+                        CAST(
+                            REPLACE(
+                                LEFT(
+                                    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(v2_conversations.meta, \'$.last_read_at\')), \'\'),
+                                    19
+                                ),
+                                \'T\',
+                                \' \'
+                            ) AS DATETIME
+                        ),
+                        \'1970-01-01 00:00:00\'
+                    )'
+                );
+        });
     }
 
     private function lastReadAt(V2Conversation $conversation): ?Carbon

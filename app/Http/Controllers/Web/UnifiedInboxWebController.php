@@ -24,6 +24,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -462,11 +463,95 @@ class UnifiedInboxWebController extends Controller
             ->paginate(self::CONVERSATIONS_PER_PAGE)
             ->withQueryString();
 
-        $paginator->getCollection()->transform(
-            fn (V2Conversation $conversation) => $this->serializeListItem($conversation)
+        $paginator->setCollection(
+            $this->serializeListItems($paginator->getCollection())
         );
 
         return $paginator;
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, V2Conversation>  $conversations
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    private function serializeListItems($conversations)
+    {
+        if ($conversations->isEmpty()) {
+            return $conversations;
+        }
+
+        $ids = $conversations->pluck('id')->all();
+        $idList = implode(',', array_map('intval', $ids));
+
+        $previewRows = $idList === ''
+            ? []
+            : DB::select("
+                SELECT conversation_id, body FROM (
+                    SELECT conversation_id, body,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY conversation_id
+                            ORDER BY received_at DESC, sent_at DESC, created_at DESC, id DESC
+                        ) AS rn
+                    FROM v2_messages
+                    WHERE conversation_id IN ({$idList})
+                      AND body IS NOT NULL
+                      AND body != ''
+                ) ranked
+                WHERE rn = 1
+            ");
+
+        $previews = collect($previewRows)->mapWithKeys(
+            fn ($row) => [(int) $row->conversation_id => (string) $row->body]
+        );
+
+        $campaignIds = $conversations
+            ->map(fn (V2Conversation $c) => (int) (Arr::get($c->meta ?? [], 'outreach_campaign_id') ?? 0))
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        $campaignNames = $campaignIds === []
+            ? collect()
+            : V2OutreachCampaign::query()->whereIn('id', $campaignIds)->pluck('name', 'id');
+
+        $unreadMap = $this->unread->unreadMap($conversations);
+
+        return $conversations->map(function (V2Conversation $conversation) use ($previews, $campaignNames, $unreadMap) {
+            $preview = $previews[$conversation->id] ?? null;
+            $meta = is_array($conversation->meta) ? $conversation->meta : [];
+            $prospectEmail = trim((string) (
+                Arr::get($meta, 'prospect_email')
+                ?? ($conversation->provider === 'email' ? $conversation->provider_chat_id : '')
+                ?? ''
+            ));
+            $formattedPreview = $preview
+                ? ($conversation->provider === 'email'
+                    ? $this->emailBodyFormatter->preview((string) $preview)
+                    : mb_substr((string) $preview, 0, 120))
+                : null;
+            $campaignId = (int) (Arr::get($meta, 'outreach_campaign_id') ?? 0);
+
+            return [
+                'id' => $conversation->id,
+                'provider' => $conversation->provider,
+                'channel_label' => Arr::get($meta, 'channel_label') ?: OutreachChannelRegistry::channelLabel((string) $conversation->provider),
+                'prospect_name' => $this->prospectName($conversation),
+                'prospect_headline' => Arr::get($meta, 'prospect_headline'),
+                'prospect_email' => $prospectEmail !== '' ? $prospectEmail : null,
+                'email_quality' => $conversation->provider === 'email'
+                    ? $this->emailQuality->assess($prospectEmail)
+                    : null,
+                'status' => $conversation->status,
+                'last_message_at' => $conversation->last_message_at?->toIso8601String(),
+                'messages_count' => (int) ($conversation->messages_count ?? 0),
+                'last_message_preview' => $formattedPreview,
+                'outreach_campaign_id' => Arr::get($meta, 'outreach_campaign_id'),
+                'outreach_campaign_name' => $campaignId > 0 ? ($campaignNames[$campaignId] ?? null) : null,
+                'outreach_lead_id' => Arr::get($meta, 'outreach_lead_id'),
+                'is_unread' => (bool) ($unreadMap[$conversation->id] ?? false),
+            ];
+        })->values();
     }
 
     /**
@@ -484,53 +569,6 @@ class UnifiedInboxWebController extends Controller
             'to' => $paginator->lastItem(),
             'prev_page_url' => $paginator->previousPageUrl(),
             'next_page_url' => $paginator->nextPageUrl(),
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function serializeListItem(V2Conversation $conversation): array
-    {
-        $preview = V2Message::query()
-            ->where('conversation_id', $conversation->id)
-            ->whereNotNull('body')
-            ->where('body', '!=', '')
-            ->orderByDesc('received_at')
-            ->orderByDesc('sent_at')
-            ->orderByDesc('created_at')
-            ->value('body');
-
-        $meta = is_array($conversation->meta) ? $conversation->meta : [];
-        $prospectEmail = trim((string) (
-            Arr::get($meta, 'prospect_email')
-            ?? ($conversation->provider === 'email' ? $conversation->provider_chat_id : '')
-            ?? ''
-        ));
-        $formattedPreview = $preview
-            ? ($conversation->provider === 'email'
-                ? $this->emailBodyFormatter->preview((string) $preview)
-                : mb_substr((string) $preview, 0, 120))
-            : null;
-
-        return [
-            'id' => $conversation->id,
-            'provider' => $conversation->provider,
-            'channel_label' => Arr::get($meta, 'channel_label') ?: OutreachChannelRegistry::channelLabel((string) $conversation->provider),
-            'prospect_name' => $this->prospectName($conversation),
-            'prospect_headline' => Arr::get($meta, 'prospect_headline'),
-            'prospect_email' => $prospectEmail !== '' ? $prospectEmail : null,
-            'email_quality' => $conversation->provider === 'email'
-                ? $this->emailQuality->assess($prospectEmail)
-                : null,
-            'status' => $conversation->status,
-            'last_message_at' => $conversation->last_message_at?->toIso8601String(),
-            'messages_count' => (int) ($conversation->messages_count ?? 0),
-            'last_message_preview' => $formattedPreview,
-            'outreach_campaign_id' => Arr::get($meta, 'outreach_campaign_id'),
-            'outreach_campaign_name' => $this->campaignName((int) (Arr::get($meta, 'outreach_campaign_id') ?? 0)),
-            'outreach_lead_id' => Arr::get($meta, 'outreach_lead_id'),
-            'is_unread' => $this->unread->isUnread($conversation),
         ];
     }
 
@@ -629,14 +667,5 @@ class UnifiedInboxWebController extends Controller
         $fromMeta = trim((string) Arr::get($conversation->meta ?? [], 'prospect_name', ''));
 
         return $fromMeta !== '' ? $fromMeta : null;
-    }
-
-    private function campaignName(int $campaignId): ?string
-    {
-        if ($campaignId <= 0) {
-            return null;
-        }
-
-        return V2OutreachCampaign::query()->where('id', $campaignId)->value('name');
     }
 }

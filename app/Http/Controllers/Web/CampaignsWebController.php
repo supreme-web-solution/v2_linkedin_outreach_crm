@@ -13,6 +13,7 @@ use App\Models\V2CampaignLeadProgress;
 use App\Models\V2CampaignList;
 use App\V2\Campaign\CampaignActivityLogger;
 use App\V2\Campaign\CampaignCompletionService;
+use App\V2\Campaign\CampaignConcurrencyLimiter;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Campaign\CampaignRunDispatcher;
 use App\V2\Campaign\CampaignSequenceResolver;
@@ -237,6 +238,7 @@ class CampaignsWebController extends Controller
                 'search' => $leadSearch !== '' ? $leadSearch : null,
                 'status' => $leadStatus !== '' ? $leadStatus : null,
             ],
+            'concurrency' => app(CampaignConcurrencyLimiter::class)->snapshot((int) $campaign->user_id),
         ]);
     }
 
@@ -373,9 +375,18 @@ class CampaignsWebController extends Controller
 
         $result = $dispatcher->dispatch($campaign, (int) auth()->user()->current_organization_id);
 
+        if (! empty($result['blocked'])) {
+            return redirect("/campaigns/{$campaign->id}")->with(
+                'error',
+                'Your LinkedIn account is disconnected. Reconnect on Integrations before launching this campaign.',
+            );
+        }
+
+        $limit = (int) ($result['inflight_limit'] ?? 2);
+
         return redirect("/campaigns/{$campaign->id}")->with(
             'success',
-            "Campaign launched with {$added} new lead(s). Processing {$result['queued_leads']} lead(s)."
+            "Campaign launched with {$added} new lead(s). Queued {$result['queued_leads']} lead(s) — up to {$limit} run at once to protect your LinkedIn account."
         );
     }
 

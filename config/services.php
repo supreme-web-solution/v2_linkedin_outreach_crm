@@ -113,6 +113,10 @@ return [
         'account_lock_wait_seconds' => (int) env('UNIPILE_ACCOUNT_LOCK_WAIT_SECONDS', 20),
         // Max ProcessOutreachLeadJob handlers running at once per user (others wait in queue).
         'outreach_inflight_per_user' => (int) env('OUTREACH_INFLIGHT_PER_USER', 2),
+        // Max ProcessCampaignLeadJob handlers running at once per user (classic campaigns).
+        'campaign_inflight_per_user' => (int) env('CAMPAIGN_INFLIGHT_PER_USER', 2),
+        // Lease TTL for in-flight slots — frees the counter if a worker dies mid-job.
+        'inflight_lease_seconds' => (int) env('INFLIGHT_LEASE_SECONDS', 1800),
         // Lead readiness / Prepare contacts — same as EMAIL_ENRICHMENT_BATCH_SIZE unless overridden.
         'contact_prep_batch_size' => (int) env(
             'OUTREACH_CONTACT_PREP_BATCH_SIZE',

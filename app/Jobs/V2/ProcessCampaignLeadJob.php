@@ -8,6 +8,7 @@ use App\Models\V2CampaignLeadProgress;
 use App\Models\V2CampaignRun;
 use App\V2\Campaign\CampaignActivityLogger;
 use App\V2\Campaign\CampaignCompletionService;
+use App\V2\Campaign\CampaignConcurrencyLimiter;
 use App\V2\Campaign\CampaignLeadProfileService;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Campaign\CampaignSequenceResolver;
@@ -17,6 +18,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -116,6 +118,57 @@ class ProcessCampaignLeadJob implements ShouldQueue
             $progress->update(['next_run_at' => null]);
         }
 
+        $userId = (int) $campaign->user_id;
+        $limiter = app(CampaignConcurrencyLimiter::class);
+        $leaseId = $limiter->acquire($userId);
+        if ($leaseId === null) {
+            $delaySeconds = random_int(20, 40);
+            if (Cache::add('campaign:concurrency-notice:'.$campaign->id, 1, now()->addMinutes(30))) {
+                $max = $limiter->maxInFlight();
+                $logger->log(
+                    $campaign->id,
+                    null,
+                    $this->campaignRunId,
+                    null,
+                    'scheduled',
+                    "Pacing active — up to {$max} leads run at once to protect your LinkedIn account. Other leads wait automatically.",
+                );
+            }
+
+            self::dispatch($this->campaignId, $this->campaignLeadId, $this->campaignRunId)
+                ->delay(now()->addSeconds($delaySeconds));
+
+            return;
+        }
+
+        try {
+            $this->processLeadWithSlot(
+                $campaign,
+                $lead,
+                $progress,
+                $resolver,
+                $executor,
+                $logger,
+                $profileService,
+                $completion,
+                $linkedInGuard,
+            );
+        } finally {
+            $limiter->release($userId, $leaseId);
+        }
+    }
+
+    private function processLeadWithSlot(
+        V2Campaign $campaign,
+        V2CampaignLead $lead,
+        V2CampaignLeadProgress $progress,
+        CampaignSequenceResolver $resolver,
+        CampaignStepExecutor $executor,
+        CampaignActivityLogger $logger,
+        CampaignLeadProfileService $profileService,
+        CampaignCompletionService $completion,
+        CampaignLinkedInGuard $linkedInGuard,
+    ): void {
         $run = $this->campaignRunId
             ? V2CampaignRun::query()->find($this->campaignRunId)
             : null;

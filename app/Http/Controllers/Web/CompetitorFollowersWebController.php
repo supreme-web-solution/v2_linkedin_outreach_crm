@@ -13,6 +13,7 @@ use App\Models\V2IntegrationAccount;
 use App\V2\Services\EmailEnrichmentLimiter;
 use App\V2\Outreach\OutreachLeadContactResolver;
 use App\V2\Web\AudienceListLeadPresenter;
+use App\V2\Web\LeadListStatsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -45,8 +46,17 @@ class CompetitorFollowersWebController extends Controller
             ->paginate(10)
             ->appends($request->query());
 
-        $audiences->getCollection()->transform(function ($audience) {
-            $audience->followers_count = AudienceList::where('audience_id', $audience->audience_id)->count();
+        $pageAudienceIds = $audiences->getCollection()->pluck('audience_id')->filter()->values()->all();
+        $followerCounts = $pageAudienceIds === []
+            ? collect()
+            : AudienceList::query()
+                ->whereIn('audience_id', $pageAudienceIds)
+                ->selectRaw('audience_id, COUNT(*) as followers_count')
+                ->groupBy('audience_id')
+                ->pluck('followers_count', 'audience_id');
+
+        $audiences->getCollection()->transform(function ($audience) use ($followerCounts) {
+            $audience->followers_count = (int) ($followerCounts[$audience->audience_id] ?? 0);
             $meta = $audience->source_meta ? json_decode($audience->source_meta, true) : [];
             $audience->fetch_status = $meta['fetch_status'] ?? null;
             $audience->fetch_progress = $meta['fetch_progress'] ?? null;
@@ -206,16 +216,19 @@ class CompetitorFollowersWebController extends Controller
         }
 
         $presenter = app(AudienceListLeadPresenter::class);
-        $overlays = app(OutreachLeadContactResolver::class)->overlaysForLists((int) $user->id, [
-            ['list_hash' => $audience->audience_id, 'list_src' => 'aud'],
-        ]);
+        $stats = app(LeadListStatsService::class);
+        $resolver = app(OutreachLeadContactResolver::class);
 
-        $followers = $query->latest()->paginate(20)->appends($request->query())
-            ->through(fn (AudienceList $row) => $presenter->transformRow($row, $overlays));
+        $followers = $query->latest()->paginate(20)->appends($request->query());
+        $overlays = $resolver->overlaysForKeys(
+            (int) $user->id,
+            $resolver->linkedinKeysFromRows($followers->getCollection(), 'aud')
+        );
+        $followers->through(fn (AudienceList $row) => $presenter->transformRow($row, $overlays));
 
         $pendingCount = app(EmailEnrichmentLimiter::class)->pendingJobCount($user->id);
-        $counts = $presenter->emailFilterCounts($audience->audience_id);
-        $contactStats = $presenter->contactStatsForList($audience->audience_id, (int) $user->id, $pendingCount);
+        $counts = $stats->emailFilterCountsForAudience($audience->audience_id);
+        $contactStats = $stats->contactStatsForAudience($audience->audience_id, $pendingCount);
 
         $meta = json_decode($audience->source_meta, true) ?? [];
 
@@ -225,7 +238,7 @@ class CompetitorFollowersWebController extends Controller
                 'audience_id' => $audience->audience_id,
                 'audience_name' => $audience->audience_name,
                 'company_url' => $meta['company_url'] ?? null,
-                'followers_count' => AudienceList::where('audience_id', $audience->audience_id)->count(),
+                'followers_count' => $counts['all'],
                 'fetch_status' => $meta['fetch_status'] ?? null,
                 'fetch_progress' => $meta['fetch_progress'] ?? null,
             ],

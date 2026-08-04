@@ -82,7 +82,8 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         $userId = (int) $campaign->user_id;
         $limiter = app(OutreachConcurrencyLimiter::class);
-        if (! $limiter->acquire($userId)) {
+        $leaseId = $limiter->acquire($userId);
+        if ($leaseId === null) {
             $delaySeconds = random_int(20, 40);
             if (Cache::add('outreach:concurrency-notice:'.$campaign->id, 1, now()->addMinutes(30))) {
                 $max = $limiter->maxInFlight();
@@ -115,7 +116,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
                 $conditionEvaluator,
             );
         } finally {
-            $limiter->release($userId);
+            $limiter->release($userId, $leaseId);
         }
     }
 

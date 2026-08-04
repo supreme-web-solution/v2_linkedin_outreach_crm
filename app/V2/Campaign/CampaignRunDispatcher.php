@@ -19,11 +19,12 @@ class CampaignRunDispatcher
     /**
      * Queue execution for all pending/running leads in a campaign.
      *
-     * @return array{run_id: int, queued_leads: int}
+     * @return array{run_id: int, queued_leads: int, inflight_limit: int, blocked?: bool}
      */
     public function dispatch(V2Campaign $campaign, ?int $organizationId = null, ?CampaignLinkedInGuard $linkedInGuard = null): array
     {
         $linkedInGuard ??= app(CampaignLinkedInGuard::class);
+        $inflightLimit = app(CampaignConcurrencyLimiter::class)->maxInFlight();
 
         if ($linkedInGuard->isUserDisconnected((int) $campaign->user_id)) {
             Log::warning('[Campaign] Dispatch blocked — LinkedIn disconnected', [
@@ -39,6 +40,7 @@ class CampaignRunDispatcher
             return [
                 'run_id' => 0,
                 'queued_leads' => 0,
+                'inflight_limit' => $inflightLimit,
                 'blocked' => true,
             ];
         }
@@ -68,7 +70,7 @@ class CampaignRunDispatcher
             $run->id,
             null,
             'started',
-            "Campaign \"{$campaign->name}\" started — queuing leads.",
+            "Campaign \"{$campaign->name}\" started — queuing leads (up to {$inflightLimit} run at once).",
         );
 
         $leads = V2CampaignLead::query()
@@ -129,13 +131,14 @@ class CampaignRunDispatcher
                 $run->id,
                 null,
                 'info',
-                "Queued {$queued} lead(s) for processing.",
+                "Queued {$queued} lead(s) for processing — up to {$inflightLimit} run at once.",
             );
         }
 
         return [
             'run_id' => $run->id,
             'queued_leads' => $queued,
+            'inflight_limit' => $inflightLimit,
         ];
     }
 }

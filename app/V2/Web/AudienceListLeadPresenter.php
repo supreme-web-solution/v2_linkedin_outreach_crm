@@ -4,7 +4,6 @@ namespace App\V2\Web;
 
 use App\Models\AudienceList;
 use App\V2\Outreach\OutreachLeadContactResolver;
-use App\V2\Outreach\OutreachLeadReadinessService;
 
 class AudienceListLeadPresenter
 {
@@ -85,18 +84,7 @@ class AudienceListLeadPresenter
      */
     public function emailFilterCounts(string $audienceId): array
     {
-        $base = fn () => AudienceList::where('audience_id', $audienceId);
-
-        return [
-            'all' => $base()->count(),
-            'with_email' => $base()->whereNotNull('con_email')->where('con_email', '!=', '')->count(),
-            'without_email' => $base()
-                ->where(fn ($q) => $q->whereNull('con_email')->orWhere('con_email', '=', ''))
-                ->where(fn ($q) => $q->where('email_fetch_status', 'completed')->orWhereNotNull('email_fetch_attempted_at'))
-                ->count(),
-            'not_fetched' => $base()->whereNull('email_fetch_status')->whereNull('email_fetch_attempted_at')->count(),
-            'pending' => $base()->whereIn('email_fetch_status', ['pending', 'processing'])->count(),
-        ];
+        return app(LeadListStatsService::class)->emailFilterCountsForAudience($audienceId);
     }
 
     /**
@@ -104,66 +92,7 @@ class AudienceListLeadPresenter
      */
     public function contactStatsForList(string $audienceId, int $userId, int $queuePending): array
     {
-        $rows = app(OutreachLeadReadinessService::class)->collectLeadRows(
-            [['list_hash' => $audienceId, 'list_src' => 'aud']],
-            $userId,
-        );
-
-        $total = count($rows);
-        $emailsFound = 0;
-        $phonesFound = 0;
-        $emailPending = 0;
-        $phonePending = 0;
-        $emailSearched = 0;
-        $phoneSearched = 0;
-
-        foreach ($rows as $row) {
-            if (($row['email'] ?? '') !== '') {
-                $emailsFound++;
-            }
-            if (($row['phone'] ?? '') !== '') {
-                $phonesFound++;
-            }
-            if (in_array($row['email_fetch_status'] ?? '', ['pending', 'processing'], true)) {
-                $emailPending++;
-            }
-            if (in_array($row['phone_fetch_status'] ?? '', ['pending', 'processing'], true)) {
-                $phonePending++;
-            }
-            if ($row['email_fetch_attempted'] ?? false) {
-                $emailSearched++;
-            }
-            if ($row['phone_fetch_attempted'] ?? false) {
-                $phoneSearched++;
-            }
-        }
-
-        $emailPending = max($emailPending, $queuePending);
-        $processed = min($total, $emailSearched + $emailPending);
-        $fetchable = app(OutreachLeadReadinessService::class)->countEmailFetchableRows($rows, 'aud');
-
-        return [
-            'total' => $total,
-            'running' => $emailPending > 0 || $phonePending > 0,
-            'processed' => $processed,
-            'fetchable' => $fetchable,
-            'emails' => [
-                'found' => $emailsFound,
-                'total' => $total,
-                'pending' => $emailPending,
-                'searched' => $emailSearched,
-                'fill_percent' => $total > 0 ? (int) round($emailsFound / $total * 100) : 0,
-                'hit_rate' => $emailSearched > 0 ? (int) round($emailsFound / $emailSearched * 100) : 0,
-            ],
-            'phones' => [
-                'found' => $phonesFound,
-                'total' => $total,
-                'pending' => $phonePending,
-                'searched' => $phoneSearched,
-                'fill_percent' => $total > 0 ? (int) round($phonesFound / $total * 100) : 0,
-                'hit_rate' => $phoneSearched > 0 ? (int) round($phonesFound / $phoneSearched * 100) : 0,
-            ],
-        ];
+        return app(LeadListStatsService::class)->contactStatsForAudience($audienceId, $queuePending);
     }
 
     /**

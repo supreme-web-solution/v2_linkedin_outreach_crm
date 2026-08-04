@@ -2,11 +2,13 @@
 
 namespace App\Console\Commands;
 
+use App\V2\Campaign\CampaignConcurrencyLimiter;
+use App\V2\Outreach\OutreachConcurrencyLimiter;
+use App\V2\Services\OpsAlertService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use App\V2\Services\OpsAlertService;
 
 class RecoverQueueCommand extends Command
 {
@@ -53,6 +55,11 @@ class RecoverQueueCommand extends Command
             } else {
                 $this->line('No failed jobs to retry.');
             }
+        }
+
+        $inflightFreed = $this->recoverInFlightCounters();
+        if ($inflightFreed > 0) {
+            $this->info("Freed {$inflightFreed} expired in-flight concurrency lease(s).");
         }
 
         $this->newLine();
@@ -156,5 +163,13 @@ class RecoverQueueCommand extends Command
             $this->line('  Local: enable WAL (DB_JOURNAL_MODE=wal) and run a single queue worker.');
             $this->line('  Production: use MySQL/PostgreSQL for DB and Redis for QUEUE_CONNECTION.');
         }
+    }
+
+    private function recoverInFlightCounters(): int
+    {
+        $outreach = app(OutreachConcurrencyLimiter::class)->recoverAll();
+        $campaign = app(CampaignConcurrencyLimiter::class)->recoverAll();
+
+        return (int) ($outreach['leases_freed'] ?? 0) + (int) ($campaign['leases_freed'] ?? 0);
     }
 }

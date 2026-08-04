@@ -3,7 +3,7 @@ import { Head, Link, router } from '@inertiajs/vue3';
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import {
     Pencil, Trash2, Play, Pause, Users, ChevronRight, CheckCircle2, Clock, XCircle,
-    AlertCircle, Layers, TrendingUp, Rocket, Activity, Loader2, ScrollText, LayoutGrid,
+    AlertCircle, Layers, TrendingUp, Rocket, Activity, Loader2, ScrollText, LayoutGrid, Info,
 } from '@lucide/vue';
 import {
     Dialog,
@@ -90,6 +90,7 @@ const props = defineProps<{
         to?: number | null;
     };
     leadFilters: { search: string | null; status: string | null };
+    concurrency?: { limit: number; in_flight: number; available: number };
 }>();
 
 const leadSearch = ref(props.leadFilters?.search ?? '');
@@ -218,7 +219,7 @@ async function fetchActivity(initial = false, leadId?: number) {
 
 async function refreshPageData() {
     if (!isRunning.value) return;
-    router.reload({ only: ['leads', 'campaign'], preserveScroll: true });
+    router.reload({ only: ['leads', 'campaign', 'concurrency'], preserveScroll: true });
 }
 
 function startPolling() {
@@ -295,6 +296,21 @@ function toggleStatus() {
 
     <div class="flex flex-col gap-5 p-4 max-w-5xl">
         <LinkedInDisconnectBanner :campaign-pause-message="linkedInPauseMessage" />
+
+        <div
+            v-if="isRunning && concurrency"
+            class="flex items-start gap-3 rounded-xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-sm text-sky-900"
+        >
+            <Info class="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+            <div>
+                <p class="font-medium">LinkedIn-safe pacing</p>
+                <p class="mt-0.5 text-sky-800/90">
+                    Up to {{ concurrency.limit }} leads run at once
+                    <span v-if="concurrency.in_flight > 0"> ({{ concurrency.in_flight }} active now)</span>.
+                    The rest stay queued and start automatically when a slot frees — this protects your account and keeps the server fair for other users.
+                </p>
+            </div>
+        </div>
 
         <!-- Header -->
         <div class="flex flex-col sm:flex-row sm:items-start gap-4">

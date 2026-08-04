@@ -1,22 +1,22 @@
 <?php
 
-namespace App\V2\Outreach;
+namespace App\V2\Campaign;
 
 use App\V2\Support\UserInFlightLimiter;
 
 /**
- * Limits how many ProcessOutreachLeadJob handlers can run at once per user.
- * Extra leads stay queued and retry shortly — protects LinkedIn + shared workers.
+ * Limits how many ProcessCampaignLeadJob handlers can run at once per user.
+ * Same pacing idea as outreach — protects LinkedIn + shared workers.
  */
-class OutreachConcurrencyLimiter
+class CampaignConcurrencyLimiter
 {
     private UserInFlightLimiter $limiter;
 
     public function __construct()
     {
         $this->limiter = new UserInFlightLimiter(
-            'outreach',
-            max(1, (int) config('services.unipile_pacing.outreach_inflight_per_user', 2)),
+            'campaign',
+            max(1, (int) config('services.unipile_pacing.campaign_inflight_per_user', 2)),
             max(60, (int) config('services.unipile_pacing.inflight_lease_seconds', 1800)),
         );
     }
