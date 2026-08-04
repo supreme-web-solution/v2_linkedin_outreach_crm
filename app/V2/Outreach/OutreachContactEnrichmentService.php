@@ -36,30 +36,88 @@ class OutreachContactEnrichmentService
      * @param  array<int, array{list_hash: string, list_src: string}>  $leadLists
      * @return array<int, array{src: string, list_hash: string, record_id: int, phone: string}>
      */
-    public function whatsAppVerifyCandidates(array $leadLists, ?int $userId = null): array
+    public function whatsAppVerifyCandidates(array $leadLists, ?int $userId = null, int $limit = 25): array
     {
-        $rows = $this->readiness->collectLeadRows($leadLists, $userId);
         $candidates = [];
+        $remaining = max(1, $limit);
 
-        foreach ($rows as $row) {
-            if (($row['whatsapp_provider_id'] ?? '') !== '') {
-                continue;
+        foreach ($leadLists as $list) {
+            if ($remaining <= 0) {
+                break;
             }
-            if (($row['whatsapp_verify_status'] ?? '') === 'unreachable') {
-                continue;
-            }
-            $phone = trim((string) ($row['phone'] ?? ''));
-            if ($phone === '') {
+            $hash = (string) ($list['list_hash'] ?? '');
+            $src = (string) ($list['list_src'] ?? '');
+            if ($hash === '' || ! in_array($src, ['aud', 'sn', 'csv'], true)) {
                 continue;
             }
 
-            $candidates[] = [
-                'src' => (string) $row['src'],
-                'list_hash' => (string) $row['list_hash'],
-                'record_id' => (int) $row['record_id'],
-                'phone' => $phone,
-                'linkedin_key' => (string) ($row['linkedin_key'] ?? ''),
-            ];
+            if ($src === 'csv') {
+                if (! $userId) {
+                    continue;
+                }
+                $importList = \App\Models\V2OutreachImportList::query()
+                    ->where('user_id', $userId)
+                    ->where('list_hash', $hash)
+                    ->first();
+                if (! $importList) {
+                    continue;
+                }
+                $rows = V2OutreachImportLead::query()
+                    ->where('import_list_id', $importList->id)
+                    ->whereNotNull('phone')->where('phone', '!=', '')
+                    ->where(fn ($q) => $q->whereNull('whatsapp_provider_id')->orWhere('whatsapp_provider_id', ''))
+                    ->where(fn ($q) => $q->whereNull('whatsapp_verify_status')->orWhere('whatsapp_verify_status', '!=', 'unreachable'))
+                    ->orderBy('id')
+                    ->limit($remaining)
+                    ->get(['id', 'phone', 'linkedin_id']);
+                foreach ($rows as $row) {
+                    $candidates[] = [
+                        'src' => 'csv',
+                        'list_hash' => $hash,
+                        'record_id' => (int) $row->id,
+                        'phone' => trim((string) $row->phone),
+                        'linkedin_key' => $this->resolver->normalizeLinkedinKey($row->linkedin_id),
+                    ];
+                    $remaining--;
+                }
+            } elseif ($src === 'aud') {
+                $rows = AudienceList::query()
+                    ->where('audience_id', $hash)
+                    ->whereNotNull('con_phone')->where('con_phone', '!=', '')
+                    ->where(fn ($q) => $q->whereNull('whatsapp_provider_id')->orWhere('whatsapp_provider_id', ''))
+                    ->orderBy('id')
+                    ->limit($remaining)
+                    ->get(['id', 'con_phone', 'con_public_identifier', 'con_id']);
+                foreach ($rows as $row) {
+                    $profileId = trim((string) ($row->con_public_identifier ?: $row->con_id ?: ''));
+                    $candidates[] = [
+                        'src' => 'aud',
+                        'list_hash' => $hash,
+                        'record_id' => (int) $row->id,
+                        'phone' => trim((string) $row->con_phone),
+                        'linkedin_key' => $this->resolver->normalizeLinkedinKey($profileId),
+                    ];
+                    $remaining--;
+                }
+            } else {
+                $rows = SnLead::query()
+                    ->where('sn_list_id', $hash)
+                    ->whereNotNull('phone')->where('phone', '!=', '')
+                    ->where(fn ($q) => $q->whereNull('whatsapp_provider_id')->orWhere('whatsapp_provider_id', ''))
+                    ->orderBy('id')
+                    ->limit($remaining)
+                    ->get(['id', 'phone', 'lid', 'sn_lid']);
+                foreach ($rows as $row) {
+                    $candidates[] = [
+                        'src' => 'sn',
+                        'list_hash' => $hash,
+                        'record_id' => (int) $row->id,
+                        'phone' => trim((string) $row->phone),
+                        'linkedin_key' => $this->resolver->normalizeLinkedinKey($row->lid ?: $row->sn_lid),
+                    ];
+                    $remaining--;
+                }
+            }
         }
 
         return $candidates;
@@ -70,34 +128,105 @@ class OutreachContactEnrichmentService
      * @param  array<int, string>|null  $requiredChannels
      * @return array<int, array{channel: string, src: string, list_hash: string, record_id: int, identifier: string, linkedin_key: string}>
      */
-    public function handleResolveCandidates(array $leadLists, ?int $userId = null, ?array $requiredChannels = null): array
+    public function handleResolveCandidates(array $leadLists, ?int $userId = null, ?array $requiredChannels = null, int $limit = 25): array
     {
-        $rows = $this->readiness->collectLeadRows($leadLists, $userId);
         $candidates = [];
+        $remaining = max(1, $limit);
         $channels = $requiredChannels !== null
             ? array_values(array_intersect(OutreachChannelRegistry::enabledSocialHandleChannels(), $requiredChannels))
             : OutreachChannelRegistry::enabledSocialHandleChannels();
 
-        foreach ($rows as $row) {
-            foreach ($channels as $channel) {
-                $providerField = "{$channel}_provider_id";
-                $handleField = "{$channel}_handle";
-                if (($row[$providerField] ?? '') !== '') {
+        if ($channels === []) {
+            return [];
+        }
+
+        foreach ($leadLists as $list) {
+            if ($remaining <= 0) {
+                break;
+            }
+            $hash = (string) ($list['list_hash'] ?? '');
+            $src = (string) ($list['list_src'] ?? '');
+            if ($hash === '' || ! in_array($src, ['csv', 'sn'], true)) {
+                continue;
+            }
+
+            if ($src === 'csv') {
+                if (! $userId) {
                     continue;
                 }
-                $handle = trim((string) ($row[$handleField] ?? ''));
-                if ($handle === '') {
+                $importList = \App\Models\V2OutreachImportList::query()
+                    ->where('user_id', $userId)
+                    ->where('list_hash', $hash)
+                    ->first();
+                if (! $importList) {
                     continue;
                 }
 
-                $candidates[] = [
-                    'channel' => $channel,
-                    'src' => (string) $row['src'],
-                    'list_hash' => (string) $row['list_hash'],
-                    'record_id' => (int) $row['record_id'],
-                    'identifier' => $handle,
-                    'linkedin_key' => (string) ($row['linkedin_key'] ?? ''),
-                ];
+                $query = V2OutreachImportLead::query()->where('import_list_id', $importList->id)->where(function ($q) use ($channels) {
+                    foreach ($channels as $channel) {
+                        $h = "{$channel}_handle";
+                        $p = "{$channel}_provider_id";
+                        $q->orWhere(function ($inner) use ($h, $p) {
+                            $inner->whereNotNull($h)->where($h, '!=', '')
+                                ->where(fn ($pQ) => $pQ->whereNull($p)->orWhere($p, ''));
+                        });
+                    }
+                })->orderBy('id')->limit($remaining);
+
+                foreach ($query->get() as $row) {
+                    foreach ($channels as $channel) {
+                        if ($remaining <= 0) {
+                            break 2;
+                        }
+                        $handle = trim((string) ($row->{"{$channel}_handle"} ?? ''));
+                        $provider = trim((string) ($row->{"{$channel}_provider_id"} ?? ''));
+                        if ($handle === '' || $provider !== '') {
+                            continue;
+                        }
+                        $candidates[] = [
+                            'channel' => $channel,
+                            'src' => 'csv',
+                            'list_hash' => $hash,
+                            'record_id' => (int) $row->id,
+                            'identifier' => $handle,
+                            'linkedin_key' => $this->resolver->normalizeLinkedinKey($row->linkedin_id),
+                        ];
+                        $remaining--;
+                    }
+                }
+            } else {
+                $query = SnLead::query()->where('sn_list_id', $hash)->where(function ($q) use ($channels) {
+                    foreach ($channels as $channel) {
+                        $h = "{$channel}_handle";
+                        $p = "{$channel}_provider_id";
+                        $q->orWhere(function ($inner) use ($h, $p) {
+                            $inner->whereNotNull($h)->where($h, '!=', '')
+                                ->where(fn ($pQ) => $pQ->whereNull($p)->orWhere($p, ''));
+                        });
+                    }
+                })->orderBy('id')->limit($remaining);
+
+                foreach ($query->get() as $row) {
+                    foreach ($channels as $channel) {
+                        if ($remaining <= 0) {
+                            break 2;
+                        }
+                        $handle = trim((string) ($row->{"{$channel}_handle"} ?? ''));
+                        $provider = trim((string) ($row->{"{$channel}_provider_id"} ?? ''));
+                        if ($handle === '' || $provider !== '') {
+                            continue;
+                        }
+                        $candidates[] = [
+                            'channel' => $channel,
+                            'src' => 'sn',
+                            'list_hash' => $hash,
+                            'record_id' => (int) $row->id,
+                            'identifier' => $handle,
+                            'linkedin_key' => $this->resolver->normalizeLinkedinKey($row->lid ?: $row->sn_lid),
+                        ];
+                        $remaining--;
+                    }
+                }
             }
         }
 

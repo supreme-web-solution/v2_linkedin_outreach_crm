@@ -36,42 +36,7 @@ class OutreachLeadReadinessService
      */
     public function previewForLists(array $leadLists, array $nodeModel, ?int $userId = null): array
     {
-        $required = $this->requiredChannels($nodeModel);
-        $rows = $this->collectLeadRows($leadLists, $userId);
-
-        $total = count($rows);
-        $channelStats = [];
-
-        foreach ($required as $channel) {
-            $channelStats[$channel] = $this->statsForChannel($channel, $rows);
-        }
-
-        $fullyReady = 0;
-        foreach ($rows as $row) {
-            if ($this->isReadyForAllChannels($row, $required)) {
-                $fullyReady++;
-            }
-        }
-
-        $willSkipAny = $total - $fullyReady;
-        $warnings = $this->buildWarnings($required, $channelStats, $total);
-        $audienceListsSelected = collect($leadLists)->contains(fn ($l) => ($l['list_src'] ?? '') === 'aud');
-
-        return [
-            'total_leads' => $total,
-            'fully_ready' => $fullyReady,
-            'will_skip_any' => $willSkipAny,
-            'required_channels' => $required,
-            'channels' => $channelStats,
-            'email_fetch' => $this->emailFetchStats($rows, $audienceListsSelected),
-            'phone_fetch' => $this->phoneFetchStats($rows, $leadLists),
-            'whatsapp_verify' => $this->whatsAppVerifyStats($rows, $required),
-            'handle_resolve' => $this->handleResolveStats($rows, $required),
-            'contact_prep' => $this->contactPrepStats($rows, $required, $audienceListsSelected, $leadLists, $userId),
-            'warnings' => $warnings,
-            'can_launch' => $total > 0,
-            'should_confirm_launch' => $willSkipAny > 0 && $total > 0,
-        ];
+        return app(OutreachLeadReadinessAggregator::class)->previewForLists($leadLists, $nodeModel, $userId);
     }
 
     /**
@@ -81,25 +46,7 @@ class OutreachLeadReadinessService
      */
     public function enrichmentStatsForImportList(string $listHash, int $userId): array
     {
-        $leadLists = [['list_hash' => $listHash, 'list_src' => 'csv']];
-        $rows = $this->collectLeadRows($leadLists, $userId);
-        $required = array_values(array_unique(array_merge(
-            ['whatsapp'],
-            OutreachChannelRegistry::enabledSocialHandleChannels(),
-        )));
-
-        $whatsapp = $this->whatsAppVerifyStats($rows, $required);
-        $handles = $this->handleResolveStats($rows, $required);
-
-        $fetchable = $this->countImportLeadsNeedingEnrichment($rows);
-
-        return [
-            'total' => count($rows),
-            'whatsapp_verify' => $whatsapp,
-            'handle_resolve' => $handles,
-            'can_enrich' => $fetchable > 0,
-            'fetchable' => $fetchable,
-        ];
+        return app(OutreachLeadReadinessAggregator::class)->enrichmentStatsForImportList($listHash, $userId);
     }
 
     /**

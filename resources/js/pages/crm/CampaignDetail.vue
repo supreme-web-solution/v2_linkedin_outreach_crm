@@ -115,7 +115,8 @@ const leadLogEvents = ref<ActivityEvent[]>([]);
 const leadLogLoading = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-const isRunning = computed(() => ['active', 'running'].includes(props.campaign.status));
+const isRunning = computed(() => ['active', 'running', 'preparing'].includes(props.campaign.status));
+const isPreparing = computed(() => props.campaign.status === 'preparing' || (props.campaign.meta as any)?.lead_sync?.status === 'syncing');
 
 const linkedInPauseMessage = computed(() => {
     const meta = props.campaign.meta ?? {};
@@ -128,6 +129,7 @@ const linkedInPauseMessage = computed(() => {
 
 const statusColor = (s: string) => {
     if (s === 'active' || s === 'running') return 'bg-green-500/10 text-green-700 border-green-200';
+    if (s === 'preparing') return 'bg-amber-500/10 text-amber-800 border-amber-200';
     if (s === 'draft') return 'bg-slate-500/10 text-slate-600 border-slate-200';
     if (s === 'paused' || s === 'stopped') return 'bg-yellow-500/10 text-yellow-700 border-yellow-200';
     return 'bg-muted text-muted-foreground border-border';
@@ -298,7 +300,20 @@ function toggleStatus() {
         <LinkedInDisconnectBanner :campaign-pause-message="linkedInPauseMessage" />
 
         <div
-            v-if="isRunning && concurrency"
+            v-if="isPreparing"
+            class="flex items-start gap-3 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-sm text-amber-950"
+        >
+            <Loader2 class="mt-0.5 h-4 w-4 shrink-0 animate-spin text-amber-600" />
+            <div>
+                <p class="font-medium">Preparing leads</p>
+                <p class="mt-0.5 text-amber-900/90">
+                    Copying contacts from your lists in the background. The campaign starts automatically when this finishes — you can leave this page open.
+                </p>
+            </div>
+        </div>
+
+        <div
+            v-if="isRunning && !isPreparing && concurrency"
             class="flex items-start gap-3 rounded-xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-sm text-sky-900"
         >
             <Info class="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />

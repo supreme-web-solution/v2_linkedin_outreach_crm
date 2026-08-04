@@ -19,7 +19,8 @@ use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
 use App\Models\V2Conversation;
 use App\V2\Outreach\OutreachImportListService;
-use App\V2\Outreach\OutreachLeadContactResolver;
+use App\Jobs\V2\SyncOutreachLeadsAndRunJob;
+use App\V2\Outreach\OutreachLeadSyncService;
 use App\V2\Outreach\OutreachLeadReadinessService;
 use App\V2\Outreach\OutreachProgressReconciler;
 use App\V2\Outreach\OutreachRunDispatcher;
@@ -136,19 +137,18 @@ class OutreachWebController extends Controller
             $this->attachList($campaign, $list['list_hash'], $list['list_src'], $list['list_name'] ?? null);
         }
 
-        if (($data['activate'] ?? false) || ($data['status'] ?? '') === 'active') {
-            $this->syncLeadsFromLists($campaign);
-            $this->initProgress($campaign);
+        if ($data['activate'] ?? false) {
+            $this->queueLeadSyncAndRun($campaign, $orgId);
+
+            return redirect("/outreach/{$campaign->id}")->with(
+                'success',
+                'Outreach created — preparing leads in the background, then the run starts automatically.'
+            );
         }
 
-        if ($data['activate'] ?? false) {
-            $result = app(OutreachRunDispatcher::class)->dispatch($campaign, $orgId);
-            if ($result['blocked'] ?? false) {
-                return redirect("/outreach/{$campaign->id}")->with(
-                    'error',
-                    'Connect required channels on Integrations before launching.'
-                );
-            }
+        if (($data['status'] ?? '') === 'active') {
+            app(OutreachLeadSyncService::class)->syncAllLists($campaign);
+            app(OutreachLeadSyncService::class)->initProgress($campaign);
         }
 
         return redirect("/outreach/{$campaign->id}")->with('success', 'Outreach campaign created.');
@@ -402,7 +402,7 @@ class OutreachWebController extends Controller
             'name' => ['sometimes', 'string', 'max:191'],
             'template_type' => ['sometimes', 'string'],
             'node_model' => ['sometimes', 'array'],
-            'status' => ['sometimes', 'string', 'in:draft,active,paused,running,stopped,completed'],
+            'status' => ['sometimes', 'string', 'in:draft,active,paused,running,stopped,completed,preparing'],
             'meta' => ['nullable', 'array'],
             'lead_lists' => ['nullable', 'array'],
             'lead_lists.*.list_hash' => ['required_with:lead_lists', 'string'],
@@ -434,21 +434,34 @@ class OutreachWebController extends Controller
         }
 
         if ($activate) {
-            $data['status'] = 'active';
+            unset($data['status']);
         }
 
         $campaign->update($data);
         $campaign->refresh();
 
-        if ($activate || ($data['status'] ?? '') === 'active') {
-            $this->syncLeadsFromLists($campaign);
-            $this->initProgress($campaign);
+        if ($activate) {
+            $this->queueLeadSyncAndRun($campaign, (int) auth()->user()->current_organization_id);
+
+            if ($request->wantsJson()) {
+                return response()->json(['success' => true, 'preparing' => true]);
+            }
+
+            return redirect("/outreach/{$campaign->id}")->with(
+                'success',
+                'Preparing leads in the background — the run starts automatically when ready.'
+            );
+        }
+
+        if (($data['status'] ?? '') === 'active') {
+            app(OutreachLeadSyncService::class)->syncAllLists($campaign);
+            app(OutreachLeadSyncService::class)->initProgress($campaign);
         }
 
         $newStatus = $data['status'] ?? $campaign->status;
         if (
             in_array($newStatus, ['active', 'running'], true)
-            && in_array($previousStatus, ['paused', 'stopped', 'draft'], true)
+            && in_array($previousStatus, ['paused', 'stopped', 'draft', 'preparing'], true)
             && ! $activate
         ) {
             $missing = $guard->missingChannels((int) auth()->id(), is_array($campaign->node_model) ? $campaign->node_model : []);
@@ -468,7 +481,7 @@ class OutreachWebController extends Controller
             return redirect("/outreach/{$campaign->id}")->with('success', 'Outreach updated — waiting leads were rescheduled.');
         }
 
-        return redirect("/outreach/{$campaign->id}")->with('success', $activate ? 'Outreach launched.' : 'Outreach updated.');
+        return redirect("/outreach/{$campaign->id}")->with('success', 'Outreach updated.');
     }
 
     public function activate(int $id, OutreachRunDispatcher $dispatcher, OutreachChannelGuard $guard): RedirectResponse
@@ -487,17 +500,11 @@ class OutreachWebController extends Controller
             return back()->withErrors(['campaign' => 'Add at least one lead list before launching.']);
         }
 
-        $added = $this->syncLeadsFromLists($campaign);
-        $this->initProgress($campaign);
-        $result = $dispatcher->dispatch($campaign, (int) auth()->user()->current_organization_id);
-
-        if ($result['blocked'] ?? false) {
-            return redirect("/outreach/{$campaign->id}")->with('error', 'Could not launch — required channels are not connected.');
-        }
+        $this->queueLeadSyncAndRun($campaign, (int) auth()->user()->current_organization_id);
 
         return redirect("/outreach/{$campaign->id}")->with(
             'success',
-            "Launched with {$added} new lead(s). Queued {$result['queued_leads']} lead(s) — up to {$result['inflight_limit']} run at once to protect your LinkedIn account."
+            'Preparing leads in the background — up to '.app(\App\V2\Outreach\OutreachConcurrencyLimiter::class)->maxInFlight().' will run at once once sync finishes.'
         );
     }
 
@@ -668,190 +675,20 @@ class OutreachWebController extends Controller
             : SnLead::where('sn_list_id', $listHash)->count();
     }
 
+    private function queueLeadSyncAndRun(V2OutreachCampaign $campaign, ?int $organizationId): void
+    {
+        $sync = app(OutreachLeadSyncService::class);
+        $sync->markSyncing($campaign);
+        SyncOutreachLeadsAndRunJob::dispatch($campaign->id, $organizationId);
+    }
+
     private function syncLeadsFromLists(V2OutreachCampaign $campaign): int
     {
-        $added = 0;
-        $resolver = app(OutreachLeadContactResolver::class);
-        $leadLists = $campaign->outreachLists()->get()->map(fn ($l) => [
-            'list_hash' => $l->list_hash,
-            'list_src' => $l->list_src,
-        ])->all();
-        $overlays = $resolver->overlaysForLists((int) $campaign->user_id, $leadLists);
-
-        foreach ($campaign->outreachLists()->get() as $list) {
-            if ($list->list_src === 'csv') {
-                $importList = V2OutreachImportList::query()
-                    ->where('user_id', $campaign->user_id)
-                    ->where('list_hash', $list->list_hash)
-                    ->first();
-
-                if (! $importList) {
-                    continue;
-                }
-
-                foreach ($importList->leads()->get() as $row) {
-                    $contactRow = [
-                        'email' => trim((string) ($row->email ?? '')),
-                        'phone' => trim((string) ($row->phone ?? '')),
-                        'whatsapp_provider_id' => trim((string) ($row->whatsapp_provider_id ?? '')),
-                        'instagram_handle' => trim((string) ($row->instagram_handle ?? '')),
-                        'instagram_provider_id' => trim((string) ($row->instagram_provider_id ?? '')),
-                        'telegram_handle' => trim((string) ($row->telegram_handle ?? '')),
-                        'telegram_provider_id' => trim((string) ($row->telegram_provider_id ?? '')),
-                        'twitter_handle' => trim((string) ($row->twitter_handle ?? '')),
-                        'twitter_provider_id' => trim((string) ($row->twitter_provider_id ?? '')),
-                    ];
-                    $attrs = $resolver->toLeadAttributes($contactRow);
-                    $meta = array_merge(['list_hash' => $list->list_hash, 'import_list' => true], $attrs['meta']);
-                    $profileId = trim((string) ($row->linkedin_id ?? ''));
-
-                    $lead = V2OutreachLead::firstOrCreate(
-                        ['outreach_campaign_id' => $campaign->id, 'source_list_src' => 'csv', 'source_record_id' => $row->id],
-                        [
-                            'provider_profile_id' => $profileId !== '' ? $profileId : null,
-                            'email' => $attrs['email'],
-                            'phone' => $attrs['phone'],
-                            'full_name' => trim((string) ($row->full_name ?? '')) ?: 'Contact',
-                            'headline' => null,
-                            'profile_url' => $row->profile_url,
-                            'status' => 'pending',
-                            'meta' => $meta,
-                        ]
-                    );
-
-                    if (! $lead->wasRecentlyCreated) {
-                        $mergedMeta = array_merge($lead->meta ?? [], $meta);
-                        $lead->update(array_filter([
-                            'email' => $lead->email ?: $attrs['email'],
-                            'phone' => $lead->phone ?: $attrs['phone'],
-                            'meta' => $mergedMeta,
-                        ]));
-                    }
-
-                    if ($lead->wasRecentlyCreated) {
-                        $added++;
-                    }
-                }
-
-                continue;
-            }
-
-            if ($list->list_src === 'aud') {
-                foreach (AudienceList::where('audience_id', $list->list_hash)->get() as $row) {
-                    $name = trim(($row->con_first_name ?? '').' '.($row->con_last_name ?? ''));
-                    $profileId = $row->con_public_identifier ?: $row->con_id;
-                    $linkedinKey = $resolver->normalizeLinkedinKey($profileId);
-                    $contactRow = $resolver->mergeRow([
-                        'email' => trim((string) ($row->con_email ?? '')),
-                        'phone' => trim((string) ($row->con_phone ?? '')),
-                        'whatsapp_provider_id' => trim((string) ($row->whatsapp_provider_id ?? '')),
-                        'instagram_handle' => '',
-                        'instagram_provider_id' => '',
-                        'telegram_handle' => '',
-                        'telegram_provider_id' => '',
-                        'twitter_handle' => '',
-                        'twitter_provider_id' => '',
-                    ], $overlays[$linkedinKey] ?? null);
-                    $attrs = $resolver->toLeadAttributes($contactRow);
-                    $meta = array_merge(['list_hash' => $list->list_hash], $attrs['meta']);
-
-                    $lead = V2OutreachLead::firstOrCreate(
-                        ['outreach_campaign_id' => $campaign->id, 'source_list_src' => 'aud', 'source_record_id' => $row->id],
-                        [
-                            'provider_profile_id' => $profileId,
-                            'email' => $attrs['email'],
-                            'phone' => $attrs['phone'],
-                            'full_name' => $name !== '' ? $name : 'Unknown',
-                            'headline' => $row->con_job_title,
-                            'profile_url' => $row->con_public_identifier ? 'https://www.linkedin.com/in/'.$row->con_public_identifier : $row->con_profile_url,
-                            'status' => 'pending',
-                            'meta' => $meta,
-                        ]
-                    );
-                    if (! $lead->wasRecentlyCreated) {
-                        $updates = [];
-                        if (empty($lead->email) && ! empty($attrs['email'])) {
-                            $updates['email'] = $attrs['email'];
-                        }
-                        if (empty($lead->phone) && ! empty($attrs['phone'])) {
-                            $updates['phone'] = $attrs['phone'];
-                        }
-                        $mergedMeta = array_merge($lead->meta ?? [], $meta);
-                        if ($mergedMeta !== ($lead->meta ?? [])) {
-                            $updates['meta'] = $mergedMeta;
-                        }
-                        if ($updates !== []) {
-                            $lead->update($updates);
-                        }
-                    }
-                    if ($lead->wasRecentlyCreated) {
-                        $added++;
-                    }
-                }
-            } else {
-                foreach (SnLead::where('sn_list_id', $list->list_hash)->get() as $row) {
-                    $name = trim(($row->first_name ?? '').' '.($row->last_name ?? ''));
-                    $linkedinKey = $resolver->normalizeLinkedinKey($row->lid ?: $row->sn_lid);
-                    $contactRow = $resolver->mergeRow([
-                        'email' => trim((string) ($row->email ?? '')),
-                        'phone' => trim((string) ($row->phone ?? '')),
-                        'whatsapp_provider_id' => trim((string) ($row->whatsapp_provider_id ?? '')),
-                        'instagram_handle' => trim((string) ($row->instagram_handle ?? '')),
-                        'instagram_provider_id' => trim((string) ($row->instagram_provider_id ?? '')),
-                        'telegram_handle' => trim((string) ($row->telegram_handle ?? '')),
-                        'telegram_provider_id' => trim((string) ($row->telegram_provider_id ?? '')),
-                        'twitter_handle' => trim((string) ($row->twitter_handle ?? '')),
-                        'twitter_provider_id' => trim((string) ($row->twitter_provider_id ?? '')),
-                    ], $overlays[$linkedinKey] ?? null);
-                    $attrs = $resolver->toLeadAttributes($contactRow);
-                    $meta = array_merge(['list_hash' => $list->list_hash], $attrs['meta']);
-
-                    $lead = V2OutreachLead::firstOrCreate(
-                        ['outreach_campaign_id' => $campaign->id, 'source_list_src' => 'sn', 'source_record_id' => $row->id],
-                        [
-                            'provider_profile_id' => $row->lid,
-                            'email' => $attrs['email'],
-                            'phone' => $attrs['phone'],
-                            'full_name' => $name !== '' ? $name : 'Unknown',
-                            'headline' => $row->headline,
-                            'profile_url' => $row->lid ? 'https://www.linkedin.com/in/'.$row->lid : null,
-                            'status' => 'pending',
-                            'meta' => $meta,
-                        ]
-                    );
-                    if (! $lead->wasRecentlyCreated) {
-                        $updates = [];
-                        if (empty($lead->email) && ! empty($attrs['email'])) {
-                            $updates['email'] = $attrs['email'];
-                        }
-                        if (empty($lead->phone) && ! empty($attrs['phone'])) {
-                            $updates['phone'] = $attrs['phone'];
-                        }
-                        $mergedMeta = array_merge($lead->meta ?? [], $meta);
-                        if ($mergedMeta !== ($lead->meta ?? [])) {
-                            $updates['meta'] = $mergedMeta;
-                        }
-                        if ($updates !== []) {
-                            $lead->update($updates);
-                        }
-                    }
-                    if ($lead->wasRecentlyCreated) {
-                        $added++;
-                    }
-                }
-            }
-        }
-
-        return $added;
+        return app(OutreachLeadSyncService::class)->syncAllLists($campaign);
     }
 
     private function initProgress(V2OutreachCampaign $campaign): void
     {
-        foreach ($campaign->outreachLeads()->get() as $lead) {
-            V2OutreachLeadProgress::firstOrCreate(
-                ['outreach_campaign_id' => $campaign->id, 'outreach_lead_id' => $lead->id],
-                ['current_node_key' => 0, 'next_node_key' => 1, 'run_status' => 0, 'channel_state' => []]
-            );
-        }
+        app(OutreachLeadSyncService::class)->initProgress($campaign);
     }
 }

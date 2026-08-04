@@ -67,9 +67,12 @@ return [
     | Tuned for a ~4 GB Forge host shared with Nginx, PHP-FPM, MySQL, Redis
     | and other apps. Keep total Horizon processes low.
     |
-    | - supervisor-main: outreach / campaigns / webhooks / harvest / misc
+    | - supervisor-main: outreach / campaigns / webhooks / default (incl. chained lead-sync)
     | - supervisor-enrichment: FullEnrich + profile email/phone lookups only
     |   (slow, isolated so enrich clicks cannot starve competitor harvest)
+    |
+    | Lead sync uses `default` (already last in the list) in ≤250-row chained jobs —
+    | no extra supervisor / RAM. Short jobs interleave so outreach is not blocked for minutes.
     */
     'defaults' => [
         'supervisor-main' => [

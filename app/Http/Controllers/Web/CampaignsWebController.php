@@ -11,9 +11,11 @@ use App\Models\V2Campaign;
 use App\Models\V2CampaignLead;
 use App\Models\V2CampaignLeadProgress;
 use App\Models\V2CampaignList;
+use App\Jobs\V2\SyncCampaignLeadsAndRunJob;
 use App\V2\Campaign\CampaignActivityLogger;
 use App\V2\Campaign\CampaignCompletionService;
 use App\V2\Campaign\CampaignConcurrencyLimiter;
+use App\V2\Campaign\CampaignLeadSyncService;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Campaign\CampaignRunDispatcher;
 use App\V2\Campaign\CampaignSequenceResolver;
@@ -272,7 +274,7 @@ class CampaignsWebController extends Controller
             'sequence_type' => ['sometimes', 'string', 'in:lead_gen,endorse,profile_views,custom'],
             'node_model' => ['sometimes', 'array'],
             'link_model' => ['nullable', 'array'],
-            'status' => ['sometimes', 'string', 'in:draft,active,paused,running,stopped,completed'],
+            'status' => ['sometimes', 'string', 'in:draft,active,paused,running,stopped,completed,preparing'],
             'meta' => ['nullable', 'array'],
             'lead_lists' => ['nullable', 'array'],
             'lead_lists.*.list_hash' => ['required_with:lead_lists', 'string'],
@@ -295,20 +297,32 @@ class CampaignsWebController extends Controller
         }
 
         if ($activate) {
-            $data['status'] = 'active';
+            unset($data['status']);
         }
 
-        $campaign->update($data);
+        if ($data !== []) {
+            $campaign->update($data);
+            $campaign->refresh();
+        }
 
-        if ($activate || ($data['status'] ?? '') === 'active') {
-            $this->syncLeadsFromLists($campaign);
-            $this->initProgressForCampaign($campaign);
+        if ($activate) {
+            $this->queueLeadSyncAndRun($campaign, (int) auth()->user()->current_organization_id);
+
+            return redirect("/campaigns/{$campaign->id}")->with(
+                'success',
+                'Preparing leads in the background — the run starts automatically when ready.'
+            );
+        }
+
+        if (($data['status'] ?? '') === 'active') {
+            app(CampaignLeadSyncService::class)->syncAllLists($campaign);
+            app(CampaignLeadSyncService::class)->initProgress($campaign);
         }
 
         $newStatus = $data['status'] ?? $campaign->status;
         if (
             in_array($newStatus, ['active', 'running'], true)
-            && in_array($previousStatus, ['paused', 'stopped', 'draft'], true)
+            && in_array($previousStatus, ['paused', 'stopped', 'draft', 'preparing'], true)
             && !$activate
         ) {
             if ($linkedInGuard->isUserDisconnected((int) auth()->id())) {
@@ -321,7 +335,7 @@ class CampaignsWebController extends Controller
             $dispatcher->dispatch($campaign, (int) auth()->user()->current_organization_id);
         }
 
-        return redirect("/campaigns/{$campaign->id}")->with('success', $activate ? 'Campaign launched.' : 'Campaign updated.');
+        return redirect("/campaigns/{$campaign->id}")->with('success', 'Campaign updated.');
     }
 
     public function attachList(Request $request, int $id): JsonResponse
@@ -370,23 +384,11 @@ class CampaignsWebController extends Controller
             return back()->withErrors(['campaign' => 'Add at least one lead list before launching.']);
         }
 
-        $added = $this->syncLeadsFromLists($campaign);
-        $this->initProgressForCampaign($campaign);
-
-        $result = $dispatcher->dispatch($campaign, (int) auth()->user()->current_organization_id);
-
-        if (! empty($result['blocked'])) {
-            return redirect("/campaigns/{$campaign->id}")->with(
-                'error',
-                'Your LinkedIn account is disconnected. Reconnect on Integrations before launching this campaign.',
-            );
-        }
-
-        $limit = (int) ($result['inflight_limit'] ?? 2);
+        $this->queueLeadSyncAndRun($campaign, (int) auth()->user()->current_organization_id);
 
         return redirect("/campaigns/{$campaign->id}")->with(
             'success',
-            "Campaign launched with {$added} new lead(s). Queued {$result['queued_leads']} lead(s) — up to {$limit} run at once to protect your LinkedIn account."
+            'Preparing leads in the background — up to '.app(CampaignConcurrencyLimiter::class)->maxInFlight().' will run at once once sync finishes.'
         );
     }
 
@@ -488,94 +490,20 @@ class CampaignsWebController extends Controller
         return SnLead::where('sn_list_id', $listHash)->count();
     }
 
+    private function queueLeadSyncAndRun(V2Campaign $campaign, ?int $organizationId): void
+    {
+        $sync = app(CampaignLeadSyncService::class);
+        $sync->markSyncing($campaign);
+        SyncCampaignLeadsAndRunJob::dispatch($campaign->id, $organizationId);
+    }
+
     private function syncLeadsFromLists(V2Campaign $campaign): int
     {
-        $added = 0;
-        $lists = $campaign->campaignLists()->get();
-
-        foreach ($lists as $list) {
-            if ($list->list_src === 'aud') {
-                $rows = AudienceList::where('audience_id', $list->list_hash)->get();
-                foreach ($rows as $row) {
-                    $name = trim(($row->con_first_name ?? '').' '.($row->con_last_name ?? ''));
-                    $profileId = $row->con_public_identifier ?: $row->con_id;
-                    $profileUrl = $row->con_public_identifier
-                        ? 'https://www.linkedin.com/in/'.$row->con_public_identifier
-                        : $row->con_profile_url;
-
-                    $lead = V2CampaignLead::firstOrCreate(
-                        [
-                            'campaign_id' => $campaign->id,
-                            'source_list_src' => 'aud',
-                            'source_record_id' => $row->id,
-                        ],
-                        [
-                            'provider_profile_id' => $profileId,
-                            'full_name' => $name !== '' ? $name : 'Unknown',
-                            'headline' => $row->con_job_title,
-                            'profile_url' => $profileUrl,
-                            'status' => 'pending',
-                            'meta' => [
-                                'list_hash' => $list->list_hash,
-                                'member_urn' => $row->con_member_urn,
-                                'tracking_id' => $row->con_tracking_id,
-                                'network_distance' => $row->con_distance,
-                            ],
-                        ]
-                    );
-                    if ($lead->wasRecentlyCreated) {
-                        $added++;
-                    }
-                }
-            } else {
-                $rows = SnLead::where('sn_list_id', $list->list_hash)->get();
-                foreach ($rows as $row) {
-                    $name = trim(($row->first_name ?? '').' '.($row->last_name ?? ''));
-                    $profileUrl = $row->lid ? 'https://www.linkedin.com/in/'.$row->lid : null;
-
-                    $lead = V2CampaignLead::firstOrCreate(
-                        [
-                            'campaign_id' => $campaign->id,
-                            'source_list_src' => 'sn',
-                            'source_record_id' => $row->id,
-                        ],
-                        [
-                            'provider_profile_id' => $row->lid,
-                            'full_name' => $name !== '' ? $name : 'Unknown',
-                            'headline' => $row->headline,
-                            'profile_url' => $profileUrl,
-                            'status' => 'pending',
-                            'meta' => [
-                                'list_hash' => $list->list_hash,
-                                'member_urn' => $row->object_urn,
-                                'network_distance' => $row->degree,
-                            ],
-                        ]
-                    );
-                    if ($lead->wasRecentlyCreated) {
-                        $added++;
-                    }
-                }
-            }
-        }
-
-        return $added;
+        return app(CampaignLeadSyncService::class)->syncAllLists($campaign);
     }
 
     private function initProgressForCampaign(V2Campaign $campaign): void
     {
-        $leads = $campaign->campaignLeads()->get();
-
-        foreach ($leads as $lead) {
-            V2CampaignLeadProgress::firstOrCreate(
-                ['campaign_id' => $campaign->id, 'campaign_lead_id' => $lead->id],
-                [
-                    'current_node_key' => 0,
-                    'next_node_key' => 1,
-                    'run_status' => 0,
-                    'acceptance_status' => null,
-                ]
-            );
-        }
+        app(CampaignLeadSyncService::class)->initProgress($campaign);
     }
 }
