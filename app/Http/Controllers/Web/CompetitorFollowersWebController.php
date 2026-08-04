@@ -226,6 +226,8 @@ class CompetitorFollowersWebController extends Controller
                 'audience_name' => $audience->audience_name,
                 'company_url' => $meta['company_url'] ?? null,
                 'followers_count' => AudienceList::where('audience_id', $audience->audience_id)->count(),
+                'fetch_status' => $meta['fetch_status'] ?? null,
+                'fetch_progress' => $meta['fetch_progress'] ?? null,
             ],
             'followers' => $followers,
             'emailFilter' => $emailFilter,

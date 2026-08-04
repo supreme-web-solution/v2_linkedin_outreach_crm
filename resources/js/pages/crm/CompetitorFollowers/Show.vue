@@ -20,6 +20,7 @@ import {
     Phone,
     RefreshCw,
     Search,
+    Users2,
 } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
@@ -81,6 +82,8 @@ const props = defineProps<{
         audience_name: string | null;
         company_url: string | null;
         followers_count: number;
+        fetch_status: string | null;
+        fetch_progress: string | null;
     };
     followers: {
         data: Follower[];
@@ -109,6 +112,23 @@ const enrichingIds = ref<Set<number>>(new Set());
 const flash = ref('');
 const flashError = ref('');
 
+const harvestStatus = ref<string | null>(props.audience.fetch_status);
+const harvestProgress = ref<string | null>(props.audience.fetch_progress);
+const harvestCount = ref(props.audience.followers_count);
+let harvestTimer: ReturnType<typeof setInterval> | null = null;
+
+const isHarvesting = computed(() =>
+    harvestStatus.value === 'pending' || harvestStatus.value === 'processing',
+);
+
+watch(
+    () => [props.audience.fetch_status, props.audience.fetch_progress, props.audience.followers_count] as const,
+    ([status, progress, count]) => {
+        harvestStatus.value = status;
+        harvestProgress.value = progress;
+        harvestCount.value = count;
+    },
+);
 const filters = [
     { key: 'all', label: 'All' },
     { key: 'with_email', label: 'With email' },
@@ -346,12 +366,49 @@ async function enrichNextBatch() {
 }
 
 let poll: ReturnType<typeof setInterval> | null = null;
+
+async function pollHarvestStatus() {
+    const shouldPoll = isHarvesting.value
+        || props.audience.fetch_status === 'pending'
+        || props.audience.fetch_status === 'processing';
+
+    if (!shouldPoll) {
+        return;
+    }
+
+    try {
+        const res = await fetch(`/competitor-followers/${props.audience.id}/status`, {
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'same-origin',
+        });
+        const data = await res.json();
+        const prevCount = harvestCount.value;
+        harvestStatus.value = data.status ?? null;
+        harvestProgress.value = data.progress ?? null;
+        harvestCount.value = data.followers_count ?? harvestCount.value;
+
+        const finished = data.status === 'completed' || data.status === 'failed';
+        const countGrew = (data.followers_count ?? 0) > prevCount;
+
+        if (finished || countGrew) {
+            router.reload({
+                only: ['audience', 'followers', 'counts', 'contactStats', 'dailyLimit', 'pendingCount'],
+                preserveScroll: true,
+            });
+        }
+    } catch {
+        /* ignore transient poll errors */
+    }
+}
+
 onMounted(() => {
+    void pollHarvestStatus();
     poll = setInterval(() => {
         if (hasPending.value) {
             scheduleReload();
         }
-    }, 5000);
+        void pollHarvestStatus();
+    }, 4000);
 });
 onBeforeUnmount(() => {
     if (poll) {
@@ -388,7 +445,7 @@ function distanceLabel(d: string | null): string {
                 <div>
                     <LinkedInPageHeading :title="audience.audience_name || 'Competitor Followers'" show-badge>
                         <template #subtitle>
-                            {{ followers.total.toLocaleString() }} followers ·
+                            {{ (isHarvesting ? harvestCount : followers.total).toLocaleString() }} followers ·
                             <span class="text-blue-600">Competitor audience</span>
                         </template>
                     </LinkedInPageHeading>
@@ -400,7 +457,7 @@ function distanceLabel(d: string | null): string {
                         <Download class="h-4 w-4" /> Export CSV
                     </a>
                 </Button>
-                <AppToolbarButton variant="info" @click="router.reload({ only: ['followers', 'counts', 'contactStats', 'dailyLimit', 'pendingCount'] })">
+                <AppToolbarButton variant="info" @click="router.reload({ only: ['audience', 'followers', 'counts', 'contactStats', 'dailyLimit', 'pendingCount'] })">
                     <RefreshCw class="h-4 w-4" /> Refresh
                 </AppToolbarButton>
             </div>
@@ -408,6 +465,25 @@ function distanceLabel(d: string | null): string {
 
         <p v-if="flash" class="rounded-lg bg-green-100 px-4 py-2 text-sm text-green-800 dark:bg-green-900/30 dark:text-green-300">{{ flash }}</p>
         <p v-if="flashError" class="rounded-lg bg-red-100 px-4 py-2 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-300">{{ flashError }}</p>
+
+        <!-- Harvest in progress -->
+        <div
+            v-if="isHarvesting"
+            class="flex items-start gap-3 rounded-xl border border-sky-200/80 bg-gradient-to-br from-sky-50/90 via-card to-card px-4 py-3.5 shadow-sm"
+        >
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600">
+                <Loader2 class="h-5 w-5 animate-spin" />
+            </div>
+            <div class="min-w-0 flex-1">
+                <p class="text-sm font-semibold text-foreground">Pulling engagers…</p>
+                <p class="mt-0.5 text-sm text-muted-foreground">
+                    {{ harvestProgress || 'Queued and ready to go…' }}
+                </p>
+                <p v-if="harvestCount > 0" class="mt-1 text-xs font-medium text-sky-700">
+                    {{ harvestCount.toLocaleString() }} found so far
+                </p>
+            </div>
+        </div>
 
         <!-- Enrichment stats -->
         <div v-if="contactStats" class="space-y-4">
@@ -493,8 +569,22 @@ function distanceLabel(d: string | null): string {
 
         <!-- Empty -->
         <div v-if="followers.data.length === 0" class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-12 text-center">
-            <Mail class="h-10 w-10 text-muted-foreground/40" />
-            <p class="font-medium">No followers match this view</p>
+            <template v-if="isHarvesting">
+                <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-50 text-sky-600">
+                    <Loader2 class="h-7 w-7 animate-spin" />
+                </div>
+                <p class="text-base font-semibold">Pulling followers…</p>
+                <p class="max-w-md text-sm text-muted-foreground">
+                    {{ harvestProgress || 'Scanning competitor posts for reactions and comments.' }}
+                </p>
+                <p v-if="harvestCount > 0" class="text-xs font-medium text-sky-700">
+                    {{ harvestCount.toLocaleString() }} found so far — they’ll appear here shortly.
+                </p>
+            </template>
+            <template v-else>
+                <Users2 class="h-10 w-10 text-muted-foreground/40" />
+                <p class="font-medium">No followers match this view</p>
+            </template>
         </div>
 
         <!-- Table -->
