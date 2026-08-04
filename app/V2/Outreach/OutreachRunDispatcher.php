@@ -75,7 +75,7 @@ class OutreachRunDispatcher
             );
 
             ProcessOutreachLeadJob::dispatch($campaign->id, $lead->id, $run->id)
-                ->delay(now()->addSeconds($index * 5));
+                ->delay(now()->addSeconds($index * max(5, (int) config('services.unipile_pacing.outreach_lead_stagger_seconds', 60))));
 
             $queued++;
         }

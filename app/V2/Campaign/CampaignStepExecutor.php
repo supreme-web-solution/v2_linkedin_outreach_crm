@@ -11,6 +11,7 @@ use App\V2\Integrations\ProviderManager;
 use App\V2\Integrations\Unipile\UnipileProvider;
 use App\V2\Services\CallOrchestrationService;
 use App\V2\Services\UnipileDailyActionLimiter;
+use App\V2\Services\UnipileTemporaryLimitGuard;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -84,6 +85,11 @@ class CampaignStepExecutor
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
             }
 
+            $tempLimit = app(UnipileTemporaryLimitGuard::class);
+            if ($tempLimit->isLimited((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_INVITES)) {
+                return $tempLimit->deferredResult((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_INVITES);
+            }
+
             if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_INVITES)) {
                 return $deferred;
             }
@@ -97,13 +103,20 @@ class CampaignStepExecutor
                     ], $context);
 
                     return ['response' => $response];
-                }
+                },
+                (int) $campaign->user_id,
+                UnipileDailyActionLimiter::ACTION_INVITES,
             );
         }
 
         if ($normalized === 'message') {
             if ($recipientId === '') {
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
+            }
+
+            $tempLimit = app(UnipileTemporaryLimitGuard::class);
+            if ($tempLimit->isLimited((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_NEW_CHATS)) {
+                return $tempLimit->deferredResult((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_NEW_CHATS);
             }
 
             if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_NEW_CHATS)) {
@@ -122,7 +135,9 @@ class CampaignStepExecutor
                         'chat_id' => $this->extractChatId($chat),
                         'response' => $chat,
                     ];
-                }
+                },
+                (int) $campaign->user_id,
+                UnipileDailyActionLimiter::ACTION_NEW_CHATS,
             );
 
             if (($startResult['status'] ?? '') !== 'completed') {
@@ -253,10 +268,15 @@ class CampaignStepExecutor
      * @param  callable(string): array<string, mixed>  $callback
      * @return array<string, mixed>
      */
-    private function executeWithProviderFallback(string $operation, callable $callback): array
-    {
+    private function executeWithProviderFallback(
+        string $operation,
+        callable $callback,
+        ?int $userId = null,
+        ?string $quotaAction = null,
+    ): array {
         $attempts = [];
         $lastError = null;
+        $tempLimit = app(UnipileTemporaryLimitGuard::class);
 
         foreach ($this->providerManager->providersForOperation($operation) as $providerKey) {
             if (!$this->providerManager->isRegistered($providerKey)) {
@@ -295,6 +315,22 @@ class CampaignStepExecutor
                         'error_message' => $exception->getMessage(),
                         'payload' => ['operation' => $operation, 'attempts' => $attempts],
                     ];
+                }
+
+                if ($userId && $quotaAction && $tempLimit->isTemporaryLimit($exception)) {
+                    app(UnipileDailyActionLimiter::class)->release($userId, $quotaAction);
+                    $deferred = $tempLimit->deferredResult($userId, $quotaAction, $exception->getMessage());
+                    $deferred['payload']['operation'] = $operation;
+                    $deferred['payload']['attempts'] = $attempts;
+
+                    Log::warning('[Campaign] Temporary provider limit — step deferred', [
+                        'operation' => $operation,
+                        'user_id' => $userId,
+                        'resume_at' => $deferred['next_run_at']->toIso8601String(),
+                        'error' => $exception->getMessage(),
+                    ]);
+
+                    return $deferred;
                 }
 
                 $lastError = $exception->getMessage();

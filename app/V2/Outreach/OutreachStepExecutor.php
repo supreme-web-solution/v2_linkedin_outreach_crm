@@ -13,6 +13,7 @@ use App\V2\Outreach\Channels\MessagingChannelExecutor;
 use App\V2\Services\LinkedInConnectionService;
 use App\V2\Services\UnifiedInboxService;
 use App\V2\Services\UnipileDailyActionLimiter;
+use App\V2\Services\UnipileTemporaryLimitGuard;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -110,6 +111,16 @@ class OutreachStepExecutor
             return $deferred;
         }
 
+        $quotaAction = match ($action) {
+            'send_invite' => UnipileDailyActionLimiter::ACTION_INVITES,
+            'send_message' => UnipileDailyActionLimiter::ACTION_MESSAGES,
+            default => null,
+        };
+        $tempLimit = app(UnipileTemporaryLimitGuard::class);
+        if ($quotaAction !== null && $tempLimit->isLimited((int) $campaign->user_id, $quotaAction)) {
+            return $tempLimit->deferredResult((int) $campaign->user_id, $quotaAction);
+        }
+
         $context = [
             'owner_id' => (string) $campaign->user_id,
             'organization_id' => $campaign->organization_id,
@@ -126,6 +137,11 @@ class OutreachStepExecutor
                 $error = (string) ($result['error_message'] ?? '');
                 if ($this->guard->isDisconnectedMessage($error)) {
                     return ['status' => 'channel_disconnected', 'error_message' => $error, 'payload' => ['channel' => $channel]];
+                }
+                if ($quotaAction !== null && $tempLimit->isTemporaryLimit($error)) {
+                    app(UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+
+                    return $tempLimit->deferredResult((int) $campaign->user_id, $quotaAction, $error);
                 }
             }
 
@@ -145,6 +161,12 @@ class OutreachStepExecutor
                     'error_message' => $e->getMessage(),
                     'payload' => ['channel' => $channel],
                 ];
+            }
+
+            if ($quotaAction !== null && $tempLimit->isTemporaryLimit($e)) {
+                app(UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+
+                return $tempLimit->deferredResult((int) $campaign->user_id, $quotaAction, $e->getMessage());
             }
 
             return ['status' => 'failed', 'error_message' => $e->getMessage()];

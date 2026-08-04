@@ -104,6 +104,16 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
         } catch (\Throwable $e) {
             Log::error('[Outreach] LinkedIn action failed', ['action' => $action, 'error' => $e->getMessage()]);
 
+            $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
+            if ($tempLimit->isTemporaryLimit($e)) {
+                $quotaAction = $action === 'send_invite'
+                    ? \App\V2\Services\UnipileDailyActionLimiter::ACTION_INVITES
+                    : \App\V2\Services\UnipileDailyActionLimiter::ACTION_MESSAGES;
+                app(\App\V2\Services\UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+
+                return $tempLimit->deferredResult((int) $campaign->user_id, $quotaAction, $e->getMessage());
+            }
+
             return ['status' => 'failed', 'error_message' => $e->getMessage()];
         }
     }

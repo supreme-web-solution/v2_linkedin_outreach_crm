@@ -70,6 +70,25 @@ class UnipileDailyActionLimiter
         return max(0, (int) Cache::get($this->key($userId, $action), 0));
     }
 
+    /**
+     * Give back quota after a failed send (e.g. temporary provider limit).
+     */
+    public function release(int $userId, string $action, int $count = 1): void
+    {
+        $limit = $this->limitFor($action);
+        if ($limit <= 0 || $count <= 0) {
+            return;
+        }
+
+        $key = $this->key($userId, $action);
+        $used = (int) Cache::get($key, 0);
+        if ($used <= 0) {
+            return;
+        }
+
+        Cache::decrement($key, min($count, $used));
+    }
+
     public function remaining(int $userId, string $action): int
     {
         $limit = $this->limitFor($action);

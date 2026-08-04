@@ -531,8 +531,23 @@ class ProcessCampaignLeadJob implements ShouldQueue
             }
         }
 
+        // Safety net: temporary LinkedIn/Unipile limits should retry, not permanent Error.
+        if ($status === 'failed') {
+            $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
+            $error = (string) ($result['error_message'] ?? '');
+            if ($tempLimit->isTemporaryLimit($error)) {
+                $action = str_contains(strtolower($resolver->stepType($node)), 'invite')
+                    ? \App\V2\Services\UnipileDailyActionLimiter::ACTION_INVITES
+                    : \App\V2\Services\UnipileDailyActionLimiter::ACTION_MESSAGES;
+                $result = $tempLimit->deferredResult((int) $campaign->user_id, $action, $error);
+                $status = 'deferred';
+            }
+        }
+
         if ($status === 'deferred') {
             $runAt = $result['next_run_at'] ?? now()->addDay()->startOfDay()->addMinutes(10);
+            $reason = (string) ($result['payload']['reason'] ?? 'daily_limit');
+            $isTemp = str_starts_with($reason, 'temporary_');
 
             $logger->log(
                 $campaign->id,
@@ -540,12 +555,15 @@ class ProcessCampaignLeadJob implements ShouldQueue
                 $run?->id,
                 $node,
                 'scheduled',
-                "Daily LinkedIn limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                $isTemp
+                    ? "LinkedIn temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.'
+                    : "Daily LinkedIn limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
                 $result['payload'] ?? [],
             );
 
-            // Same node retries tomorrow; keys are not advanced.
-            $progress->update(['next_run_at' => $runAt]);
+            $lead->update(['status' => 'pending']);
+            // Same node retries later; keys are not advanced.
+            $progress->update(['next_run_at' => $runAt, 'run_status' => 0]);
             self::dispatch($campaign->id, $lead->id, $run?->id)->delay($runAt);
 
             return;

@@ -97,12 +97,12 @@ class CampaignRunDispatcher
             );
 
             ProcessCampaignLeadJob::dispatch($campaign->id, $lead->id, $run->id)
-                ->delay(now()->addSeconds($index * 5));
+                ->delay(now()->addSeconds($index * max(5, (int) config('services.unipile_pacing.campaign_lead_stagger_seconds', 60))));
 
             Log::debug('[Campaign] Queued ProcessCampaignLeadJob', [
                 'campaign_id' => $campaign->id,
                 'lead_id' => $lead->id,
-                'delay_seconds' => $index * 5,
+                'delay_seconds' => $index * max(5, (int) config('services.unipile_pacing.campaign_lead_stagger_seconds', 60)),
             ]);
 
             $queued++;

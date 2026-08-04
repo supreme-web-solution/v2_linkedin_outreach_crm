@@ -120,6 +120,12 @@ return [
         'outreach_inflight_per_user' => (int) env('OUTREACH_INFLIGHT_PER_USER', 2),
         // Max ProcessCampaignLeadJob handlers running at once per user (classic campaigns).
         'campaign_inflight_per_user' => (int) env('CAMPAIGN_INFLIGHT_PER_USER', 2),
+        // Seconds between queued lead jobs on launch (reduces LinkedIn burst 422s).
+        'campaign_lead_stagger_seconds' => (int) env('CAMPAIGN_LEAD_STAGGER_SECONDS', 60),
+        'outreach_lead_stagger_seconds' => (int) env('OUTREACH_LEAD_STAGGER_SECONDS', 60),
+        // Cool-down window when Unipile returns cannot_resend_yet / temporary provider limit.
+        'temp_limit_min_minutes' => (int) env('UNIPILE_TEMP_LIMIT_MIN_MINUTES', 45),
+        'temp_limit_max_minutes' => (int) env('UNIPILE_TEMP_LIMIT_MAX_MINUTES', 90),
         // Lease TTL for in-flight slots — frees the counter if a worker dies mid-job.
         'inflight_lease_seconds' => (int) env('INFLIGHT_LEASE_SECONDS', 1800),
         // Lead readiness / Prepare contacts — same as EMAIL_ENRICHMENT_BATCH_SIZE unless overridden.
