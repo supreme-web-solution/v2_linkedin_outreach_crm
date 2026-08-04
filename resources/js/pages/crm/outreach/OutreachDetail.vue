@@ -309,7 +309,7 @@ const channelActionEntries = computed(() =>
                 <p class="mt-0.5 text-sky-800/90">
                     Up to {{ concurrency.limit }} leads run at once
                     <span v-if="concurrency.in_flight > 0"> ({{ concurrency.in_flight }} active now)</span>.
-                    The rest stay queued and start automatically when a slot frees — this protects your account and keeps the server fair for other users.
+                    The rest stay queued and start automatically when a slot frees — this protects your LinkedIn account.
                 </p>
             </div>
         </div>

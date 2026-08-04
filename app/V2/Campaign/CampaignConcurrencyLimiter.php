@@ -6,7 +6,7 @@ use App\V2\Support\UserInFlightLimiter;
 
 /**
  * Limits how many ProcessCampaignLeadJob handlers can run at once per user.
- * Same pacing idea as outreach — protects LinkedIn + shared workers.
+ * Same pacing idea as outreach — protects the user's LinkedIn account.
  */
 class CampaignConcurrencyLimiter
 {
