@@ -3,6 +3,7 @@ import { Head, Link, router } from '@inertiajs/vue3';
 import { Layers, Megaphone, Copy, Pause, Play, Plus, Search, Trash2 } from '@lucide/vue';
 import { ref } from 'vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
+import ChannelLimitsNoticeModal from '@/components/crm/ChannelLimitsNoticeModal.vue';
 import type { ConnectedChannel } from '@/components/outreach/types';
 
 defineOptions({
@@ -71,6 +72,10 @@ function duplicateCampaign(c: { id: number }) {
     <Head title="Multi-Channel Outreach" />
 
     <div class="flex flex-col gap-5 p-4">
+        <ChannelLimitsNoticeModal
+            storage-key="sf:notice:channel-limits:outreach"
+            variant="outreach"
+        />
         <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
                 <h1 class="text-xl font-semibold">Multi-Channel Outreach</h1>

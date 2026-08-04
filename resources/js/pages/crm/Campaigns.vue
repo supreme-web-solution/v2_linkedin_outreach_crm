@@ -6,6 +6,7 @@ import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 import LinkedInDisconnectBanner from '@/components/campaign/LinkedInDisconnectBanner.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
+import ChannelLimitsNoticeModal from '@/components/crm/ChannelLimitsNoticeModal.vue';
 
 defineOptions({
     layout: { breadcrumbs: [{ title: 'Dashboard', href: '/dashboard' }, { title: 'Campaigns', href: '/campaigns' }] },
@@ -134,6 +135,10 @@ function deleteCampaign(c: { id: number; name: string }) {
     <Head title="Campaigns" />
 
     <div class="flex flex-col gap-5 p-4">
+        <ChannelLimitsNoticeModal
+            storage-key="sf:notice:channel-limits:campaigns"
+            variant="campaigns"
+        />
         <LinkedInDisconnectBanner />
 
         <div class="flex items-center justify-between">
