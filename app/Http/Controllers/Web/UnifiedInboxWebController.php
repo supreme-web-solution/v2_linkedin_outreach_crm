@@ -401,9 +401,13 @@ class UnifiedInboxWebController extends Controller
             abort(404);
         }
 
-        $response = app(UnipileProvider::class)->downloadMessageAttachment($messageId, $attachmentId, [
-            'account_id' => $accountId,
-        ]);
+        $response = $platform === 'email'
+            ? app(UnipileProvider::class)->downloadEmailAttachment($messageId, $attachmentId, [
+                'account_id' => $accountId,
+            ])
+            : app(UnipileProvider::class)->downloadMessageAttachment($messageId, $attachmentId, [
+                'account_id' => $accountId,
+            ]);
 
         if (! $response->successful()) {
             abort($response->status() ?: 502);

@@ -149,10 +149,12 @@ class UnipileMessageNormalizer
                 continue;
             }
 
+            $mime = trim((string) ($attachment['mimetype'] ?? $attachment['mime'] ?? ''));
+
             $attachments[] = [
                 'id' => $id,
                 'type' => isset($attachment['type']) ? (string) $attachment['type'] : null,
-                'mimetype' => isset($attachment['mimetype']) ? (string) $attachment['mimetype'] : null,
+                'mimetype' => $mime !== '' ? $mime : null,
                 'filename' => $this->guessFilename($attachment),
                 'unavailable' => (bool) ($attachment['unavailable'] ?? false),
             ];
@@ -294,7 +296,7 @@ class UnipileMessageNormalizer
         }
 
         $type = (string) ($attachment['type'] ?? '');
-        $mime = (string) ($attachment['mimetype'] ?? '');
+        $mime = (string) ($attachment['mimetype'] ?? $attachment['mime'] ?? '');
 
         return match (true) {
             str_starts_with($mime, 'image/') => 'image.'.($mime === 'image/png' ? 'png' : 'jpg'),

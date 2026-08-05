@@ -11,7 +11,7 @@ class InboxAttachmentSupport
      */
     public static function platformsWithAttachments(): array
     {
-        return ['linkedin', 'whatsapp', 'instagram', 'telegram'];
+        return ['linkedin', 'whatsapp', 'instagram', 'telegram', 'email'];
     }
 
     public static function supportsAttachments(string $platform): bool

@@ -1199,6 +1199,102 @@ class UnifiedInboxTest extends TestCase
         $this->assertSame('replied', $lead->fresh()->status);
     }
 
+    public function test_email_inbound_dedupes_webhook_and_list_ids_and_keeps_attachments(): void
+    {
+        $user = $this->userWithOrg();
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'email',
+            'provider_account_id' => 'email_acc_dup',
+            'status' => 'active',
+            'meta' => ['unipile_account_id' => 'email_acc_dup', 'email' => 'sender@company.com'],
+        ]);
+
+        $campaign = V2OutreachCampaign::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'name' => 'Email Campaign Dup',
+            'status' => 'running',
+            'node_model' => [],
+        ]);
+
+        $lead = V2OutreachLead::query()->create([
+            'outreach_campaign_id' => $campaign->id,
+            'full_name' => 'William Victor',
+            'email' => 'vickenconcept@gmail.com',
+            'status' => 'running',
+        ]);
+
+        $inbox = app(\App\V2\Services\UnifiedInboxService::class);
+
+        $inbox->handleInboundEmailWebhook($user->id, [
+            'event' => 'mail_received',
+            'account_id' => 'email_acc_dup',
+            'email_id' => 'stable_email_1',
+            'from_attendee' => ['identifier' => 'vickenconcept@gmail.com'],
+            'to_attendees' => [['identifier' => 'sender@company.com']],
+            'subject' => 'Re: Hello',
+            'body' => "I'm good, how about you?",
+            'attachments' => [
+                [
+                    'id' => 'att_1',
+                    'name' => 'invoice.pdf',
+                    'mime' => 'application/pdf',
+                ],
+            ],
+        ]);
+
+        // listEmails-style payload (same Unipile id + unstable provider_id blob).
+        $inbox->handleInboundEmailWebhook($user->id, [
+            'account_id' => 'email_acc_dup',
+            'id' => 'stable_email_1',
+            'provider_id' => '{"uid":123,"message_id":"<abc@mail>"}',
+            'from_attendee' => ['identifier' => 'vickenconcept@gmail.com'],
+            'to_attendees' => [['identifier' => 'sender@company.com']],
+            'subject' => 'Re: Hello',
+            'body' => "I'm good, how about you?",
+            'attachments' => [
+                [
+                    'id' => 'att_1',
+                    'name' => 'invoice.pdf',
+                    'mime' => 'application/pdf',
+                ],
+            ],
+        ]);
+
+        // Same body under a different email_id (would previously create another bubble).
+        $inbox->handleInboundEmailWebhook($user->id, [
+            'account_id' => 'email_acc_dup',
+            'email_id' => 'stable_email_1_alt',
+            'from_attendee' => ['identifier' => 'vickenconcept@gmail.com'],
+            'to_attendees' => [['identifier' => 'sender@company.com']],
+            'subject' => 'Re: Hello',
+            'body' => "I'm good, how about you?",
+        ]);
+
+        $conversation = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->where('provider', 'email')
+            ->where('provider_chat_id', 'vickenconcept@gmail.com')
+            ->first();
+
+        $this->assertNotNull($conversation);
+
+        $messages = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('direction', 'inbound')
+            ->where('body', "I'm good, how about you?")
+            ->get();
+
+        $this->assertCount(1, $messages);
+        $this->assertNotEmpty($messages->first()->attachments);
+        $this->assertSame('att_1', $messages->first()->attachments[0]['id']);
+        $this->assertSame('invoice.pdf', $messages->first()->attachments[0]['filename']);
+        $this->assertSame('application/pdf', $messages->first()->attachments[0]['mimetype']);
+        $this->assertSame('replied', $lead->fresh()->status);
+    }
+
     public function test_inbox_index_includes_unread_count_per_platform(): void
     {
         $user = $this->userWithOrg();

@@ -468,19 +468,28 @@ class UnifiedInboxService
             ?? ''
         )));
 
-        if ($body === '') {
+        $attachments = app(UnipileMessageNormalizer::class)->extractAttachments(
+            is_array($inner) && $inner !== [] ? $inner : $payload
+        );
+
+        if ($body === '' && $attachments === []) {
             return null;
         }
 
+        // Prefer Unipile's stable email id. Never use provider_id (provider JSON blob) —
+        // webhook vs listEmails disagree on that field and create duplicate bubbles.
         $providerMessageId = trim((string) (
             Arr::get($inner, 'email_id')
             ?? Arr::get($payload, 'email_id')
-            ?? Arr::get($inner, 'provider_id')
-            ?? Arr::get($payload, 'provider_id')
             ?? Arr::get($inner, 'id')
             ?? Arr::get($payload, 'id')
             ?? ''
         ));
+
+        // Reject obvious provider JSON blobs if they slipped through as "id".
+        if ($providerMessageId !== '' && (str_starts_with($providerMessageId, '{') || str_starts_with($providerMessageId, '['))) {
+            $providerMessageId = '';
+        }
 
         $subject = trim((string) (Arr::get($inner, 'subject') ?? Arr::get($payload, 'subject') ?? ''));
         $receivedAt = Arr::get($inner, 'date') ?? Arr::get($payload, 'date');
@@ -488,15 +497,16 @@ class UnifiedInboxService
         return [
             'from_email' => $fromEmail,
             'to_emails' => $toEmails,
-            'body' => $body,
+            'body' => $body !== '' ? $body : ($attachments !== [] ? '[Attachment]' : ''),
             'subject' => $subject,
             'provider_message_id' => $providerMessageId,
             'received_at' => is_string($receivedAt) ? $receivedAt : null,
+            'attachments' => $attachments,
         ];
     }
 
     /**
-     * @param  array{from_email: string, to_emails: array<int, string>, body: string, subject: string, provider_message_id: string, received_at: string|null}  $emailItem
+     * @param  array{from_email: string, to_emails: array<int, string>, body: string, subject: string, provider_message_id: string, received_at: string|null, attachments?: list<array<string, mixed>>}  $emailItem
      */
     private function importEmailForLead(int $userId, array $emailItem, bool $triggerReplyHandlers): void
     {
@@ -578,18 +588,40 @@ class UnifiedInboxService
             ], fn ($value) => $value !== null && $value !== '')),
         ])->save();
 
-        $existing = $emailItem['provider_message_id'] !== ''
-            ? V2Message::query()
+        $attachments = is_array($emailItem['attachments'] ?? null) ? $emailItem['attachments'] : [];
+        $existing = null;
+
+        if ($emailItem['provider_message_id'] !== '') {
+            $existing = V2Message::query()
                 ->where('conversation_id', $conversation->id)
                 ->where('provider_message_id', $emailItem['provider_message_id'])
-                ->exists()
-            : V2Message::query()
+                ->first();
+        }
+
+        if ($existing === null && $emailItem['body'] !== '') {
+            $existing = V2Message::query()
                 ->where('conversation_id', $conversation->id)
                 ->where('direction', 'inbound')
                 ->where('body', $emailItem['body'])
-                ->exists();
+                ->orderBy('id')
+                ->first();
+        }
 
         if ($existing) {
+            $updates = [];
+            if ($emailItem['provider_message_id'] !== ''
+                && trim((string) ($existing->provider_message_id ?? '')) !== $emailItem['provider_message_id']) {
+                $updates['provider_message_id'] = $emailItem['provider_message_id'];
+            }
+            if ($attachments !== [] && (! is_array($existing->attachments) || $existing->attachments === [])) {
+                $updates['attachments'] = $attachments;
+            }
+            if ($updates !== []) {
+                $existing->forceFill($updates)->save();
+            }
+
+            $this->dedupeConversationMessages($conversation);
+
             return;
         }
 
@@ -598,12 +630,15 @@ class UnifiedInboxService
             'provider_message_id' => $emailItem['provider_message_id'] !== '' ? $emailItem['provider_message_id'] : null,
             'direction' => 'inbound',
             'body' => $emailItem['body'],
+            'attachments' => $attachments !== [] ? $attachments : null,
             'received_at' => $emailItem['received_at'] ? Carbon::parse($emailItem['received_at']) : now(),
             'meta' => array_filter([
                 'source' => 'unipile_email',
                 'email_subject' => $emailItem['subject'] !== '' ? $emailItem['subject'] : null,
             ], fn ($value) => $value !== null && $value !== ''),
         ]);
+
+        $this->dedupeConversationMessages($conversation);
 
         if ($triggerReplyHandlers && $conversation->isInboxThread()) {
             app(UnifiedInboxReplyService::class)->handleInbound(
@@ -626,12 +661,17 @@ class UnifiedInboxService
      */
     private function emailProviderMessageId(array $response): string
     {
-        return trim((string) (
-            Arr::get($response, 'provider_id')
+        $id = trim((string) (
+            Arr::get($response, 'email_id')
             ?? Arr::get($response, 'id')
-            ?? Arr::get($response, 'email_id')
             ?? ''
         ));
+
+        if ($id !== '' && ! str_starts_with($id, '{') && ! str_starts_with($id, '[')) {
+            return $id;
+        }
+
+        return '';
     }
 
     /**
@@ -947,11 +987,28 @@ class UnifiedInboxService
             if ($providerMessageId !== '') {
                 $key = 'pid:'.$providerMessageId;
                 if (isset($keepers[$key])) {
+                    $this->mergeMessageOntoKeeper(
+                        V2Message::query()->find($keepers[$key]),
+                        $message,
+                    );
                     $message->delete();
 
                     continue;
                 }
                 $keepers[$key] = $message->id;
+
+                // Email: also collapse same-body inbound rows that used different provider ids.
+                if ($conversation->provider === 'email' && $direction === 'inbound' && $bodyKey !== '') {
+                    $bodyDedupeKey = 'body:'.$direction.':'.$bodyKey;
+                    if (isset($keepers[$bodyDedupeKey]) && $keepers[$bodyDedupeKey] !== $message->id) {
+                        $bodyKeeper = V2Message::query()->find($keepers[$bodyDedupeKey]);
+                        if ($bodyKeeper && (int) $bodyKeeper->id !== (int) $message->id) {
+                            $this->mergeMessageOntoKeeper($message, $bodyKeeper);
+                            $bodyKeeper->delete();
+                        }
+                    }
+                    $keepers[$bodyDedupeKey] = $message->id;
+                }
 
                 continue;
             }
@@ -1014,6 +1071,41 @@ class UnifiedInboxService
                 'last_message_at' => $latest->received_at ?? $latest->sent_at ?? $latest->created_at,
             ])->save();
         }
+    }
+
+    /**
+     * Prefer stable provider ids + attachments when collapsing duplicate inbox rows.
+     */
+    private function mergeMessageOntoKeeper(?V2Message $keeper, V2Message $duplicate): void
+    {
+        if (! $keeper || (int) $keeper->id === (int) $duplicate->id) {
+            return;
+        }
+
+        $updates = [];
+        $keeperPid = trim((string) ($keeper->provider_message_id ?? ''));
+        $dupPid = trim((string) ($duplicate->provider_message_id ?? ''));
+
+        if ($keeperPid === '' && $dupPid !== '') {
+            $updates['provider_message_id'] = $dupPid;
+        } elseif ($keeperPid !== '' && $dupPid !== '' && $this->isUnstableEmailProviderId($keeperPid) && ! $this->isUnstableEmailProviderId($dupPid)) {
+            $updates['provider_message_id'] = $dupPid;
+        }
+
+        $keeperAttachments = is_array($keeper->attachments) ? $keeper->attachments : [];
+        $dupAttachments = is_array($duplicate->attachments) ? $duplicate->attachments : [];
+        if ($keeperAttachments === [] && $dupAttachments !== []) {
+            $updates['attachments'] = $dupAttachments;
+        }
+
+        if ($updates !== []) {
+            $keeper->forceFill($updates)->save();
+        }
+    }
+
+    private function isUnstableEmailProviderId(string $id): bool
+    {
+        return str_starts_with($id, '{') || str_starts_with($id, '[');
     }
 
     private function applyProviderMessageTimestamp(V2Message $message, Carbon $at, string $direction): void
@@ -1082,13 +1174,17 @@ class UnifiedInboxService
         }
 
         if ($attachment) {
-            $this->sendAttachmentNow(
-                $conversation->provider_chat_id,
-                $accountId,
-                $text,
-                $attachment,
-                $message
-            );
+            if ($provider === 'email') {
+                $this->sendEmailNow($conversation, $accountId, $text, $message, $attachment);
+            } else {
+                $this->sendAttachmentNow(
+                    $conversation->provider_chat_id,
+                    $accountId,
+                    $text,
+                    $attachment,
+                    $message
+                );
+            }
         } elseif ($provider === 'email') {
             $this->sendEmailNow($conversation, $accountId, $text, $message);
         } else {
@@ -1258,6 +1354,7 @@ class UnifiedInboxService
         string $accountId,
         string $text,
         V2Message $message,
+        ?UploadedFile $attachment = null,
     ): void {
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
         $toEmail = trim((string) ($meta['prospect_email'] ?? $conversation->provider_chat_id ?? ''));
@@ -1275,12 +1372,20 @@ class UnifiedInboxService
         $payload = [
             'to' => [['identifier' => $toEmail]],
             'subject' => $subject,
-            'body' => $text,
+            'body' => $text !== '' ? $text : ($attachment ? ' ' : ''),
         ];
 
         $replyTo = trim((string) ($meta['last_email_provider_id'] ?? ''));
-        if ($replyTo !== '') {
+        if ($replyTo !== '' && ! $this->isUnstableEmailProviderId($replyTo)) {
             $payload['reply_to'] = $replyTo;
+        }
+
+        if ($attachment) {
+            $payload['_files'] = [[
+                'path' => $attachment->getRealPath(),
+                'filename' => $attachment->getClientOriginalName(),
+                'mime' => $attachment->getMimeType() ?: 'application/octet-stream',
+            ]];
         }
 
         $result = app(UnipileProvider::class)->sendEmail($payload, ['account_id' => $accountId]);

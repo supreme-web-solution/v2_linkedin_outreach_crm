@@ -528,7 +528,40 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     public function sendEmail(array $payload, array $context = []): array
     {
         $accountId = $this->resolveAccountId($payload, $context);
+        $files = (array) Arr::pull($payload, '_files', []);
         $body = array_merge($payload, ['account_id' => $accountId]);
+
+        if ($files !== []) {
+            foreach (['to', 'cc', 'bcc'] as $key) {
+                if (isset($body[$key]) && is_array($body[$key])) {
+                    $body[$key] = json_encode($body[$key]);
+                }
+            }
+
+            $normalizedFiles = [];
+            foreach ($files as $file) {
+                if (! is_array($file)) {
+                    continue;
+                }
+                $path = (string) ($file['path'] ?? '');
+                if ($path === '' || ! is_readable($path)) {
+                    continue;
+                }
+                $normalizedFiles[] = [
+                    'field' => (string) ($file['field'] ?? 'attachments'),
+                    'path' => $path,
+                    'filename' => (string) ($file['filename'] ?? basename($path)),
+                    'mime' => (string) ($file['mime'] ?? 'application/octet-stream'),
+                ];
+            }
+
+            return $this->requestMultipart(
+                'POST',
+                $this->endpoint('send_email'),
+                array_filter($body, fn ($value) => $value !== null && $value !== ''),
+                $normalizedFiles,
+            );
+        }
 
         return $this->request('POST', $this->endpoint('send_email'), $body);
     }
@@ -1255,6 +1288,27 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         $endpoint = '/messages/'.rawurlencode($messageId).'/attachments/'.rawurlencode($attachmentId);
+        $query = [];
+        if (! empty($context['account_id'])) {
+            $query['account_id'] = $context['account_id'];
+        }
+
+        return Http::baseUrl($this->baseUrl())
+            ->withHeaders(['X-API-KEY' => $this->apiKey()])
+            ->timeout(120)
+            ->get($endpoint, $query);
+    }
+
+    /**
+     * Stream an email attachment from Unipile (different path than chat attachments).
+     */
+    public function downloadEmailAttachment(string $emailId, string $attachmentId, array $context = []): \Illuminate\Http\Client\Response
+    {
+        if ($this->apiKey() === '') {
+            throw new UnipileException('Messaging API key is missing.', 500);
+        }
+
+        $endpoint = '/emails/'.rawurlencode($emailId).'/attachments/'.rawurlencode($attachmentId);
         $query = [];
         if (! empty($context['account_id'])) {
             $query['account_id'] = $context['account_id'];
