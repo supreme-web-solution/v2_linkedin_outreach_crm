@@ -217,7 +217,7 @@ class UnipileTemporaryLimitGuard
         $message = null;
         if ($active && $escalated) {
             $message = $label.' is still limiting sends on this account. Steps pause until '
-                .$resumeAt->format('g:i A').' to protect your account — this is '.$label.'’s rule, not a campaign bug.';
+                .$resumeAt->format('g:i A').' to protect your account — this is '.$label.'’s rule.';
         } elseif ($active) {
             $message = $label.' hit a temporary send limit. Remaining steps wait until '
                 .$resumeAt->format('g:i A').' and then continue automatically — expected pacing, not a bug.';

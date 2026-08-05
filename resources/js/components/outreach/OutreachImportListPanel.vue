@@ -187,6 +187,16 @@ function onDrop(event: DragEvent) {
             </a>
         </div>
 
+        <div class="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+            <p class="font-medium text-foreground">Phone format for WhatsApp</p>
+            <p class="mt-1">
+                Use international digits with country code — no <code class="rounded bg-muted px-1">+</code>, spaces, or leading <code class="rounded bg-muted px-1">0</code>.
+                Nigeria example: <code class="rounded bg-muted px-1">2348085204156</code>
+                (same as <code class="rounded bg-muted px-1">+234 808 520 4156</code>).
+            </p>
+            <p class="mt-1">In Excel, set the phone column to <strong>Text</strong> so digits are not changed.</p>
+        </div>
+
         <details class="rounded-lg border border-border bg-muted/20 text-xs">
             <summary class="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground hover:text-foreground">
                 Column guide (optional)
@@ -200,11 +210,7 @@ function onDrop(event: DragEvent) {
                     <code class="rounded bg-muted px-1">instagram</code>,
                     <code class="rounded bg-muted px-1">telegram</code>,
                     <code class="rounded bg-muted px-1">twitter</code>
-                    per row.
-                </p>
-                <p>
-                    Phones: country code as digits only (e.g. <code class="rounded bg-muted px-1">14155551234</code>).
-                    In Excel, set the phone column to <strong>Text</strong>.
+                    per row. Optional: <code class="rounded bg-muted px-1">full_name</code>.
                 </p>
             </div>
         </details>

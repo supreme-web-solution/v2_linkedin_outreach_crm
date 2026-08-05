@@ -254,6 +254,9 @@ async function exportCsv() {
                         {{ importEnrichmentStats.whatsapp_verify.verified }} verified ·
                         {{ importEnrichmentStats.whatsapp_verify.needs_verify }} to verify
                     </p>
+                    <p class="mt-1 text-[11px] text-muted-foreground/90">
+                        Phones need country code as digits only (e.g. 2348085204156).
+                    </p>
                 </div>
                 <div class="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-sm">
                     <div class="flex items-center gap-2 font-medium">

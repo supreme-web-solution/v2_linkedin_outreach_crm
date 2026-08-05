@@ -23,7 +23,7 @@ const shortLabel = computed(() =>
 const tooltipText = computed(() =>
     props.variant === 'invite'
         ? 'LinkedIn usually allows about 5 connection invites with a personal note each day. Anyone beyond that stays in queue and goes out automatically when LinkedIn lets you send more. Leaving the note blank often lets you reach more people sooner.'
-        : 'LinkedIn limits how fast invites, messages, profile views, endorsements, and likes can run. When that happens we pause and retry later — that is LinkedIn’s rule, not a campaign bug.',
+        : 'LinkedIn limits how fast invites, messages, profile views, endorsements, and likes can run. When that happens we pause and retry later — that is LinkedIn’s rule.',
 );
 
 const ariaLabel = computed(() =>

@@ -38,7 +38,7 @@ const tooltipText = computed(() => {
     if (props.variant === 'invite') {
         return 'LinkedIn usually allows about 5 connection invites with a personal note each day. Anyone beyond that stays in queue and goes out automatically when LinkedIn lets you send more. Leaving the note blank often lets you reach more people sooner.';
     }
-    return `${platformLabel.value} limits how fast messages and actions can go out. When that happens we pause and retry later — that is ${platformLabel.value}’s rule, not a campaign bug.`;
+    return `${platformLabel.value} limits how fast messages and actions can go out. When that happens we pause and retry later — that is ${platformLabel.value}’s rule.`;
 });
 
 const ariaLabel = computed(() => `About ${platformLabel.value} send limits`);

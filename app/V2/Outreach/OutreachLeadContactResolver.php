@@ -171,18 +171,9 @@ class OutreachLeadContactResolver
      */
     public function whatsappIdFromPhone(string $phone): ?string
     {
-        $phone = trim($phone);
-        if ($phone === '') {
-            return null;
-        }
+        $id = app(\App\V2\Integrations\Unipile\UnipileProvider::class)->whatsappIdentifierFromPhone($phone);
 
-        if (str_contains($phone, '@')) {
-            return $phone;
-        }
-
-        $digits = preg_replace('/\D+/', '', $phone) ?? '';
-
-        return strlen($digits) >= 8 ? $digits.'@s.whatsapp.net' : null;
+        return $id !== '' ? $id : null;
     }
     /**
      * Build contact fields for V2OutreachLead from merged row.

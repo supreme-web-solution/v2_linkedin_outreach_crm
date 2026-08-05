@@ -143,9 +143,10 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             $status = $exception->response?->status() ?? 502;
             $responseBody = $exception->response?->json();
             $responseText = $exception->response?->body() ?? $exception->getMessage();
-            if ($quiet && $status === 422) {
+            if ($quiet && in_array($status, [404, 422], true)) {
                 Log::debug('[Unipile] Recipient not reachable (verify lookup)', [
                     'endpoint' => $endpoint,
+                    'status' => $status,
                 ]);
             } else {
                 Log::error('[Unipile] ✗ '.$normalizedMethod.' '.$endpoint.' → HTTP '.$status, [
@@ -998,6 +999,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     /**
      * Lookup a user on a messaging provider (WhatsApp, Instagram, etc.).
      *
+     * WhatsApp public IDs must be `{digits}@s.whatsapp.net` (country code, no +).
+     *
      * @return array<string, mixed>
      */
     public function lookupMessagingUser(string $identifier, string $accountId, bool $quiet = false): array
@@ -1011,6 +1014,26 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'account_id' => $accountId,
             '_quiet' => $quiet,
         ]);
+    }
+
+    /**
+     * Format a phone for WhatsApp profile lookup / chat start.
+     * Example: +234 808 520 4156 → 2348085204156@s.whatsapp.net
+     */
+    public function whatsappIdentifierFromPhone(string $phone): string
+    {
+        $phone = trim($phone);
+        if ($phone === '') {
+            return '';
+        }
+
+        if (str_contains($phone, '@')) {
+            return $phone;
+        }
+
+        $digits = $this->normalizePhone($phone);
+
+        return $digits !== '' ? $digits.'@s.whatsapp.net' : '';
     }
 
     /**
@@ -1424,14 +1447,33 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             ]);
             $skillId = $this->firstEndorseableSkillId($profile);
             if ($skillId === null) {
-                throw new UnipileException('No endorseable skill found on this profile.');
+                $skillCount = $this->countProfileSkills($profile);
+                Log::info('[Unipile] Endorse skipped — no endorseable skill', [
+                    'profile_id' => $providerId,
+                    'skills_seen' => $skillCount,
+                    'network_distance' => Arr::get($profile, 'network_distance')
+                        ?? Arr::get($profile, 'provider_data.network_distance'),
+                ]);
+
+                throw new UnipileException(
+                    $skillCount > 0
+                        ? 'No endorseable skill on this profile. They may already be endorsed, or you need a 1st-degree connection.'
+                        : 'No endorseable skill on this profile. Use 1st-degree connections with skills listed.',
+                    422
+                );
             }
 
-            return $this->request('POST', '/linkedin/profile/endorse', [
+            $result = $this->request('POST', '/linkedin/profile/endorse', [
                 'account_id' => $accountId,
                 'profile_id' => $providerId,
                 'skill_endorsement_id' => $skillId,
             ]);
+            Log::info('[Unipile] Endorse succeeded', [
+                'profile_id' => $providerId,
+                'skill_endorsement_id' => $skillId,
+            ]);
+
+            return $result;
         }
 
         if ($action === 'follow') {
@@ -1619,23 +1661,80 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
      */
     private function firstEndorseableSkillId(array $profile): ?int
     {
-        $skills = Arr::get($profile, 'skills', Arr::get($profile, 'skills_preview', []));
-        if (! is_array($skills)) {
-            return null;
-        }
-
-        foreach ($skills as $skill) {
+        foreach ($this->extractProfileSkills($profile) as $skill) {
             if (! is_array($skill)) {
                 continue;
             }
 
-            $endorsementId = Arr::get($skill, 'endorsement_id');
-            if ($endorsementId !== null && $endorsementId !== '') {
-                return (int) $endorsementId;
+            // Already endorsed by this account — skip.
+            if (Arr::get($skill, 'endorsed') === true || Arr::get($skill, 'endorsed') === 1) {
+                continue;
+            }
+
+            $endorsementId = Arr::get($skill, 'endorsement_id')
+                ?? Arr::get($skill, 'skill_endorsement_id')
+                ?? Arr::get($skill, 'endorsementId');
+
+            if ($endorsementId === null || $endorsementId === '' || $endorsementId === false) {
+                continue;
+            }
+
+            $id = (int) $endorsementId;
+            if ($id > 0) {
+                return $id;
             }
         }
 
         return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $profile
+     * @return list<mixed>
+     */
+    private function extractProfileSkills(array $profile): array
+    {
+        $candidates = [
+            Arr::get($profile, 'skills'),
+            Arr::get($profile, 'skills_preview'),
+            Arr::get($profile, 'data.skills'),
+            Arr::get($profile, 'data.skills_preview'),
+            Arr::get($profile, 'provider_data.skills'),
+            Arr::get($profile, 'sections.skills'),
+        ];
+
+        foreach ($candidates as $skills) {
+            if (! is_array($skills) || $skills === []) {
+                continue;
+            }
+
+            // Some payloads wrap items under { items: [...] }.
+            if (isset($skills['items']) && is_array($skills['items'])) {
+                return array_values($skills['items']);
+            }
+
+            // List of skill objects.
+            if (array_is_list($skills)) {
+                return $skills;
+            }
+
+            // Single skill object (associative).
+            if (Arr::hasAny($skills, ['endorsement_id', 'skill_endorsement_id', 'endorsementId', 'name', 'title'])) {
+                return [$skills];
+            }
+
+            return array_values($skills);
+        }
+
+        return [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $profile
+     */
+    private function countProfileSkills(array $profile): int
+    {
+        return count($this->extractProfileSkills($profile));
     }
 
     public function reactToPost(string $postId, string $reaction, array $context = []): array

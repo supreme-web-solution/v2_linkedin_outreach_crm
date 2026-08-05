@@ -57,12 +57,13 @@ class UnipileProfileContactService
         /** @var UnipileProvider $provider */
         $provider = app(ProviderManager::class)->get('unipile', UnipileProvider::class);
         $normalized = $provider->normalizePhone($phone);
-        if ($normalized === '') {
+        $identifier = $provider->whatsappIdentifierFromPhone($normalized);
+        if ($identifier === '') {
             throw new \InvalidArgumentException('Invalid phone number.');
         }
 
         try {
-            $profile = $provider->lookupMessagingUser($normalized, $accountId, quiet: true);
+            $profile = $provider->lookupMessagingUser($identifier, $accountId, quiet: true);
             $providerId = $provider->extractProviderId($profile);
 
             return [
