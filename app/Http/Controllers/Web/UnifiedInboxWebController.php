@@ -718,23 +718,38 @@ class UnifiedInboxWebController extends Controller
             'at' => ($message->received_at ?? $message->sent_at ?? $message->created_at)?->toIso8601String(),
             'source' => Arr::get($message->meta ?? [], 'source'),
             'attachments' => collect(is_array($message->attachments) ? $message->attachments : [])
-                ->filter(fn ($item) => is_array($item) && ! empty($item['id']))
-                ->map(fn (array $item) => [
-                    'id' => (string) $item['id'],
-                    'filename' => (string) ($item['filename'] ?? 'file'),
-                    'mimetype' => (string) ($item['mimetype'] ?? 'application/octet-stream'),
-                    'type' => (string) ($item['type'] ?? 'file'),
-                    'unavailable' => (bool) ($item['unavailable'] ?? false),
-                    'url' => $message->provider_message_id
-                        ? route('inbox.attachment', [
-                            'platform' => $conversation->provider,
-                            'id' => $conversation->id,
-                            'messageId' => $message->provider_message_id,
-                            'attachmentId' => $item['id'],
-                        ])
-                        : null,
-                ])
+                ->filter(fn ($item) => is_array($item) && (
+                    ! empty($item['id']) || ! empty($item['filename']) || ! empty($item['name'])
+                ))
                 ->values()
+                ->map(function (array $item, int $index) use ($conversation, $message) {
+                    $id = trim((string) ($item['id'] ?? ''));
+                    if ($id === '') {
+                        $id = 'local-'.$message->id.'-'.$index;
+                    }
+                    $filename = (string) ($item['filename'] ?? $item['name'] ?? 'file');
+                    $isLocal = str_starts_with($id, 'local-') || ! empty($item['outbound']);
+                    $canDownload = ! $isLocal
+                        && ! empty($message->provider_message_id)
+                        && ! (bool) ($item['unavailable'] ?? false);
+
+                    return [
+                        'id' => $id,
+                        'filename' => $filename,
+                        'mimetype' => (string) ($item['mimetype'] ?? $item['mime'] ?? 'application/octet-stream'),
+                        'type' => (string) ($item['type'] ?? 'file'),
+                        'unavailable' => (bool) ($item['unavailable'] ?? false),
+                        'outbound' => (bool) ($item['outbound'] ?? $message->direction === 'outbound'),
+                        'url' => $canDownload
+                            ? route('inbox.attachment', [
+                                'platform' => $conversation->provider,
+                                'id' => $conversation->id,
+                                'messageId' => $message->provider_message_id,
+                                'attachmentId' => $id,
+                            ])
+                            : null,
+                    ];
+                })
                 ->all(),
             'reactions' => collect(is_array(Arr::get($message->meta, 'reactions')) ? Arr::get($message->meta, 'reactions') : [])
                 ->filter(fn ($item) => is_array($item) && ! empty($item['value']))

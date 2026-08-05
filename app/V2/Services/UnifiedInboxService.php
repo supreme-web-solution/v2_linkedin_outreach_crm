@@ -15,6 +15,7 @@ use App\V2\Outreach\OutreachSendProof;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 class UnifiedInboxService
 {
@@ -1148,7 +1149,7 @@ class UnifiedInboxService
         $attachmentMeta = null;
         if ($attachment) {
             $attachmentMeta = [[
-                'id' => null,
+                'id' => 'local-'.Str::lower(Str::random(10)),
                 'type' => str_starts_with((string) $attachment->getMimeType(), 'video/') ? 'video' : (str_starts_with((string) $attachment->getMimeType(), 'image/') ? 'img' : 'file'),
                 'mimetype' => $attachment->getMimeType(),
                 'filename' => $attachment->getClientOriginalName(),

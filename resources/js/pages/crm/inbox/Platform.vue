@@ -87,6 +87,7 @@ type MessageAttachment = {
     type: string;
     unavailable: boolean;
     url: string | null;
+    outbound?: boolean;
 };
 
 type MessageReaction = {
@@ -956,7 +957,20 @@ function onComposerKeydown(e: KeyboardEvent) {
                                                 <span>{{ att.filename }}</span>
                                                 <span class="block text-[10px] opacity-70">Tap to open / download</span>
                                             </a>
-                                            <p v-else class="text-xs opacity-70">{{ att.filename }} (unavailable)</p>
+                                            <div
+                                                v-else
+                                                class="rounded-lg border px-2 py-2 text-xs"
+                                                :class="msg.direction === 'outbound'
+                                                    ? 'border-primary-foreground/25 bg-primary-foreground/10'
+                                                    : 'border-black/10 bg-black/5'"
+                                            >
+                                                <span class="font-medium">{{ att.filename }}</span>
+                                                <span
+                                                    class="block text-[10px] opacity-70"
+                                                >
+                                                    {{ att.outbound || msg.direction === 'outbound' ? 'Attachment sent' : (att.unavailable ? 'Unavailable' : 'Attachment') }}
+                                                </span>
+                                            </div>
                                         </template>
                                     </div>
                                     <div v-if="msg.reactions?.length" class="mt-2 flex flex-wrap gap-1">
