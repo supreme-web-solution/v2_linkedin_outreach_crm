@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { Trash2 } from '@lucide/vue';
 import FlowMessageAiHelp from '@/components/flow/FlowMessageAiHelp.vue';
+import ChannelRateLimitHint from '@/components/outreach/ChannelRateLimitHint.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import type { OutreachChannel, OutreachStep } from '@/components/outreach/types';
 
@@ -100,9 +101,21 @@ const channelColor = computed(() => {
                     <textarea
                         :value="(step.config?.message as string) ?? ''"
                         rows="4"
-                        placeholder="Use {{firstName}}, {{lastName}}, {{company}}, {{position}}"
+                        :placeholder="step.action === 'send_invite'
+                            ? 'Leave blank to send without a note, or write your own…'
+                            : 'Use {{firstName}}, {{lastName}}, {{company}}, {{position}}'"
                         class="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30"
                         @input="emit('updateConfig', 'message', ($event.target as HTMLTextAreaElement).value)"
+                    />
+                    <ChannelRateLimitHint
+                        v-if="step.action === 'send_invite'"
+                        channel="linkedin"
+                        variant="invite"
+                    />
+                    <ChannelRateLimitHint
+                        v-else-if="step.channel && ['linkedin', 'whatsapp', 'instagram', 'telegram', 'twitter'].includes(step.channel)"
+                        :channel="step.channel"
+                        variant="action"
                     />
                 </div>
             </template>
@@ -147,16 +160,33 @@ const channelColor = computed(() => {
             </template>
 
             <template v-if="step.action === 'endorse'">
-                <div class="flex items-center gap-3">
-                    <label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Skills to endorse</label>
-                    <input
-                        type="number"
-                        :value="(step.config?.skills as number) ?? 3"
-                        min="1"
-                        max="10"
-                        class="w-16 rounded-lg border border-border bg-background px-2 py-1 text-sm text-center"
-                        @input="emit('updateConfig', 'skills', +(($event.target as HTMLInputElement).value))"
-                    />
+                <div class="flex flex-col gap-3">
+                    <div class="flex items-center gap-3">
+                        <label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Skills to endorse</label>
+                        <input
+                            type="number"
+                            :value="(step.config?.skills as number) ?? 3"
+                            min="1"
+                            max="10"
+                            class="w-16 rounded-lg border border-border bg-background px-2 py-1 text-sm text-center"
+                            @input="emit('updateConfig', 'skills', +(($event.target as HTMLInputElement).value))"
+                        />
+                    </div>
+                    <ChannelRateLimitHint v-if="step.channel === 'linkedin'" channel="linkedin" variant="action" />
+                </div>
+            </template>
+
+            <template v-if="step.channel === 'linkedin' && ['visit_profile', 'like_post', 'follow'].includes(step.action ?? '')">
+                <div class="flex flex-col gap-2">
+                    <p class="text-xs text-muted-foreground">No additional configuration needed.</p>
+                    <ChannelRateLimitHint channel="linkedin" variant="action" />
+                </div>
+            </template>
+
+            <template v-if="step.channel === 'twitter' && step.action === 'follow'">
+                <div class="flex flex-col gap-2">
+                    <p class="text-xs text-muted-foreground">No additional configuration needed.</p>
+                    <ChannelRateLimitHint channel="twitter" variant="action" />
                 </div>
             </template>
         </template>

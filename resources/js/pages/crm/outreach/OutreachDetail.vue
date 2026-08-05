@@ -69,6 +69,25 @@ const props = defineProps<{
         }>;
     };
     concurrency?: { limit: number; in_flight: number; available: number };
+    linkedin_limit?: {
+        active: boolean;
+        escalated: boolean;
+        resume_at: string | null;
+        hits: number;
+        action: string;
+        label?: string;
+        message: string | null;
+    };
+    channel_limits?: Array<{
+        active: boolean;
+        escalated: boolean;
+        resume_at: string | null;
+        hits: number;
+        action: string;
+        channel: string;
+        label: string;
+        message: string | null;
+    }>;
 }>();
 
 const page = usePage();
@@ -198,9 +217,41 @@ async function fetchActivity(initial = false) {
 async function refreshLiveData() {
     if (!isRunning.value) return;
     router.reload({
-        only: ['campaign', 'leads', 'stats', 'inboxSummary', 'concurrency'],
+        only: ['campaign', 'leads', 'stats', 'inboxSummary', 'concurrency', 'linkedin_limit', 'channel_limits'],
         preserveScroll: true,
     });
+}
+
+function formatTime(iso: string | null | undefined) {
+    if (!iso) return '';
+    try {
+        return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } catch {
+        return '';
+    }
+}
+
+const activeChannelLimits = computed(() => {
+    const fromList = (props.channel_limits ?? []).filter((limit) => limit.active);
+    if (fromList.length > 0) return fromList;
+    if (props.linkedin_limit?.active) {
+        return [{
+            ...props.linkedin_limit,
+            channel: props.linkedin_limit.action || 'linkedin',
+            label: props.linkedin_limit.label || 'LinkedIn',
+        }];
+    }
+    return [];
+});
+
+const primaryChannelLimit = computed(() => activeChannelLimits.value[0] ?? null);
+
+function leadStatusLabel(lead: { status: string; progress: { next_run_at: string | null } | null }) {
+    const limit = primaryChannelLimit.value;
+    if (limit && ['pending', 'running'].includes(lead.status)) {
+        return limit.escalated ? `Paused for ${limit.label}` : `Waiting on ${limit.label}`;
+    }
+    return lead.status;
 }
 
 function startLiveUpdates() {
@@ -310,6 +361,28 @@ const channelActionEntries = computed(() =>
                     Up to {{ concurrency.limit }} leads run at once
                     <span v-if="concurrency.in_flight > 0"> ({{ concurrency.in_flight }} active now)</span>.
                     The rest stay queued and start automatically when a slot frees — this protects your LinkedIn account.
+                </p>
+            </div>
+        </div>
+
+        <div
+            v-for="limit in activeChannelLimits"
+            :key="limit.channel"
+            class="flex items-start gap-3 rounded-xl border px-4 py-3 text-sm"
+            :class="limit.escalated
+                ? 'border-amber-200/80 bg-amber-50/90 text-amber-950'
+                : 'border-orange-200/80 bg-orange-50/90 text-orange-950'"
+        >
+            <AlertCircle class="mt-0.5 h-4 w-4 shrink-0" :class="limit.escalated ? 'text-amber-600' : 'text-orange-600'" />
+            <div class="min-w-0 flex-1">
+                <p class="font-medium">
+                    {{ limit.escalated ? `${limit.label} limit — paused until tomorrow` : `${limit.label} temporary limit` }}
+                </p>
+                <p class="mt-0.5 opacity-90">
+                    {{ limit.message }}
+                    <span v-if="limit.resume_at" class="font-medium">
+                        Resumes {{ formatTime(limit.resume_at) }}
+                    </span>
                 </p>
             </div>
         </div>
@@ -711,10 +784,15 @@ const channelActionEntries = computed(() =>
                             <div class="flex items-center gap-1 capitalize">
                                 <CheckCircle2 v-if="lead.status === 'done'" class="h-3.5 w-3.5 text-green-500" />
                                 <XCircle v-else-if="lead.status === 'error' || lead.status === 'skipped'" class="h-3.5 w-3.5 text-red-500" />
+                                <AlertCircle
+                                    v-else-if="primaryChannelLimit && ['pending', 'running'].includes(lead.status)"
+                                    class="h-3.5 w-3.5 shrink-0"
+                                    :class="primaryChannelLimit.escalated ? 'text-amber-600' : 'text-orange-500'"
+                                />
                                 <Clock v-else-if="lead.status === 'running'" class="h-3.5 w-3.5 text-blue-500 animate-pulse" />
                                 <Loader2 v-else-if="lead.status === 'pending' && isRunning" class="h-3.5 w-3.5 text-slate-400 animate-spin" />
                                 <span v-else class="inline-block h-3.5 w-3.5 rounded-full border-2 border-muted-foreground/30" />
-                                {{ lead.status }}
+                                {{ leadStatusLabel(lead) }}
                             </div>
                         </td>
                     </tr>

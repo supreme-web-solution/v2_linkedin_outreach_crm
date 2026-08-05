@@ -107,18 +107,24 @@ class OutreachStepExecutor
             return ['status' => 'failed', 'error_message' => "No executor for channel: {$channel}"];
         }
 
-        if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, $action)) {
+        if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, $channel, $action)) {
             return $deferred;
         }
 
-        $quotaAction = match ($action) {
-            'send_invite' => UnipileDailyActionLimiter::ACTION_INVITES,
-            'send_message' => UnipileDailyActionLimiter::ACTION_MESSAGES,
-            default => null,
-        };
+        $quotaAction = $channel === 'linkedin'
+            ? match ($action) {
+                'send_invite' => UnipileDailyActionLimiter::ACTION_INVITES,
+                'send_message' => UnipileDailyActionLimiter::ACTION_MESSAGES,
+                default => null,
+            }
+            : null;
+
         $tempLimit = app(UnipileTemporaryLimitGuard::class);
-        if ($quotaAction !== null && $tempLimit->isLimited((int) $campaign->user_id, $quotaAction)) {
-            return $tempLimit->deferredResult((int) $campaign->user_id, $quotaAction);
+        $pacesChannel = UnipileTemporaryLimitGuard::supportsChannel($channel);
+        $tempAction = $channel;
+
+        if ($pacesChannel && $tempLimit->isLimited((int) $campaign->user_id, $tempAction)) {
+            return $tempLimit->deferredResult((int) $campaign->user_id, $tempAction);
         }
 
         $context = [
@@ -133,16 +139,26 @@ class OutreachStepExecutor
         try {
             $result = $executor->execute($action, $campaign, $lead, $node, $context);
 
+            if (($result['status'] ?? '') === 'deferred') {
+                return $result;
+            }
+
             if (($result['status'] ?? '') === 'failed') {
                 $error = (string) ($result['error_message'] ?? '');
                 if ($this->guard->isDisconnectedMessage($error)) {
                     return ['status' => 'channel_disconnected', 'error_message' => $error, 'payload' => ['channel' => $channel]];
                 }
-                if ($quotaAction !== null && $tempLimit->isTemporaryLimit($error)) {
-                    app(UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+                if ($pacesChannel && $tempLimit->isTemporaryLimit($error)) {
+                    if ($quotaAction !== null) {
+                        app(UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+                    }
 
-                    return $tempLimit->deferredResult((int) $campaign->user_id, $quotaAction, $error);
+                    return $tempLimit->deferredResult((int) $campaign->user_id, $tempAction, $error);
                 }
+            }
+
+            if ($pacesChannel && in_array(($result['status'] ?? ''), ['completed', 'awaiting_send_confirmation'], true)) {
+                $tempLimit->clearFailureStreak((int) $campaign->user_id, $tempAction);
             }
 
             return $result;
@@ -163,10 +179,12 @@ class OutreachStepExecutor
                 ];
             }
 
-            if ($quotaAction !== null && $tempLimit->isTemporaryLimit($e)) {
-                app(UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+            if ($pacesChannel && $tempLimit->isTemporaryLimit($e)) {
+                if ($quotaAction !== null) {
+                    app(UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+                }
 
-                return $tempLimit->deferredResult((int) $campaign->user_id, $quotaAction, $e->getMessage());
+                return $tempLimit->deferredResult((int) $campaign->user_id, $tempAction, $e->getMessage());
             }
 
             return ['status' => 'failed', 'error_message' => $e->getMessage()];
@@ -174,14 +192,17 @@ class OutreachStepExecutor
     }
 
     /**
-     * Reserve daily quota for send actions; return a "deferred" result when
-     * the user's cap is reached so the lead retries this node tomorrow.
-     * Email sends are excluded — they go through ESP limits, not Unipile pacing.
+     * Reserve daily quota for LinkedIn send actions only.
+     * Other platforms use per-channel temporary cool-downs instead.
      *
      * @return array<string, mixed>|null
      */
-    private function deferIfOverDailyCap(int $userId, string $action): ?array
+    private function deferIfOverDailyCap(int $userId, string $channel, string $action): ?array
     {
+        if ($channel !== 'linkedin') {
+            return null;
+        }
+
         $quotaAction = match ($action) {
             'send_invite' => UnipileDailyActionLimiter::ACTION_INVITES,
             'send_message' => UnipileDailyActionLimiter::ACTION_MESSAGES,
@@ -201,6 +222,7 @@ class OutreachStepExecutor
 
         Log::info('[Outreach] Daily quota reached — step deferred', [
             'user_id' => $userId,
+            'channel' => $channel,
             'action' => $action,
             'quota' => $quotaAction,
             'resume_at' => $resumeAt->toIso8601String(),
@@ -212,6 +234,7 @@ class OutreachStepExecutor
             'payload' => [
                 'reason' => 'daily_'.$quotaAction.'_limit',
                 'limit' => $limiter->limitFor($quotaAction),
+                'channel' => $channel,
             ],
         ];
     }

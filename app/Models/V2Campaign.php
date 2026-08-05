@@ -73,7 +73,7 @@ class V2Campaign extends Model
                 'icon'        => 'users',
                 'color'       => 'blue',
                 'node_model'  => [
-                    ['key' => 1, 'type' => 'action', 'value' => 'send-invite',   'label' => 'Send Invite',    'config' => ['message' => 'Hi {{firstName}}, I came across your profile and would love to connect!']],
+                    ['key' => 1, 'type' => 'action', 'value' => 'send-invite',   'label' => 'Send Invite',    'config' => ['message' => '']],
                     ['key' => 2, 'type' => 'condition', 'value' => 'accepted',   'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [
                             ['key' => 3,  'type' => 'delay',  'value' => 1,  'time' => 'hours', 'label' => 'Wait 1 hour'],

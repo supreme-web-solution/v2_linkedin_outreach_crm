@@ -48,7 +48,7 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
                 'visit_profile' => $this->completed($this->providerManager->profile($providerKey)->getProfileByIdentifier($recipientId, $context)),
                 'send_invite' => $this->completed($this->providerManager->invitation($providerKey)->sendInvitation([
                     'recipient_id' => $recipientId,
-                    'message' => $message ?: 'Happy to connect.',
+                    'message' => $message,
                 ], $context)),
                 'send_message' => $this->sendMessage($providerKey, $recipientId, $message, $context),
                 'like_post', 'endorse' => $this->profileAction($providerKey, $action, $recipientId, $context),
@@ -106,12 +106,20 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
 
             $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
             if ($tempLimit->isTemporaryLimit($e)) {
-                $quotaAction = $action === 'send_invite'
-                    ? \App\V2\Services\UnipileDailyActionLimiter::ACTION_INVITES
-                    : \App\V2\Services\UnipileDailyActionLimiter::ACTION_MESSAGES;
-                app(\App\V2\Services\UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+                $quotaAction = match ($action) {
+                    'send_invite' => \App\V2\Services\UnipileDailyActionLimiter::ACTION_INVITES,
+                    'send_message' => \App\V2\Services\UnipileDailyActionLimiter::ACTION_MESSAGES,
+                    default => null,
+                };
+                if ($quotaAction !== null) {
+                    app(\App\V2\Services\UnipileDailyActionLimiter::class)->release((int) $campaign->user_id, $quotaAction);
+                }
 
-                return $tempLimit->deferredResult((int) $campaign->user_id, $quotaAction, $e->getMessage());
+                return $tempLimit->deferredResult(
+                    (int) $campaign->user_id,
+                    \App\V2\Services\UnipileTemporaryLimitGuard::ACTION_LINKEDIN,
+                    $e->getMessage(),
+                );
             }
 
             return ['status' => 'failed', 'error_message' => $e->getMessage()];

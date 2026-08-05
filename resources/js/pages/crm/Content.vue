@@ -731,8 +731,8 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                     <option value="long">Long</option>
                                 </select>
                             </div>
-                            <ToggleField v-model="aiGenerateImage" :disabled="aiLoading || !aiConfigured" description="Generate a related image with GPT Image 2.">
-                                Also generate a related image (GPT Image 2)
+                            <ToggleField v-model="aiGenerateImage" :disabled="aiLoading || !aiConfigured" description="Generate a related image.">
+                                Also generate a related image 
                             </ToggleField>
                             <AppToolbarButton class="w-full" :disabled="aiLoading || !aiConfigured || !aiTopic.trim()" @click="generateAi">
                                 <Loader2 v-if="aiLoading" class="h-4 w-4 animate-spin" />

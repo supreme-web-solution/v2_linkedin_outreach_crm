@@ -49,6 +49,8 @@ class CampaignStepExecutor
         $recipientId = trim($resolvedProviderId ?? (string) ($lead->provider_profile_id ?? ''));
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $message = $this->resolver->messageText($node, $firstName);
+        $userId = (int) $campaign->user_id;
+        $tempLimit = app(UnipileTemporaryLimitGuard::class);
 
         Log::debug('[Campaign] CampaignStepExecutor', [
             'step' => $normalized,
@@ -85,12 +87,11 @@ class CampaignStepExecutor
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
             }
 
-            $tempLimit = app(UnipileTemporaryLimitGuard::class);
-            if ($tempLimit->isLimited((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_INVITES)) {
-                return $tempLimit->deferredResult((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_INVITES);
+            if ($tempLimit->isLimited($userId)) {
+                return $tempLimit->deferredResult($userId);
             }
 
-            if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_INVITES)) {
+            if ($deferred = $this->deferIfOverDailyCap($userId, UnipileDailyActionLimiter::ACTION_INVITES)) {
                 return $deferred;
             }
 
@@ -99,12 +100,12 @@ class CampaignStepExecutor
                 function (string $providerKey) use ($recipientId, $message, $context): array {
                     $response = $this->providerManager->invitation($providerKey)->sendInvitation([
                         'recipient_id' => $recipientId,
-                        'message' => $message ?: 'Happy to connect.',
+                        'message' => $message,
                     ], $context);
 
                     return ['response' => $response];
                 },
-                (int) $campaign->user_id,
+                $userId,
                 UnipileDailyActionLimiter::ACTION_INVITES,
             );
         }
@@ -114,12 +115,11 @@ class CampaignStepExecutor
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
             }
 
-            $tempLimit = app(UnipileTemporaryLimitGuard::class);
-            if ($tempLimit->isLimited((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_NEW_CHATS)) {
-                return $tempLimit->deferredResult((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_NEW_CHATS);
+            if ($tempLimit->isLimited($userId)) {
+                return $tempLimit->deferredResult($userId);
             }
 
-            if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, UnipileDailyActionLimiter::ACTION_NEW_CHATS)) {
+            if ($deferred = $this->deferIfOverDailyCap($userId, UnipileDailyActionLimiter::ACTION_NEW_CHATS)) {
                 return $deferred;
             }
 
@@ -136,7 +136,7 @@ class CampaignStepExecutor
                         'response' => $chat,
                     ];
                 },
-                (int) $campaign->user_id,
+                $userId,
                 UnipileDailyActionLimiter::ACTION_NEW_CHATS,
             );
 
@@ -175,9 +175,13 @@ class CampaignStepExecutor
             ];
         }
 
-        if (in_array($normalized, ['profile-view', 'endorse'], true)) {
+        if (in_array($normalized, ['profile-view', 'endorse', 'like-post'], true)) {
             if ($recipientId === '') {
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
+            }
+
+            if ($tempLimit->isLimited($userId)) {
+                return $tempLimit->deferredResult($userId);
             }
 
             return $this->executeWithProviderFallback(
@@ -191,12 +195,14 @@ class CampaignStepExecutor
 
                     /** @var UnipileProvider $concrete */
                     $concrete = $this->providerManager->get($providerKey, UnipileProvider::class);
-                    $response = $concrete->performLinkedinProfileAction('endorse', array_merge($context, [
+                    $mapped = $normalized === 'like-post' ? 'like_post' : 'endorse';
+                    $response = $concrete->performLinkedinProfileAction($mapped, array_merge($context, [
                         'recipient_id' => $recipientId,
                     ]));
 
-                    return ['action' => 'endorse', 'response' => $response];
-                }
+                    return ['action' => $mapped, 'response' => $response];
+                },
+                $userId,
             );
         }
 
@@ -255,6 +261,8 @@ class CampaignStepExecutor
             'profile-view' => 'profile-view',
             'view-profile' => 'profile-view',
             'follow' => 'profile-view',
+            'like-post' => 'like-post',
+            'like_post' => 'like-post',
             'call' => 'call',
             'book-call' => 'call',
             'end' => 'end-sequence',
@@ -277,6 +285,7 @@ class CampaignStepExecutor
         $attempts = [];
         $lastError = null;
         $tempLimit = app(UnipileTemporaryLimitGuard::class);
+        $tempAction = UnipileTemporaryLimitGuard::ACTION_LINKEDIN;
 
         foreach ($this->providerManager->providersForOperation($operation) as $providerKey) {
             if (!$this->providerManager->isRegistered($providerKey)) {
@@ -287,6 +296,10 @@ class CampaignStepExecutor
             try {
                 $result = $callback($providerKey);
                 $attempts[] = ['provider' => $providerKey, 'status' => 'completed'];
+
+                if ($userId) {
+                    $tempLimit->clearFailureStreak($userId, $tempAction);
+                }
 
                 Log::debug('[Campaign] Provider step OK', [
                     'operation' => $operation,
@@ -317,9 +330,11 @@ class CampaignStepExecutor
                     ];
                 }
 
-                if ($userId && $quotaAction && $tempLimit->isTemporaryLimit($exception)) {
-                    app(UnipileDailyActionLimiter::class)->release($userId, $quotaAction);
-                    $deferred = $tempLimit->deferredResult($userId, $quotaAction, $exception->getMessage());
+                if ($userId && $tempLimit->isTemporaryLimit($exception)) {
+                    if ($quotaAction) {
+                        app(UnipileDailyActionLimiter::class)->release($userId, $quotaAction);
+                    }
+                    $deferred = $tempLimit->deferredResult($userId, $tempAction, $exception->getMessage());
                     $deferred['payload']['operation'] = $operation;
                     $deferred['payload']['attempts'] = $attempts;
 

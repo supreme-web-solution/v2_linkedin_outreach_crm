@@ -18,6 +18,7 @@ use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Campaign\CampaignRunDispatcher;
 use App\V2\Campaign\CampaignSequenceResolver;
 use App\V2\Services\LeadListService;
+use App\V2\Services\UnipileTemporaryLimitGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -262,6 +263,9 @@ class CampaignsWebController extends Controller
                 'status' => $leadStatus !== '' ? $leadStatus : null,
             ],
             'concurrency' => app(CampaignConcurrencyLimiter::class)->snapshot((int) $campaign->user_id),
+            'linkedin_limit' => app(UnipileTemporaryLimitGuard::class)->snapshot(
+                (int) $campaign->user_id,
+            ),
         ]);
     }
 

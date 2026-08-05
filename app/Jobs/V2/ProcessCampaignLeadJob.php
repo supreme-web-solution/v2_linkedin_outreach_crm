@@ -536,10 +536,11 @@ class ProcessCampaignLeadJob implements ShouldQueue
             $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
             $error = (string) ($result['error_message'] ?? '');
             if ($tempLimit->isTemporaryLimit($error)) {
-                $action = str_contains(strtolower($resolver->stepType($node)), 'invite')
-                    ? \App\V2\Services\UnipileDailyActionLimiter::ACTION_INVITES
-                    : \App\V2\Services\UnipileDailyActionLimiter::ACTION_MESSAGES;
-                $result = $tempLimit->deferredResult((int) $campaign->user_id, $action, $error);
+                $result = $tempLimit->deferredResult(
+                    (int) $campaign->user_id,
+                    \App\V2\Services\UnipileTemporaryLimitGuard::ACTION_LINKEDIN,
+                    $error,
+                );
                 $status = 'deferred';
             }
         }
@@ -547,7 +548,14 @@ class ProcessCampaignLeadJob implements ShouldQueue
         if ($status === 'deferred') {
             $runAt = $result['next_run_at'] ?? now()->addDay()->startOfDay()->addMinutes(10);
             $reason = (string) ($result['payload']['reason'] ?? 'daily_limit');
+            $isEscalated = ! empty($result['payload']['escalated']) || str_starts_with($reason, 'escalated_');
             $isTemp = str_starts_with($reason, 'temporary_');
+
+            $deferMessage = match (true) {
+                $isEscalated => "LinkedIn still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your LinkedIn).',
+                $isTemp => "LinkedIn temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                default => "Daily LinkedIn limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+            };
 
             $logger->log(
                 $campaign->id,
@@ -555,9 +563,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
                 $run?->id,
                 $node,
                 'scheduled',
-                $isTemp
-                    ? "LinkedIn temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.'
-                    : "Daily LinkedIn limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                $deferMessage,
                 $result['payload'] ?? [],
             );
 

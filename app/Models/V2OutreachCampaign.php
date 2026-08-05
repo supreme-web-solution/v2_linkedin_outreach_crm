@@ -65,7 +65,7 @@ class V2OutreachCampaign extends Model
                 'node_model' => [
                     ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'visit_profile', 'label' => 'Visit Profile', 'config' => []],
                     ['key' => 2, 'type' => 'delay', 'value' => 1, 'time' => 'days', 'label' => 'Wait 1 day'],
-                    ['key' => 3, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => 'Hi {{firstName}}, I would love to connect!']],
+                    ['key' => 3, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
                     ['key' => 4, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
                     ['key' => 5, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Send Message', 'config' => ['message' => 'Thanks for connecting, {{firstName}}!']],
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
@@ -77,7 +77,7 @@ class V2OutreachCampaign extends Model
                 'icon' => 'layers',
                 'color' => 'blue',
                 'node_model' => [
-                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => 'Hi {{firstName}}, I would love to connect!']],
+                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
                     ['key' => 2, 'type' => 'delay', 'value' => 3, 'time' => 'days', 'label' => 'Wait 3 days'],
                     ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [
@@ -96,7 +96,7 @@ class V2OutreachCampaign extends Model
                 'icon' => 'message-circle',
                 'color' => 'green',
                 'node_model' => [
-                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => 'Hi {{firstName}}, great to connect on LinkedIn!']],
+                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
                     ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
                     ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [
@@ -115,7 +115,7 @@ class V2OutreachCampaign extends Model
                 'icon' => 'layers',
                 'color' => 'violet',
                 'node_model' => [
-                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => 'Hi {{firstName}}, I would love to connect!']],
+                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
                     ['key' => 2, 'type' => 'delay', 'value' => 3, 'time' => 'days', 'label' => 'Wait 3 days'],
                     ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [
@@ -160,7 +160,7 @@ class V2OutreachCampaign extends Model
                 'icon' => 'instagram',
                 'color' => 'pink',
                 'node_model' => [
-                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => 'Hi {{firstName}}, love your work!']],
+                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
                     ['key' => 2, 'type' => 'delay', 'value' => 4, 'time' => 'days', 'label' => 'Wait 4 days'],
                     ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [

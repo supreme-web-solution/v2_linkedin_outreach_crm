@@ -7,6 +7,7 @@ import { ref } from 'vue';
 import { Trash2, GripVertical, ChevronDown, ChevronUp, Plus, Clock, GitBranch } from '@lucide/vue';
 import { actionMeta, CAMPAIGN_ACTIONS, type CampaignStep } from '@/components/campaign/types';
 import CampaignActionIcon from '@/components/campaign/CampaignActionIcon.vue';
+import InviteNoteLimitHint from '@/components/linkedin/InviteNoteLimitHint.vue';
 
 export type { CampaignStep };
 
@@ -259,21 +260,31 @@ function pickDelay(afterIdx: number) {
                                 :value="(step.config?.message as string) ?? ''"
                                 @input="updateConfig(idx, 'message', ($event.target as HTMLTextAreaElement).value)"
                                 rows="3"
-                                placeholder="Use {{firstName}}, {{lastName}}, {{company}}, {{position}}"
+                                :placeholder="step.value === 'send-invite'
+                                    ? 'Leave blank to send without a note, or write your own…'
+                                    : 'Use {{firstName}}, {{lastName}}, {{company}}, {{position}}'"
                                 class="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30 resize-none" />
+                            <InviteNoteLimitHint v-if="step.value === 'send-invite'" variant="invite" />
+                            <InviteNoteLimitHint v-else-if="step.value === 'message'" variant="action" />
                             <p class="text-[10px] text-muted-foreground" v-pre>Variables: <code class="bg-muted px-0.5 rounded">{{firstName}}</code> <code class="bg-muted px-0.5 rounded">{{company}}</code> <code class="bg-muted px-0.5 rounded">{{position}}</code></p>
                         </div>
                     </template>
                     <template v-if="step.value === 'endorse'">
-                        <div class="flex items-center gap-3">
-                            <label class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Skills to endorse</label>
-                            <input type="number" :value="(step.config?.skills as number) ?? 3" min="1" max="10"
-                                @input="updateConfig(idx, 'skills', +($event.target as HTMLInputElement).value)"
-                                class="w-16 rounded-lg border border-border bg-background px-2 py-1 text-sm text-center" />
+                        <div class="flex flex-col gap-2">
+                            <div class="flex items-center gap-3">
+                                <label class="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Skills to endorse</label>
+                                <input type="number" :value="(step.config?.skills as number) ?? 3" min="1" max="10"
+                                    @input="updateConfig(idx, 'skills', +($event.target as HTMLInputElement).value)"
+                                    class="w-16 rounded-lg border border-border bg-background px-2 py-1 text-sm text-center" />
+                            </div>
+                            <InviteNoteLimitHint variant="action" />
                         </div>
                     </template>
                     <template v-if="step.value === 'profile-view' || step.value === 'follow' || step.value === 'like-post'">
-                        <p class="text-xs text-muted-foreground">No additional configuration needed.</p>
+                        <div class="flex flex-col gap-2">
+                            <p class="text-xs text-muted-foreground">No additional configuration needed.</p>
+                            <InviteNoteLimitHint variant="action" />
+                        </div>
                     </template>
                 </div>
             </template>

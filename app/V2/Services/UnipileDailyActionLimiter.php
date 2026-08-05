@@ -20,6 +20,9 @@ class UnipileDailyActionLimiter
 
     public const ACTION_MESSAGES = 'messages';
 
+    /** Account-wide LinkedIn cool-down label (no separate daily cap). */
+    public const ACTION_LINKEDIN = 'linkedin';
+
     public function limitFor(string $action): int
     {
         return (int) match ($action) {
@@ -36,6 +39,7 @@ class UnipileDailyActionLimiter
             self::ACTION_INVITES => 'connection invites',
             self::ACTION_NEW_CHATS => 'new chats',
             self::ACTION_MESSAGES => 'messages',
+            self::ACTION_LINKEDIN => 'LinkedIn actions',
             default => 'actions',
         };
     }

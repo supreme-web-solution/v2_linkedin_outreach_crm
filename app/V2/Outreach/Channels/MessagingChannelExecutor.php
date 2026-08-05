@@ -125,7 +125,20 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
                 ];
             }
 
-            return ['status' => 'failed', 'error_message' => $message];
+            $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
+            if ($tempLimit->isTemporaryLimit($e)) {
+                return $tempLimit->deferredResult(
+                    (int) $campaign->user_id,
+                    $this->channelKey,
+                    $message,
+                );
+            }
+
+            // Never surface raw provider wording in the activity feed.
+            return [
+                'status' => 'failed',
+                'error_message' => 'Could not send on '.OutreachChannelRegistry::channelLabel($this->channelKey).' right now. We will keep trying on the next run.',
+            ];
         }
     }
 

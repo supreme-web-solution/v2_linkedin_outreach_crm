@@ -91,6 +91,14 @@ const props = defineProps<{
     };
     leadFilters: { search: string | null; status: string | null };
     concurrency?: { limit: number; in_flight: number; available: number };
+    linkedin_limit?: {
+        active: boolean;
+        escalated: boolean;
+        resume_at: string | null;
+        hits: number;
+        action: string;
+        message: string | null;
+    };
 }>();
 
 const leadSearch = ref(props.leadFilters?.search ?? '');
@@ -144,6 +152,30 @@ const runStatusLabel = (rs: number) => {
     const labels: Record<number, string> = { 0: 'Pending', 1: 'Invite sent', 2: 'Accepted', 3: 'Messaging', 4: 'Done', 9: 'Error' };
     return labels[rs] ?? `Step ${rs}`;
 };
+
+function leadWaitingOnLinkedIn(lead: LeadRow): boolean {
+    return !!(
+        props.linkedin_limit?.active
+        && lead.status === 'pending'
+        && lead.progress?.next_run_at
+        && (lead.progress.run_status === 0 || lead.progress.current_node_label)
+    );
+}
+
+function leadProgressLabel(lead: LeadRow): string {
+    if (!lead.progress) return '—';
+    if (leadWaitingOnLinkedIn(lead) && lead.progress.run_status === 0) {
+        return props.linkedin_limit?.escalated ? 'Paused for LinkedIn' : 'Waiting on LinkedIn';
+    }
+    return runStatusLabel(lead.progress.run_status);
+}
+
+function leadStatusLabel(lead: LeadRow): string {
+    if (leadWaitingOnLinkedIn(lead)) {
+        return props.linkedin_limit?.escalated ? 'Paused (LinkedIn limit)' : 'Waiting on LinkedIn';
+    }
+    return lead.status;
+}
 
 const eventStatusColor = (status: string) => {
     if (status === 'completed') return 'text-green-600 bg-green-50 border-green-200';
@@ -221,7 +253,7 @@ async function fetchActivity(initial = false, leadId?: number) {
 
 async function refreshPageData() {
     if (!isRunning.value) return;
-    router.reload({ only: ['leads', 'campaign', 'concurrency'], preserveScroll: true });
+    router.reload({ only: ['leads', 'campaign', 'concurrency', 'linkedin_limit'], preserveScroll: true });
 }
 
 function startPolling() {
@@ -323,6 +355,25 @@ function toggleStatus() {
                     Up to {{ concurrency.limit }} leads run at once
                     <span v-if="concurrency.in_flight > 0"> ({{ concurrency.in_flight }} active now)</span>.
                     The rest stay queued and start automatically when a slot frees — this protects your LinkedIn account.
+                </p>
+            </div>
+        </div>
+
+        <div
+            v-if="linkedin_limit?.active && linkedin_limit.message"
+            class="flex items-start gap-3 rounded-xl border px-4 py-3 text-sm"
+            :class="linkedin_limit.escalated
+                ? 'border-amber-300/90 bg-amber-50/90 text-amber-950'
+                : 'border-orange-200/80 bg-orange-50/80 text-orange-950'"
+        >
+            <AlertCircle class="mt-0.5 h-4 w-4 shrink-0" :class="linkedin_limit.escalated ? 'text-amber-600' : 'text-orange-600'" />
+            <div>
+                <p class="font-medium">
+                    {{ linkedin_limit.escalated ? 'LinkedIn limit — paused until tomorrow' : 'LinkedIn temporary limit' }}
+                </p>
+                <p class="mt-0.5 opacity-90">{{ linkedin_limit.message }}</p>
+                <p v-if="linkedin_limit.resume_at" class="mt-1 text-[11px] opacity-80">
+                    Resumes {{ formatTime(linkedin_limit.resume_at) }}
                 </p>
             </div>
         </div>
@@ -517,14 +568,20 @@ function toggleStatus() {
                                         <template v-if="lead.progress?.current_node_label">
                                             <div class="font-medium text-blue-700">{{ lead.progress.current_node_label }}</div>
                                             <div v-if="lead.progress.next_run_at" class="text-[10px] text-amber-600">
-                                                Scheduled {{ formatTime(lead.progress.next_run_at) }}
+                                                <template v-if="leadWaitingOnLinkedIn(lead)">
+                                                    {{ linkedin_limit?.escalated ? 'Resumes after LinkedIn cool-down' : 'Retries after LinkedIn cool-down' }}
+                                                    · {{ formatTime(lead.progress.next_run_at) }}
+                                                </template>
+                                                <template v-else>
+                                                    Scheduled {{ formatTime(lead.progress.next_run_at) }}
+                                                </template>
                                             </div>
                                         </template>
                                         <span v-else class="text-muted-foreground">Not started</span>
                                     </td>
                                     <td class="px-3 py-2.5">
                                         <template v-if="lead.progress">
-                                            <div>{{ runStatusLabel(lead.progress.run_status) }}</div>
+                                            <div :class="leadWaitingOnLinkedIn(lead) ? 'text-amber-700' : ''">{{ leadProgressLabel(lead) }}</div>
                                             <div v-if="lead.progress.acceptance_status !== null" class="text-[10px] text-muted-foreground">
                                                 {{ lead.progress.acceptance_status ? '✓ Accepted' : '✕ Not accepted' }}
                                             </div>
@@ -537,8 +594,12 @@ function toggleStatus() {
                                             <XCircle v-else-if="lead.status === 'error'" class="h-3.5 w-3.5 text-red-500" />
                                             <Clock v-else-if="lead.status === 'running'" class="h-3.5 w-3.5 text-blue-500 animate-pulse" />
                                             <AlertCircle v-else-if="lead.status === 'skipped'" class="h-3.5 w-3.5 text-yellow-500" />
+                                            <Clock v-else-if="leadWaitingOnLinkedIn(lead)" class="h-3.5 w-3.5 text-amber-500" />
                                             <span v-else class="h-3.5 w-3.5 rounded-full border-2 border-muted-foreground/30 inline-block" />
-                                            <span class="capitalize text-muted-foreground">{{ lead.status }}</span>
+                                            <span
+                                                class="capitalize"
+                                                :class="leadWaitingOnLinkedIn(lead) ? 'text-amber-700' : 'text-muted-foreground'"
+                                            >{{ leadStatusLabel(lead) }}</span>
                                         </div>
                                     </td>
                                     <td class="px-3 py-2.5 text-right">

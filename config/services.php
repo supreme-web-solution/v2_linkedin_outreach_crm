@@ -126,6 +126,8 @@ return [
         // Cool-down window when Unipile returns cannot_resend_yet / temporary provider limit.
         'temp_limit_min_minutes' => (int) env('UNIPILE_TEMP_LIMIT_MIN_MINUTES', 45),
         'temp_limit_max_minutes' => (int) env('UNIPILE_TEMP_LIMIT_MAX_MINUTES', 90),
+        // After N API 422 temp-limit hits the same day, pause until next day (stop hourly hammering).
+        'temp_limit_escalate_after' => (int) env('UNIPILE_TEMP_LIMIT_ESCALATE_AFTER', 2),
         // Lease TTL for in-flight slots — frees the counter if a worker dies mid-job.
         'inflight_lease_seconds' => (int) env('INFLIGHT_LEASE_SECONDS', 1800),
         // Lead readiness / Prepare contacts — same as EMAIL_ENRICHMENT_BATCH_SIZE unless overridden.

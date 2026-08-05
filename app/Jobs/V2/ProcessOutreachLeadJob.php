@@ -231,7 +231,16 @@ class ProcessOutreachLeadJob implements ShouldQueue
         if ($status === 'deferred') {
             $runAt = $result['next_run_at'] ?? now()->addDay()->startOfDay()->addMinutes(10);
             $reason = (string) ($result['payload']['reason'] ?? 'daily_limit');
+            $isEscalated = ! empty($result['payload']['escalated']) || str_starts_with($reason, 'escalated_');
             $isTemp = str_starts_with($reason, 'temporary_');
+            $channel = (string) ($result['payload']['channel'] ?? $node['channel'] ?? 'linkedin');
+            $platform = app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->platformLabel($channel);
+
+            $deferMessage = match (true) {
+                $isEscalated => "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).',
+                $isTemp => "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                default => "Daily {$platform} limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+            };
 
             $logger->log(
                 $campaign->id,
@@ -239,9 +248,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
                 $run?->id,
                 $node,
                 'scheduled',
-                $isTemp
-                    ? "Temporary channel limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.'
-                    : "Daily limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                $deferMessage,
                 $result['payload'] ?? [],
             );
 
@@ -352,18 +359,27 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
         if ($tempLimit->isTemporaryLimit($error)) {
-            $action = (($node['action'] ?? '') === 'send_invite' || str_contains(strtolower((string) ($node['action'] ?? '')), 'invite'))
-                ? \App\V2\Services\UnipileDailyActionLimiter::ACTION_INVITES
-                : \App\V2\Services\UnipileDailyActionLimiter::ACTION_MESSAGES;
-            $deferred = $tempLimit->deferredResult((int) $campaign->user_id, $action, $error);
+            $channel = (string) ($node['channel'] ?? 'linkedin');
+            if (! \App\V2\Services\UnipileTemporaryLimitGuard::supportsChannel($channel)) {
+                $channel = 'linkedin';
+            }
+            $deferred = $tempLimit->deferredResult(
+                (int) $campaign->user_id,
+                $channel,
+                $error,
+            );
             $runAt = $deferred['next_run_at'];
+            $escalated = ! empty($deferred['payload']['escalated']);
+            $platform = $tempLimit->platformLabel($channel);
             $logger->log(
                 $campaign->id,
                 $lead->id,
                 $run?->id,
                 $node,
                 'scheduled',
-                "Temporary channel limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                $escalated
+                    ? "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).'
+                    : "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                 $deferred['payload'] ?? [],
             );
             $lead->update(['status' => 'pending']);

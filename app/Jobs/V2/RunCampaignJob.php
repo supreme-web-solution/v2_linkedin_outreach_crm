@@ -235,7 +235,7 @@ class RunCampaignJob implements ShouldQueue
                 function (string $providerKey) use ($providerManager, $recipientId, $message, $context): array {
                     $response = $providerManager->invitation($providerKey)->sendInvitation([
                         'recipient_id' => $recipientId,
-                        'message' => $message ?: 'Happy to connect.',
+                        'message' => $message,
                     ], $context);
 
                     return ['response' => $response];
