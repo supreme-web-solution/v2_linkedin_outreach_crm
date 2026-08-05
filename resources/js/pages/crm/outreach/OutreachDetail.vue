@@ -69,15 +69,6 @@ const props = defineProps<{
         }>;
     };
     concurrency?: { limit: number; in_flight: number; available: number };
-    linkedin_limit?: {
-        active: boolean;
-        escalated: boolean;
-        resume_at: string | null;
-        hits: number;
-        action: string;
-        label?: string;
-        message: string | null;
-    };
     channel_limits?: Array<{
         active: boolean;
         escalated: boolean;
@@ -217,7 +208,7 @@ async function fetchActivity(initial = false) {
 async function refreshLiveData() {
     if (!isRunning.value) return;
     router.reload({
-        only: ['campaign', 'leads', 'stats', 'inboxSummary', 'concurrency', 'linkedin_limit', 'channel_limits'],
+        only: ['campaign', 'leads', 'stats', 'inboxSummary', 'concurrency', 'channel_limits'],
         preserveScroll: true,
     });
 }
@@ -231,23 +222,16 @@ function formatTime(iso: string | null | undefined) {
     }
 }
 
-const activeChannelLimits = computed(() => {
-    const fromList = (props.channel_limits ?? []).filter((limit) => limit.active);
-    if (fromList.length > 0) return fromList;
-    if (props.linkedin_limit?.active) {
-        return [{
-            ...props.linkedin_limit,
-            channel: props.linkedin_limit.action || 'linkedin',
-            label: props.linkedin_limit.label || 'LinkedIn',
-        }];
-    }
-    return [];
-});
+const activeChannelLimits = computed(() =>
+    (props.channel_limits ?? []).filter((limit) => limit.active),
+);
 
 const primaryChannelLimit = computed(() => activeChannelLimits.value[0] ?? null);
 
 function leadStatusLabel(lead: { status: string; progress: { next_run_at: string | null } | null }) {
     const limit = primaryChannelLimit.value;
+    // Only attribute a cool-down to leads that are actually waiting / still in the run —
+    // and only for channels this sequence uses (channel_limits), never a global LinkedIn fallback.
     if (limit && ['pending', 'running'].includes(lead.status)) {
         return limit.escalated ? `Paused for ${limit.label}` : `Waiting on ${limit.label}`;
     }

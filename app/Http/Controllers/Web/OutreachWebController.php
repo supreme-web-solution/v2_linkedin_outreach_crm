@@ -270,10 +270,6 @@ class OutreachWebController extends Controller
             'aiConfigured' => app(\App\V2\Services\OpenAIContentService::class)->isConfigured(),
             'stats' => $statsService->statsFor($campaign),
             'concurrency' => app(\App\V2\Outreach\OutreachConcurrencyLimiter::class)->snapshot((int) $campaign->user_id),
-            'linkedin_limit' => app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->snapshot(
-                (int) $campaign->user_id,
-                'linkedin',
-            ),
             'channel_limits' => app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->snapshotsForChannels(
                 (int) $campaign->user_id,
                 OutreachChannelRegistry::requiredChannelsForNodes(
