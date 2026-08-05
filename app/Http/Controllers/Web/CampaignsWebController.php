@@ -9,7 +9,9 @@ use App\Models\V2Campaign;
 use App\Models\V2CampaignLead;
 use App\Models\V2CampaignLeadProgress;
 use App\Models\V2CampaignList;
+use App\Jobs\V2\CleanupDeletedCampaignArtifactsJob;
 use App\Jobs\V2\SyncCampaignLeadsAndRunJob;
+use App\Models\V2CampaignRun;
 use App\V2\Campaign\CampaignActivityLogger;
 use App\V2\Campaign\CampaignCompletionService;
 use App\V2\Campaign\CampaignConcurrencyLimiter;
@@ -19,6 +21,7 @@ use App\V2\Campaign\CampaignRunDispatcher;
 use App\V2\Campaign\CampaignSequenceResolver;
 use App\V2\Services\LeadListService;
 use App\V2\Services\UnipileTemporaryLimitGuard;
+use App\V2\Support\DeletedCampaignArtifactCleaner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -436,10 +439,30 @@ class CampaignsWebController extends Controller
     public function destroy(int $id): RedirectResponse
     {
         $campaign = $this->findOwnedCampaign($id);
-        V2CampaignLeadProgress::where('campaign_id', $campaign->id)->delete();
+        $campaignId = (int) $campaign->id;
+        $userId = (int) $campaign->user_id;
+
+        if (in_array($campaign->status, ['active', 'running', 'preparing'], true)) {
+            $campaign->update(['status' => 'stopped']);
+        }
+
+        $runIds = V2CampaignRun::query()
+            ->where('legacy_campaign_id', $campaignId)
+            ->pluck('id')
+            ->map(fn ($runId) => (int) $runId)
+            ->all();
+
+        V2CampaignLeadProgress::where('campaign_id', $campaignId)->delete();
         $campaign->campaignLeads()->delete();
         $campaign->campaignLists()->delete();
         $campaign->delete();
+
+        CleanupDeletedCampaignArtifactsJob::dispatch(
+            DeletedCampaignArtifactCleaner::KIND_CAMPAIGN,
+            $campaignId,
+            $userId,
+            $runIds,
+        );
 
         return redirect('/campaigns')->with('success', 'Campaign deleted.');
     }

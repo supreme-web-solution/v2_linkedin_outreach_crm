@@ -104,6 +104,16 @@ class EmailChannelExecutor implements ChannelExecutorInterface
         } catch (\Throwable $e) {
             Log::error('[Outreach] Email action failed', ['error' => $e->getMessage()]);
 
+            $linkedIn = app(\App\V2\Services\LinkedInConnectionService::class);
+            if ($linkedIn->isDisconnectedError($e)
+                || app(\App\V2\Outreach\OutreachChannelGuard::class)->isDisconnected($e)) {
+                return [
+                    'status' => 'channel_disconnected',
+                    'error_message' => $e->getMessage(),
+                    'payload' => ['channel' => 'email'],
+                ];
+            }
+
             return ['status' => 'failed', 'error_message' => $e->getMessage()];
         }
     }

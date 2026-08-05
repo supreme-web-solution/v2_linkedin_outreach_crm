@@ -34,7 +34,10 @@ class CampaignLinkedInGuard
         $normalized = strtolower($message);
 
         return str_contains($normalized, 'disconnected_account')
-            || str_contains($normalized, 'disconnected account');
+            || str_contains($normalized, 'disconnected account')
+            || str_contains($normalized, 'account not found')
+            || str_contains($normalized, 'missing_credentials')
+            || str_contains($normalized, 'errors/missing_credentials');
     }
 
     public function isUserDisconnected(int $userId): bool

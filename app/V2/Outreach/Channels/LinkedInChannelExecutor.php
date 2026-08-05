@@ -104,6 +104,16 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
         } catch (\Throwable $e) {
             Log::error('[Outreach] LinkedIn action failed', ['action' => $action, 'error' => $e->getMessage()]);
 
+            $linkedIn = app(\App\V2\Services\LinkedInConnectionService::class);
+            if ($linkedIn->isDisconnectedError($e)
+                || app(\App\V2\Outreach\OutreachChannelGuard::class)->isDisconnected($e)) {
+                return [
+                    'status' => 'channel_disconnected',
+                    'error_message' => $e->getMessage(),
+                    'payload' => ['channel' => 'linkedin'],
+                ];
+            }
+
             $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
             if ($tempLimit->isTemporaryLimit($e)) {
                 $quotaAction = match ($action) {

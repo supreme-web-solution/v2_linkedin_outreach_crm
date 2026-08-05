@@ -34,7 +34,10 @@ class OutreachChannelGuard
 
         return str_contains($normalized, 'disconnected_account')
             || str_contains($normalized, 'disconnected account')
-            || str_contains($normalized, 'not connected');
+            || str_contains($normalized, 'not connected')
+            || str_contains($normalized, 'account not found')
+            || str_contains($normalized, 'missing_credentials')
+            || str_contains($normalized, 'errors/missing_credentials');
     }
 
     public function isChannelConnected(int $userId, string $channelKey): bool

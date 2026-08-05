@@ -299,18 +299,28 @@ class LinkedInConnectionService
 
         }
 
+        $response = is_array($e->context['response'] ?? null) ? $e->context['response'] : [];
         $type = $e->context['error_code']
+            ?? ($response['type'] ?? null);
+        $haystack = strtolower(
+            $e->getMessage().' '.(string) ($response['detail'] ?? '').' '.(string) ($response['title'] ?? '')
+        );
 
-            ?? (is_array($e->context['response'] ?? null) ? ($e->context['response']['type'] ?? null) : null);
-
-
-
-        return $e->statusCode === 401
-            || $e->statusCode === 404
+        if ($e->statusCode === 401
             || $type === 'errors/disconnected_account'
-            || $type === 'errors/resource_not_found'
-            || str_contains(strtolower($e->getMessage()), 'account not found');
+            || $type === 'errors/missing_credentials'
+            || str_contains($haystack, 'disconnected_account')
+            || str_contains($haystack, 'disconnected account')
+            || str_contains($haystack, 'account not found')
+            || str_contains($haystack, 'missing_credentials')
+        ) {
+            return true;
+        }
 
+        // resource_not_found is used for both missing Unipile accounts and missing recipients —
+        // only treat as disconnect when Unipile points at the account itself.
+        return $type === 'errors/resource_not_found'
+            && (str_contains($haystack, 'account not found') || str_contains($haystack, 'account_id'));
     }
 
 
@@ -352,10 +362,15 @@ class LinkedInConnectionService
             return;
         }
 
-        $subject = 'Action needed: reconnect your LinkedIn integration';
-        $message = "We detected that your LinkedIn integration is disconnected and needs reconnection.\n\n"
-            ."Please reconnect from Integrations or the extension Settings using a fresh LinkedIn session.\n\n"
-            ."Provider account: linkedin\n"
+        $provider = (string) ($account->provider ?? 'integration');
+        $label = \App\V2\Outreach\OutreachChannelRegistry::channelLabel(
+            (string) (($account->meta['channel_key'] ?? null) ?: $provider)
+        );
+
+        $subject = "Action needed: reconnect your {$label} integration";
+        $message = "We detected that your {$label} integration is disconnected and needs reconnection.\n\n"
+            ."Please reconnect from Integrations (or the extension Settings for LinkedIn) with a fresh session.\n\n"
+            ."Provider account: {$provider}\n"
             .'Time: '.now()->toDateTimeString()."\n";
 
         if ($reason) {
@@ -367,8 +382,9 @@ class LinkedInConnectionService
                 $mail->to($email)->subject($subject);
             });
         } catch (\Throwable $e) {
-            Log::warning('[LinkedInConnection] Reconnect email failed', [
+            Log::warning('[Integration] Reconnect email failed', [
                 'user_id' => $account->user_id,
+                'provider' => $provider,
                 'email' => $email,
                 'error' => $e->getMessage(),
             ]);

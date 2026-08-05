@@ -40,13 +40,24 @@ class RunCampaignJob implements ShouldQueue
         }
 
         $campaign = V2Campaign::query()->find($run->legacy_campaign_id);
+        if (! $campaign) {
+            $run->forceFill([
+                'status' => 'failed',
+                'completed_at' => now(),
+                'meta' => (is_array($run->meta) ? $run->meta : []) + [
+                    'failure_reason' => 'campaign_deleted',
+                ],
+            ])->save();
+
+            return;
+        }
 
         $run->forceFill([
             'status' => 'running',
             'started_at' => now(),
             'current_step_key' => 'initial',
             'meta' => (is_array($run->meta) ? $run->meta : []) + [
-                'campaign_name' => $campaign?->name,
+                'campaign_name' => $campaign->name,
             ],
         ])->save();
 

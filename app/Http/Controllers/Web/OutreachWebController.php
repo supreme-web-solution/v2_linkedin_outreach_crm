@@ -17,6 +17,7 @@ use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
 use App\Models\V2Conversation;
 use App\V2\Outreach\OutreachImportListService;
+use App\Jobs\V2\CleanupDeletedCampaignArtifactsJob;
 use App\Jobs\V2\SyncOutreachLeadsAndRunJob;
 use App\V2\Outreach\OutreachLeadSyncService;
 use App\V2\Outreach\OutreachLeadReadinessService;
@@ -26,6 +27,7 @@ use App\V2\Outreach\OutreachSequenceResolver;
 use App\V2\Services\ChannelConnectionService;
 use App\V2\Services\LeadListService;
 use App\V2\Services\OutreachChannelInboxSettingsService;
+use App\V2\Support\DeletedCampaignArtifactCleaner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -578,10 +580,24 @@ class OutreachWebController extends Controller
     public function destroy(int $id): RedirectResponse
     {
         $campaign = $this->findOwned($id);
-        V2OutreachLeadProgress::where('outreach_campaign_id', $campaign->id)->delete();
+        $campaignId = (int) $campaign->id;
+        $userId = (int) $campaign->user_id;
+
+        // Stop new work immediately; pending queue jobs are purged in the background.
+        if (in_array($campaign->status, ['active', 'running', 'preparing'], true)) {
+            $campaign->update(['status' => 'stopped']);
+        }
+
+        V2OutreachLeadProgress::where('outreach_campaign_id', $campaignId)->delete();
         $campaign->outreachLeads()->delete();
         $campaign->outreachLists()->delete();
         $campaign->delete();
+
+        CleanupDeletedCampaignArtifactsJob::dispatch(
+            DeletedCampaignArtifactCleaner::KIND_OUTREACH,
+            $campaignId,
+            $userId,
+        );
 
         return redirect('/outreach')->with('success', 'Outreach campaign deleted.');
     }

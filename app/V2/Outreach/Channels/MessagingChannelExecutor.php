@@ -118,6 +118,16 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
                 'error' => $message,
             ]);
 
+            $linkedIn = app(\App\V2\Services\LinkedInConnectionService::class);
+            if ($linkedIn->isDisconnectedError($e)
+                || app(\App\V2\Outreach\OutreachChannelGuard::class)->isDisconnected($e)) {
+                return [
+                    'status' => 'channel_disconnected',
+                    'error_message' => $message,
+                    'payload' => ['channel' => $this->channelKey],
+                ];
+            }
+
             if ($this->isUnreachableRecipientError($message)) {
                 return [
                     'status' => 'skipped',
