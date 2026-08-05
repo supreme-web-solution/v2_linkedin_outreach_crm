@@ -356,11 +356,11 @@ const channelActionEntries = computed(() =>
         >
             <Info class="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
             <div>
-                <p class="font-medium">LinkedIn-safe pacing</p>
+                <p class="font-medium">Safe pacing</p>
                 <p class="mt-0.5 text-sky-800/90">
                     Up to {{ concurrency.limit }} leads run at once
                     <span v-if="concurrency.in_flight > 0"> ({{ concurrency.in_flight }} active now)</span>.
-                    The rest stay queued and start automatically when a slot frees — this protects your LinkedIn account.
+                    The rest stay queued and start automatically when a slot frees — this protects your connected channels (WhatsApp, LinkedIn, etc.).
                 </p>
             </div>
         </div>

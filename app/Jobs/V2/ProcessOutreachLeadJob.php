@@ -93,7 +93,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
                     $this->outreachRunId,
                     null,
                     'scheduled',
-                    "Pacing active — up to {$max} leads run at once to protect your LinkedIn account. Other leads wait automatically.",
+                    "Pacing active — up to {$max} leads run at once to protect your connected channels. Other leads wait automatically.",
                 );
             }
 

@@ -6,7 +6,7 @@ use App\V2\Support\UserInFlightLimiter;
 
 /**
  * Limits how many ProcessOutreachLeadJob handlers can run at once per user.
- * Extra leads stay queued and retry shortly — protects the user's LinkedIn account.
+ * Extra leads stay queued and retry shortly — protects connected messaging accounts.
  */
 class OutreachConcurrencyLimiter
 {
