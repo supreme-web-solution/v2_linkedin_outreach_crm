@@ -66,7 +66,6 @@ class OutreachContactEnrichmentService
                     ->where('import_list_id', $importList->id)
                     ->whereNotNull('phone')->where('phone', '!=', '')
                     ->where(fn ($q) => $q->whereNull('whatsapp_provider_id')->orWhere('whatsapp_provider_id', ''))
-                    ->where(fn ($q) => $q->whereNull('whatsapp_verify_status')->orWhere('whatsapp_verify_status', '!=', 'unreachable'))
                     ->orderBy('id')
                     ->limit($remaining)
                     ->get(['id', 'phone', 'linkedin_id']);

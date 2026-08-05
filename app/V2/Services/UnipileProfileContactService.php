@@ -5,7 +5,9 @@ namespace App\V2\Services;
 use App\Models\User;
 use App\Models\V2IntegrationAccount;
 use App\V2\Integrations\ProviderManager;
+use App\V2\Integrations\Unipile\UnipileException;
 use App\V2\Integrations\Unipile\UnipileProvider;
+use Illuminate\Support\Facades\Log;
 
 class UnipileProfileContactService
 {
@@ -45,7 +47,7 @@ class UnipileProfileContactService
     }
 
     /**
-     * @return array{verified: bool, provider_id: ?string, phone: string}
+     * @return array{verified: bool, provider_id: ?string, phone: string, source?: string}
      */
     public function verifyWhatsAppForUser(User $user, string $phone): array
     {
@@ -64,18 +66,39 @@ class UnipileProfileContactService
 
         try {
             $profile = $provider->lookupMessagingUser($identifier, $accountId, quiet: true);
-            $providerId = $provider->extractProviderId($profile);
+            $providerId = $provider->extractProviderId($profile) ?: $identifier;
 
             return [
-                'verified' => $providerId !== null,
+                'verified' => true,
                 'provider_id' => $providerId,
                 'phone' => $normalized,
+                'source' => 'lookup',
             ];
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            $status = $e instanceof UnipileException ? $e->statusCode : 0;
+
+            // Profile lookup often 404s for numbers you have never chatted with.
+            // WhatsApp public IDs are deterministic — startChat still accepts them.
+            if (in_array($status, [404, 422], true)) {
+                Log::info('[Unipile] WhatsApp verify: using constructed JID after lookup miss', [
+                    'phone' => $normalized,
+                    'identifier' => $identifier,
+                    'status' => $status,
+                ]);
+
+                return [
+                    'verified' => true,
+                    'provider_id' => $identifier,
+                    'phone' => $normalized,
+                    'source' => 'constructed',
+                ];
+            }
+
             return [
                 'verified' => false,
                 'provider_id' => null,
                 'phone' => $normalized,
+                'source' => 'error',
             ];
         }
     }
@@ -106,7 +129,7 @@ class UnipileProfileContactService
         $provider = app(ProviderManager::class)->get('unipile', UnipileProvider::class);
 
         try {
-            $profile = $provider->lookupMessagingUser($identifier, $accountId);
+            $profile = $provider->lookupMessagingUser($identifier, $accountId, quiet: true);
 
             return $provider->extractProviderId($profile);
         } catch (\Throwable) {

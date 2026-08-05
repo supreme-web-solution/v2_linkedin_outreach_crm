@@ -132,20 +132,20 @@ const contactPrepSteps = computed(() => {
     }
 
     if (hasImportedLists.value) {
-        steps.push('Imported spreadsheet — your contacts (phone, email, social handles).');
+        steps.push('Imported list — Enrich once on Leads (or Prepare here). Same result either place.');
     }
     if (hasLinkedinLists.value && (required.includes('email') || required.includes('linkedin'))) {
         steps.push('LinkedIn lists — optionally pull email/phone/socials from profiles.');
     }
     if (required.includes('whatsapp')) {
-        steps.push('WhatsApp — verify phone numbers before sending.');
+        steps.push('WhatsApp — Enrich once so the WhatsApp icon turns green. Sequence readiness uses that.');
     }
     if (required.some((ch) => ['instagram', 'telegram', 'twitter'].includes(ch))) {
-        steps.push('Social DMs — resolve @handles before Instagram/Telegram/X sends.');
+        steps.push('Social DMs — Enrich once to resolve @handles.');
     }
     const batchSize = readiness.value?.contact_prep?.batch_size ?? 25;
-    steps.push(`Prepare contacts — one batched click (up to ${batchSize} leads) for whatever your sequence needs.`);
-    steps.push('Repeat until Fully ready matches your lead count, then launch.');
+    steps.push(`If anything is still missing, Prepare here (up to ${batchSize} leads). Skip if the list is already green.`);
+    steps.push('When Fully ready matches your lead count, launch.');
 
     return steps;
 });
@@ -156,6 +156,46 @@ const channelRows = computed(() => {
 });
 
 const hasSequenceChannels = computed(() => (readiness.value?.required_channels?.length ?? 0) > 0);
+
+const fullyReadyHint = computed(() => {
+    const r = readiness.value;
+    if (!r) return 'Ready for every channel in this sequence';
+    const ch = r.required_channels ?? [];
+    if (ch.length === 1 && ch[0] === 'whatsapp') {
+        return 'Green WhatsApp on the list = counted here';
+    }
+    if (ch.length === 1 && ch[0] === 'instagram') {
+        return 'Instagram ready after handle resolve (Enrich)';
+    }
+    if (ch.length === 1 && ['telegram', 'twitter'].includes(ch[0])) {
+        return `Ready after ${ch[0] === 'twitter' ? 'X' : 'Telegram'} resolve`;
+    }
+    return 'Ready for every channel in this sequence';
+});
+
+function channelStatusExtra(channel: string): string {
+    const r = readiness.value;
+    if (!r) return '';
+    if (channel === 'whatsapp') {
+        const withPhone = r.whatsapp_verify?.with_phone ?? 0;
+        const needs = r.whatsapp_verify?.needs_verify ?? 0;
+        const verified = r.whatsapp_verify?.verified ?? 0;
+        if (needs > 0) {
+            return `${withPhone} have a phone · ${verified} WhatsApp-ready · Enrich once on the list (or Prepare here)`;
+        }
+        if (verified > 0) {
+            return `${verified} ready for WhatsApp`;
+        }
+    }
+    if (['instagram', 'telegram', 'twitter'].includes(channel)) {
+        const needs = r.handle_resolve?.needs_resolve ?? 0;
+        const ready = r.channels?.[channel]?.ready ?? 0;
+        if (needs > 0) {
+            return `${ready} ready · ${needs} still need Enrich / Prepare`;
+        }
+    }
+    return '';
+}
 
 const needsContactPrep = computed(() => {
     if (!readiness.value) return false;
@@ -410,11 +450,12 @@ defineExpose({
                 <div class="min-w-0 rounded-lg bg-emerald-50 px-3 py-2">
                     <p class="text-[10px] uppercase text-emerald-700">Fully ready</p>
                     <p class="text-lg font-semibold text-emerald-900">{{ readiness.fully_ready }}</p>
-                    <p class="mt-0.5 text-[10px] leading-tight text-emerald-800/80">Verified for every step in your sequence</p>
+                    <p class="mt-0.5 text-[10px] leading-tight text-emerald-800/80">{{ fullyReadyHint }}</p>
                 </div>
                 <div class="min-w-0 rounded-lg px-3 py-2" :class="readiness.will_skip_any ? 'bg-amber-50' : 'bg-muted/40'">
                     <p class="text-[10px] uppercase" :class="readiness.will_skip_any ? 'text-amber-700' : 'text-muted-foreground'">May skip steps</p>
                     <p class="text-lg font-semibold" :class="readiness.will_skip_any ? 'text-amber-900' : ''">{{ readiness.will_skip_any }}</p>
+                    <p v-if="readiness.will_skip_any" class="mt-0.5 text-[10px] leading-tight text-amber-800/80">Still need verify / resolve</p>
                 </div>
             </div>
 
@@ -507,7 +548,7 @@ defineExpose({
                             <OutreachChannelIcon :channel="row.channel as OutreachChannel" class="h-4 w-4" />
                             {{ row.label }}
                         </div>
-                        <span class="text-xs tabular-nums text-muted-foreground">{{ row.ready }} / {{ row.total }}</span>
+                        <span class="text-xs tabular-nums text-muted-foreground">{{ row.ready }} / {{ row.total }} ready</span>
                     </div>
                     <div class="h-1.5 overflow-hidden rounded-full bg-muted">
                         <div
@@ -517,6 +558,9 @@ defineExpose({
                         />
                     </div>
                     <p class="mt-1.5 text-[11px] text-muted-foreground">{{ row.help }}</p>
+                    <p v-if="channelStatusExtra(row.channel)" class="mt-1 text-[11px] font-medium text-amber-800">
+                        {{ channelStatusExtra(row.channel) }}
+                    </p>
                 </div>
             </div>
 

@@ -231,7 +231,7 @@ async function exportCsv() {
                 <div class="min-w-0">
                     <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Contact enrichment</p>
                     <p class="mt-1 text-sm text-muted-foreground">
-                        Verify WhatsApp numbers and resolve social handles (Instagram, Telegram, X) — like waterfall enrichment on imported lists.
+                        Run Enrich once on this list. That enables WhatsApp (and resolves social handles) for sequences too — you do not need to enrich again in the builder.
                     </p>
                 </div>
                 <BulkEnrichButton
@@ -251,11 +251,12 @@ async function exportCsv() {
                         WhatsApp
                     </div>
                     <p class="mt-1 text-muted-foreground">
-                        {{ importEnrichmentStats.whatsapp_verify.verified }} verified ·
-                        {{ importEnrichmentStats.whatsapp_verify.needs_verify }} to verify
+                        {{ importEnrichmentStats.whatsapp_verify.verified }} ready ·
+                        {{ importEnrichmentStats.whatsapp_verify.needs_verify }} still need Enrich
                     </p>
                     <p class="mt-1 text-[11px] text-muted-foreground/90">
-                        Phones need country code as digits only (e.g. 2348085204156).
+                        Green phone = number imported. Green WhatsApp = ready to message (after Enrich).
+                        Format: country code digits only (e.g. 2348085204156).
                     </p>
                 </div>
                 <div class="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-sm">

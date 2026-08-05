@@ -681,12 +681,12 @@ class OutreachLeadReadinessAggregator
                 'help' => 'From the list, fetched from LinkedIn profile, or imported via CSV.',
             ],
             'whatsapp' => [
-                'field_label' => 'WhatsApp (verified)',
-                'help' => 'Needs a phone number, then Verify WhatsApp to confirm the number is on WhatsApp.',
+                'field_label' => 'WhatsApp (ready)',
+                'help' => 'Green WhatsApp on the list means ready. Enrich once on Leads (or Prepare here) — same result.',
             ],
             'instagram' => [
-                'field_label' => 'Instagram (resolved ID)',
-                'help' => 'Add usernames in your import, then Resolve handles to look up messaging IDs.',
+                'field_label' => 'Instagram (ready)',
+                'help' => 'Needs a username, then Enrich once to resolve it for messaging.',
             ],
             'telegram' => [
                 'field_label' => 'Telegram (resolved ID or phone)',

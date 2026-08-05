@@ -126,9 +126,9 @@ function phoneState(): TagState {
 }
 
 function whatsAppState(): TagState {
+    // Green only when verified for sending. Phone icon alone means "has number".
     if (props.contacts.whatsapp_provider_id) return 'available';
     if (props.contacts.whatsapp_verify_status === 'unreachable') return 'unreachable';
-    if (props.contacts.phone) return 'handle';
     return 'missing';
 }
 
@@ -202,11 +202,11 @@ const tags = computed((): ContactTag[] => {
         state: wa,
         title:
             wa === 'available'
-                ? 'WhatsApp verified'
+                ? 'WhatsApp ready to message'
                 : wa === 'unreachable'
-                  ? 'Not on WhatsApp'
-                  : wa === 'handle'
-                    ? 'Phone found — verify WhatsApp'
+                  ? 'Marked not reachable on WhatsApp'
+                  : props.contacts.phone
+                    ? 'Has phone — run Enrich once to enable WhatsApp'
                     : 'No WhatsApp',
     });
 
