@@ -132,7 +132,21 @@ class UnipileProfileContactService
             $profile = $provider->lookupMessagingUser($identifier, $accountId, quiet: true);
 
             return $provider->extractProviderId($profile);
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            // Telegram public IDs are often the phone digits — usable even when profile lookup 404s.
+            if (
+                $channel === 'telegram'
+                && $e instanceof UnipileException
+                && in_array($e->statusCode, [404, 422], true)
+                && preg_match('/^\d{8,15}$/', $identifier)
+            ) {
+                Log::info('[Unipile] Telegram resolve: using phone digits after lookup miss', [
+                    'identifier' => $identifier,
+                ]);
+
+                return $identifier;
+            }
+
             return null;
         }
     }

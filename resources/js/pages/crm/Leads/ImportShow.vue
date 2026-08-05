@@ -231,7 +231,7 @@ async function exportCsv() {
                 <div class="min-w-0">
                     <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Contact enrichment</p>
                     <p class="mt-1 text-sm text-muted-foreground">
-                        Run Enrich once on this list. That enables WhatsApp (and resolves social handles) for sequences too — you do not need to enrich again in the builder.
+                        One click prepares every channel that has data: WhatsApp from phone, Instagram / Telegram / X from usernames (when that account is connected).
                     </p>
                 </div>
                 <BulkEnrichButton
@@ -255,18 +255,22 @@ async function exportCsv() {
                         {{ importEnrichmentStats.whatsapp_verify.needs_verify }} still need Enrich
                     </p>
                     <p class="mt-1 text-[11px] text-muted-foreground/90">
-                        Green phone = number imported. Green WhatsApp = ready to message (after Enrich).
+                        Green phone = number imported. Green WhatsApp = ready to message.
                         Format: country code digits only (e.g. 2348085204156).
                     </p>
                 </div>
                 <div class="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-sm">
                     <div class="flex items-center gap-2 font-medium">
                         <Sparkles class="h-4 w-4 text-violet-600" />
-                        Social handles
+                        Instagram · Telegram · X
                     </div>
                     <p class="mt-1 text-muted-foreground">
-                        {{ importEnrichmentStats.handle_resolve.needs_resolve }} handle(s) to resolve
+                        {{ importEnrichmentStats.handle_resolve.needs_resolve }} handle(s) still to resolve
                     </p>
+                    <p class="mt-1 text-[11px] text-muted-foreground/90">
+                        Needs the username in your sheet (and that channel connected under Integrations). Orange icon = username imported, not resolved yet. Green = ready.
+                    </p>
+                </div>
                 </div>
             </div>
         </div>

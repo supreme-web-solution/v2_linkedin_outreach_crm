@@ -51,6 +51,16 @@ const hasEnrichedData = computed(() => {
         || contacts.twitter_provider_id,
     );
 });
+
+const pendingHint = computed(() => {
+    const { contacts } = props;
+    const parts: string[] = [];
+    if (contacts.instagram_handle && !contacts.instagram_provider_id) parts.push('Instagram');
+    if (contacts.telegram_handle && !contacts.telegram_provider_id) parts.push('Telegram');
+    if (contacts.twitter_handle && !contacts.twitter_provider_id) parts.push('X');
+    if (contacts.phone && !contacts.whatsapp_provider_id) parts.push('WhatsApp');
+    return parts.join(', ');
+});
 </script>
 
 <template>
@@ -63,10 +73,11 @@ const hasEnrichedData = computed(() => {
             <button
                 type="button"
                 class="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-gradient-to-b from-blue-500 to-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 transition-colors hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                :title="pendingHint ? `Still need: ${pendingHint}` : 'Enrich contact channels'"
                 @click="emit('fetch')"
             >
                 <Sparkles class="h-3.5 w-3.5" />
-                Enrich
+                {{ hasEnrichedData ? 'Retry' : 'Enrich' }}
             </button>
         </div>
         <div v-else-if="hasEnrichedData" class="inline-flex items-center gap-2 text-sm text-muted-foreground">

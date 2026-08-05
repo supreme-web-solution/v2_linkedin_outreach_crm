@@ -476,7 +476,17 @@ class OutreachContactEnrichmentService
 
         foreach (OutreachChannelRegistry::enabledSocialHandleChannels() as $channel) {
             $handle = trim((string) ($row["{$channel}_handle"] ?? ''));
-            if ($handle === '' || trim((string) ($row["{$channel}_provider_id"] ?? '')) !== '') {
+            $existingId = trim((string) ($row["{$channel}_provider_id"] ?? ''));
+            if ($existingId !== '') {
+                continue;
+            }
+
+            // Instagram / X need a username. Telegram can also resolve from phone.
+            $identifier = $handle;
+            if ($identifier === '' && $channel === 'telegram' && $phone !== '') {
+                $identifier = preg_replace('/\D+/', '', $phone) ?? '';
+            }
+            if ($identifier === '') {
                 continue;
             }
 
@@ -485,12 +495,12 @@ class OutreachContactEnrichmentService
                 'src' => (string) ($row['src'] ?? ''),
                 'list_hash' => (string) ($row['list_hash'] ?? ''),
                 'record_id' => (int) ($row['record_id'] ?? 0),
-                'identifier' => $handle,
+                'identifier' => $identifier,
                 'linkedin_key' => (string) ($row['linkedin_key'] ?? ''),
             ];
 
             try {
-                $providerId = $this->contactService->resolvePlatformIdentifier($user, $channel, $handle);
+                $providerId = $this->contactService->resolvePlatformIdentifier($user, $channel, $identifier);
             } catch (\Throwable) {
                 $result['handles_skipped']++;
 

@@ -965,7 +965,12 @@ class LeadsWebController extends Controller
 
         $failed = (int) ($result['handles_failed'] ?? 0);
         if ($failed > 0) {
-            $parts[] = "{$failed} could not be resolved";
+            $parts[] = "{$failed} social handle".($failed === 1 ? '' : 's').' could not be found on the connected account';
+        }
+
+        $skipped = (int) ($result['handles_skipped'] ?? 0);
+        if ($skipped > 0) {
+            $parts[] = "{$skipped} skipped — connect that channel under Integrations";
         }
 
         if ($parts === []) {

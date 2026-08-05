@@ -219,8 +219,8 @@ const tags = computed((): ContactTag[] => {
             ig === 'available'
                 ? `@${props.contacts.instagram_handle} (ready)`
                 : ig === 'handle'
-                  ? `@${props.contacts.instagram_handle} — resolve handle`
-                  : 'No Instagram',
+                  ? `@${props.contacts.instagram_handle} — Enrich to resolve`
+                  : 'No Instagram username',
         value: props.contacts.instagram_handle ?? undefined,
     });
 
@@ -231,10 +231,12 @@ const tags = computed((): ContactTag[] => {
         state: tg,
         title:
             tg === 'available'
-                ? `@${props.contacts.telegram_handle} (ready)`
+                ? 'Telegram ready'
                 : tg === 'handle'
-                  ? `@${props.contacts.telegram_handle} — resolve handle`
-                  : 'No Telegram',
+                  ? `@${props.contacts.telegram_handle} — Enrich to resolve`
+                  : props.contacts.phone
+                    ? 'No Telegram username — Enrich can try via phone if Telegram is connected'
+                    : 'No Telegram',
         value: props.contacts.telegram_handle ?? undefined,
     });
 
@@ -247,8 +249,8 @@ const tags = computed((): ContactTag[] => {
             x === 'available'
                 ? `@${props.contacts.twitter_handle} (ready)`
                 : x === 'handle'
-                  ? `@${props.contacts.twitter_handle} — resolve handle`
-                  : 'No X / Twitter',
+                  ? `@${props.contacts.twitter_handle} — Enrich to resolve`
+                  : 'No X / Twitter username',
         value: props.contacts.twitter_handle ?? undefined,
     });
 
