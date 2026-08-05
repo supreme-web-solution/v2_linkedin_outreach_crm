@@ -271,7 +271,6 @@ async function exportCsv() {
                         Needs the username in your sheet (and that channel connected under Integrations). Orange icon = username imported, not resolved yet. Green = ready.
                     </p>
                 </div>
-                </div>
             </div>
         </div>
 
