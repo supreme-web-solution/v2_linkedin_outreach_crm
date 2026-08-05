@@ -25,6 +25,7 @@ import {
     disconnectStep,
     nextStepKey,
     removeStep,
+    conditionBranchStepCount,
     updateStepConfig,
     updateStepField,
 } from '@/components/campaign/stepMutations';
@@ -129,6 +130,13 @@ function onSelect(key: number) {
 }
 
 function onDelete(key: number) {
+    const step = findStepByKey(props.steps, key);
+    if (step?.type === 'condition' && conditionBranchStepCount(step) > 0) {
+        if (!window.confirm('Remove this condition and all Yes/No steps?')) {
+            return;
+        }
+    }
+
     const next = removeStep(props.steps, key);
     if (next !== props.steps) {
         if (selectedKey.value === key) selectedKey.value = null;
@@ -142,6 +150,12 @@ provide('campaignFlowActions', {
 });
 
 provide('flowDisconnectEdge', (targetKey: number) => {
+    const step = findStepByKey(props.steps, targetKey);
+    if (step?.type === 'condition' && conditionBranchStepCount(step) > 0) {
+        if (!window.confirm('Remove this condition and all Yes/No steps?')) {
+            return;
+        }
+    }
     const next = disconnectStep(props.steps, targetKey);
     if (next !== props.steps) {
         if (selectedKey.value === targetKey) selectedKey.value = null;
@@ -305,6 +319,7 @@ function minimapNodeColor(node: Node): string {
         >
             <StepConfigPanel
                 :step="selectedStep"
+                :steps="steps"
                 @update-field="onUpdateField"
                 @update-config="onUpdateConfig"
                 @delete="selectedKey !== null && onDelete(selectedKey)"

@@ -97,10 +97,40 @@ export function removeStep(steps: CampaignStep[], key: number): CampaignStep[] {
     if (!location) return steps;
 
     const step = location.list[location.index];
-    if (step.type === 'end' || step.type === 'condition') return steps;
+    if (step.type === 'end') return steps;
 
+    // Conditions are removed as a whole (including Yes/No branch steps nested on the node).
     location.list.splice(location.index, 1);
     return next;
+}
+
+export function conditionBranchStepCount(step: CampaignStep): number {
+    if (step.type !== 'condition') return 0;
+    const accepted = step.branches?.accepted?.length ?? 0;
+    const notAccepted = step.branches?.not_accepted?.length ?? 0;
+    return accepted + notAccepted;
+}
+
+/**
+ * Soft UX hint when a condition no longer has a matching action above it on the main path.
+ */
+export function conditionPrerequisiteWarning(steps: CampaignStep[], condition: CampaignStep): string | null {
+    if (condition.type !== 'condition') return null;
+
+    const idx = steps.findIndex((s) => s.key === condition.key);
+    if (idx < 0) return null;
+
+    const before = steps.slice(0, idx);
+    const hasInvite = before.some((s) =>
+        s.type === 'action' && ['send-invite', 'send-invites', 'invite', 'connect'].includes(String(s.value ?? '')),
+    );
+
+    const cond = String(condition.value ?? 'accepted');
+    if (['accepted', 'invite_accepted', 'invite-accepted'].includes(cond) && !hasInvite) {
+        return `"${condition.label}" usually needs a Send Invite step above it.`;
+    }
+
+    return null;
 }
 
 /** Remove a step when disconnecting an edge (allows conditions too). */

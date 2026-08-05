@@ -179,8 +179,9 @@ export function removeStep(steps: OutreachStep[], key: number): OutreachStep[] {
     if (!location) return steps;
 
     const step = location.list[location.index];
-    if (step.type === 'end' || step.type === 'condition') return steps;
+    if (step.type === 'end') return steps;
 
+    // Conditions are removed as a whole (including Yes/No branch steps nested on the node).
     location.list.splice(location.index, 1);
 
     if (next.length === 0 || !next.some((s) => s.type === 'end')) {
@@ -188,6 +189,48 @@ export function removeStep(steps: OutreachStep[], key: number): OutreachStep[] {
     }
 
     return next;
+}
+
+export function conditionBranchStepCount(step: OutreachStep): number {
+    if (step.type !== 'condition') return 0;
+    const accepted = step.branches?.accepted?.length ?? 0;
+    const notAccepted = step.branches?.not_accepted?.length ?? 0;
+    return accepted + notAccepted;
+}
+
+/**
+ * Soft UX hint when a condition no longer has a matching action above it on the main path.
+ */
+export function conditionPrerequisiteWarning(steps: OutreachStep[], condition: OutreachStep): string | null {
+    if (condition.type !== 'condition') return null;
+
+    const idx = steps.findIndex((s) => s.key === condition.key);
+    if (idx < 0) return null;
+
+    const before = steps.slice(0, idx);
+    const cond = String(condition.condition ?? '');
+    const channel = String(condition.channel ?? '');
+
+    const hasAction = (action: string) =>
+        before.some((s) => s.type === 'action' && s.channel === channel && s.action === action);
+
+    if (cond === 'invite_accepted' && !hasAction('send_invite')) {
+        return `"${condition.label}" usually needs a Send Invite step above it.`;
+    }
+
+    if (['message_replied', 'has_replied', 'no_reply'].includes(cond) && channel !== 'email') {
+        if (!hasAction('send_message')) {
+            return `"${condition.label}" usually needs a Send Message step above it.`;
+        }
+    }
+
+    if (['email_replied', 'email_opened', 'email_bounced', 'opened', 'bounced'].includes(cond) || (cond === 'no_reply' && channel === 'email')) {
+        if (!hasAction('send_email')) {
+            return `"${condition.label}" usually needs a Send Email step above it.`;
+        }
+    }
+
+    return null;
 }
 
 /** Remove a step when disconnecting an edge (allows conditions too). */

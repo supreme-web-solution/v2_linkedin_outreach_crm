@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Handle, Position, type NodeProps } from '@vue-flow/core';
-import { Check, GitBranch, X } from '@lucide/vue';
+import { Check, GitBranch, Trash2, X } from '@lucide/vue';
 import { computed, inject } from 'vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import OutreachNodeAddMenu from '@/components/outreach/OutreachNodeAddMenu.vue';
@@ -23,20 +23,28 @@ const channelLabel = computed(() => {
     <Handle type="target" :position="Position.Top" class="!border-orange-300 !bg-white" />
 
     <div
-        class="flex min-w-[260px] cursor-grab items-center gap-3 rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 via-white to-amber-50 px-4 py-3.5 shadow-[0_8px_24px_rgba(249,115,22,0.1)] active:cursor-grabbing"
+        class="group relative flex min-w-[260px] cursor-grab items-center gap-3 rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 via-white to-amber-50 px-4 py-3.5 shadow-[0_8px_24px_rgba(249,115,22,0.1)] active:cursor-grabbing"
         :class="props.selected ? 'ring-2 ring-orange-400/50' : ''"
         @click.stop="flowActions?.select(step.key)"
     >
         <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-orange-200 bg-white text-orange-600">
             <GitBranch class="h-4 w-4" stroke-width="2" />
         </div>
-        <div>
+        <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-orange-600/80">
                 <OutreachChannelIcon v-if="step.channel" :channel="step.channel as OutreachChannel" class="h-3 w-3" />
                 {{ channelLabel }} · Condition
             </div>
             <div class="text-sm font-semibold text-orange-950">{{ step.label }}</div>
         </div>
+        <button
+            type="button"
+            class="rounded-lg p-1.5 text-orange-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-50 hover:text-red-500"
+            title="Remove condition and Yes/No steps"
+            @click.stop="flowActions?.delete(step.key)"
+        >
+            <Trash2 class="h-3.5 w-3.5" />
+        </button>
     </div>
 
     <div class="pointer-events-auto absolute -left-[4.5rem] top-1/2 flex -translate-y-1/2 flex-col items-center gap-1">

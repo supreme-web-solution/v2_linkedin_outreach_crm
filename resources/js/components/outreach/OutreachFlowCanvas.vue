@@ -29,6 +29,7 @@ import {
     disconnectStep,
     nextStepKey,
     removeStep,
+    conditionBranchStepCount,
     updateStepConfig,
     updateStepField,
 } from '@/components/outreach/outreachStepMutations';
@@ -115,6 +116,13 @@ function onSelect(key: number) {
 }
 
 function onDelete(key: number) {
+    const step = findStepByKey(props.steps, key);
+    if (step?.type === 'condition' && conditionBranchStepCount(step) > 0) {
+        if (!window.confirm('Remove this condition and all Yes/No steps?')) {
+            return;
+        }
+    }
+
     const next = removeStep(props.steps, key);
     if (next !== props.steps) {
         if (selectedKey.value === key) selectedKey.value = null;
@@ -125,6 +133,12 @@ function onDelete(key: number) {
 provide('outreachFlowActions', { select: onSelect, delete: onDelete });
 provide('outreachChannelRegistry', props.channelRegistry);
 provide('flowDisconnectEdge', (targetKey: number) => {
+    const step = findStepByKey(props.steps, targetKey);
+    if (step?.type === 'condition' && conditionBranchStepCount(step) > 0) {
+        if (!window.confirm('Remove this condition and all Yes/No steps?')) {
+            return;
+        }
+    }
     const next = disconnectStep(props.steps, targetKey);
     if (next !== props.steps) {
         if (selectedKey.value === targetKey) selectedKey.value = null;
@@ -478,6 +492,7 @@ function minimapNodeColor(node: Node): string {
                     <div class="min-h-0 flex-1 overflow-y-auto p-4 pt-2">
                         <OutreachStepConfigPanel
                             :step="selectedStep"
+                            :steps="steps"
                             :channel-registry="channelRegistry"
                             @update-field="onUpdateField"
                             @update-config="onUpdateConfig"

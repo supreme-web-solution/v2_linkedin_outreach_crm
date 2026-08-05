@@ -4,10 +4,12 @@ import { Clock, Trash2 } from '@lucide/vue';
 import FlowMessageAiHelp from '@/components/flow/FlowMessageAiHelp.vue';
 import CampaignActionIcon from '@/components/campaign/CampaignActionIcon.vue';
 import InviteNoteLimitHint from '@/components/linkedin/InviteNoteLimitHint.vue';
+import { conditionPrerequisiteWarning } from '@/components/campaign/stepMutations';
 import { CAMPAIGN_ACTIONS, type CampaignStep } from '@/components/campaign/types';
 
 const props = defineProps<{
     step: CampaignStep;
+    steps?: CampaignStep[];
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +23,9 @@ const isAction = computed(() => props.step.type === 'action');
 const isDelay = computed(() => props.step.type === 'delay');
 const isCondition = computed(() => props.step.type === 'condition');
 const isEnd = computed(() => props.step.type === 'end');
+const prerequisiteWarning = computed(() =>
+    isCondition.value ? conditionPrerequisiteWarning(props.steps ?? [], props.step) : null,
+);
 </script>
 
 <template>
@@ -32,10 +37,10 @@ const isEnd = computed(() => props.step.type === 'end');
                 <p class="text-[11px] capitalize text-muted-foreground">{{ step.type }}</p>
             </div>
             <button
-                v-if="!isEnd && !isCondition"
+                v-if="!isEnd"
                 type="button"
                 class="rounded-lg p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-500"
-                title="Remove step"
+                :title="isCondition ? 'Remove condition and Yes/No steps' : 'Remove step'"
                 @click="emit('delete')"
             >
                 <Trash2 class="h-4 w-4" />
@@ -140,6 +145,12 @@ const isEnd = computed(() => props.step.type === 'end');
         </template>
 
         <template v-if="isCondition">
+            <div
+                v-if="prerequisiteWarning"
+                class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900"
+            >
+                {{ prerequisiteWarning }}
+            </div>
             <p class="text-xs text-muted-foreground">
                 Edit the accepted and not-accepted branches on the canvas. Select any branch step to configure it.
             </p>

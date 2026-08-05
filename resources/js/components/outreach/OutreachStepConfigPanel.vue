@@ -4,10 +4,12 @@ import { Trash2 } from '@lucide/vue';
 import FlowMessageAiHelp from '@/components/flow/FlowMessageAiHelp.vue';
 import ChannelRateLimitHint from '@/components/outreach/ChannelRateLimitHint.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
+import { conditionPrerequisiteWarning } from '@/components/outreach/outreachStepMutations';
 import type { OutreachChannel, OutreachStep } from '@/components/outreach/types';
 
 const props = defineProps<{
     step: OutreachStep;
+    steps?: OutreachStep[];
     channelRegistry: {
         channels: Record<string, { label: string; color: string }>;
         actions: Record<string, Array<{ key: string; label: string }>>;
@@ -24,6 +26,7 @@ const emit = defineEmits<{
 const isAction = computed(() => props.step.type === 'action');
 const isDelay = computed(() => props.step.type === 'delay');
 const isCondition = computed(() => props.step.type === 'condition');
+const isEnd = computed(() => props.step.type === 'end');
 const conditionOptions = computed(() => {
     const ch = props.step.channel;
     if (!ch) return [];
@@ -37,6 +40,9 @@ const channelColor = computed(() => {
     const ch = props.step.channel;
     return ch ? (props.channelRegistry.channels[ch]?.color ?? '#64748b') : '#64748b';
 });
+const prerequisiteWarning = computed(() =>
+    isCondition.value ? conditionPrerequisiteWarning(props.steps ?? [], props.step) : null,
+);
 </script>
 
 <template>
@@ -51,10 +57,10 @@ const channelColor = computed(() => {
                 </p>
             </div>
             <button
-                v-if="!isCondition"
+                v-if="!isEnd"
                 type="button"
                 class="rounded-lg p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-500"
-                title="Remove step"
+                :title="isCondition ? 'Remove condition and Yes/No steps' : 'Remove step'"
                 @click="emit('delete')"
             >
                 <Trash2 class="h-4 w-4" />
@@ -192,6 +198,12 @@ const channelColor = computed(() => {
         </template>
 
         <template v-if="isCondition">
+            <div
+                v-if="prerequisiteWarning"
+                class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900"
+            >
+                {{ prerequisiteWarning }}
+            </div>
             <div class="flex flex-col gap-1">
                 <label class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Condition</label>
                 <select
