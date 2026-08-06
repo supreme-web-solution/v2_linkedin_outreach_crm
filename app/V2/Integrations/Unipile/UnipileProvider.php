@@ -706,11 +706,17 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     }
 
     /**
-     * @return list<string>
+     * Resolve LinkedIn classic search parameter suggestions (location, company, etc.).
+     *
+     * @return list<array{id: string, label: string}>
      */
-    private function resolveClassicSearchParameterIds(string $accountId, string $type, string $keywords, int $limit = 3): array
+    public function listClassicSearchParameters(string $accountId, string $type, string $keywords, int $limit = 20): array
     {
-        if (trim($keywords) === '') {
+        $type = strtoupper(trim($type));
+        $keywords = trim($keywords);
+        $limit = max(1, min(100, $limit));
+
+        if ($type === '' || $keywords === '') {
             return [];
         }
 
@@ -719,6 +725,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 'account_id' => $accountId,
                 'type' => $type,
                 'keywords' => $keywords,
+                'limit' => $limit,
             ]);
         } catch (\Throwable) {
             return [];
@@ -729,7 +736,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             return [];
         }
 
-        $ids = [];
+        $out = [];
         foreach ($items as $item) {
             if (! is_array($item)) {
                 continue;
@@ -740,14 +747,40 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 continue;
             }
 
-            $ids[] = (string) $id;
+            $label = trim((string) (
+                $item['title']
+                ?? $item['name']
+                ?? $item['label']
+                ?? $item['text']
+                ?? ''
+            ));
 
-            if (count($ids) >= $limit) {
+            if ($label === '') {
+                $label = (string) $id;
+            }
+
+            $out[] = [
+                'id' => (string) $id,
+                'label' => $label,
+            ];
+
+            if (count($out) >= $limit) {
                 break;
             }
         }
 
-        return $ids;
+        return $out;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function resolveClassicSearchParameterIds(string $accountId, string $type, string $keywords, int $limit = 3): array
+    {
+        return array_values(array_map(
+            static fn (array $row) => $row['id'],
+            $this->listClassicSearchParameters($accountId, $type, $keywords, $limit),
+        ));
     }
 
     /**

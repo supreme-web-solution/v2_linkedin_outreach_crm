@@ -266,6 +266,8 @@ Route::middleware(['v2.extension.token', 'v2.tenant', 'throttle:v2-extension'])-
             ->middleware('v2.capability:outreach.read');
         Route::get('/relations', [OutreachController::class, 'listRelations'])
             ->middleware('v2.capability:outreach.read');
+        Route::get('/search-parameters', [OutreachController::class, 'listSearchParameters'])
+            ->middleware('v2.capability:outreach.read');
         Route::post('/accept-invite', [OutreachController::class, 'acceptInvitation'])
             ->middleware('v2.capability:outreach.write');
         Route::post('/reject-invite', [OutreachController::class, 'rejectInvitation'])

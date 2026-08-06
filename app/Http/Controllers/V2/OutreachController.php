@@ -10,6 +10,7 @@ use App\V2\DTO\OutreachInviteRequestData;
 use App\V2\DTO\OutreachMessageRequestData;
 use App\V2\DTO\OutreachStartChatRequestData;
 use App\V2\Integrations\ProviderManager;
+use App\V2\Integrations\Unipile\UnipileProvider;
 use App\V2\Services\LinkedInConnectionService;
 use App\V2\Services\OutreachPersistenceService;
 use Illuminate\Http\JsonResponse;
@@ -105,6 +106,43 @@ class OutreachController extends Controller
             ]);
 
             return response()->json(['data' => $result]);
+        } catch (\Throwable $e) {
+            return response()->json(['data' => [], 'error' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Suggest LinkedIn search parameter IDs (e.g. LOCATION) for classic people search filters.
+     */
+    public function listSearchParameters(Request $request): JsonResponse
+    {
+        $user = $request->attributes->get('v2User');
+        $accountId = $this->requireUnipileAccountId($user);
+        if ($accountId instanceof \Illuminate\Http\JsonResponse) {
+            return $accountId;
+        }
+
+        $data = $request->validate([
+            'type' => ['required', 'string', 'max:64'],
+            'keywords' => ['required', 'string', 'max:255'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        try {
+            /** @var UnipileProvider $provider */
+            $provider = $this->providerManager->get(
+                $this->providerManager->defaultProvider(),
+                UnipileProvider::class,
+            );
+
+            $items = $provider->listClassicSearchParameters(
+                $accountId,
+                (string) $data['type'],
+                (string) $data['keywords'],
+                (int) ($data['limit'] ?? 20),
+            );
+
+            return response()->json(['data' => $items]);
         } catch (\Throwable $e) {
             return response()->json(['data' => [], 'error' => $e->getMessage()], 422);
         }
