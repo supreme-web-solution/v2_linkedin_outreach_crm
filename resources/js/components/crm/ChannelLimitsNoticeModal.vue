@@ -82,11 +82,11 @@ function onOpenChange(next: boolean) {
                 <ul class="space-y-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-[13px] leading-relaxed text-muted-foreground">
                     <li v-if="variant === 'campaigns'">
                         <span class="font-medium text-foreground">Invites &amp; messages</span>
-                        — LinkedIn limits how many you can send. Going too fast can trigger a short “try again later” pause.
+                        — SociFusion applies your daily invite/message caps from settings. Anyone past the cap stays in the sequence and continues the next day — not dropped. LinkedIn also limits noted invites to about 5/day.
                     </li>
                     <li v-else>
                         <span class="font-medium text-foreground">Each channel has its own limits</span>
-                        — LinkedIn, email, WhatsApp, etc. Hitting one does not block the others.
+                        — LinkedIn, email, WhatsApp, etc. Hitting one does not block the others. LinkedIn invite/message caps queue leftovers for later; nothing is lost.
                     </li>
                     <li>
                         <span class="font-medium text-foreground">We pace sends on purpose</span>
@@ -99,7 +99,7 @@ function onOpenChange(next: boolean) {
                 </ul>
 
                 <p class="text-[13px] text-muted-foreground">
-                    Tip: use invite notes sparingly, space campaigns through the day, and clear old pending LinkedIn invites if you hit a wall.
+                    Tip: use invite notes sparingly (LinkedIn ~5 noted invites/day), space campaigns through the day, and clear old pending LinkedIn invites if you hit a wall.
                 </p>
             </div>
 

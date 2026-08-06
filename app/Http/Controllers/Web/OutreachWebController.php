@@ -25,6 +25,7 @@ use App\V2\Outreach\OutreachProgressReconciler;
 use App\V2\Outreach\OutreachRunDispatcher;
 use App\V2\Outreach\OutreachSequenceResolver;
 use App\V2\Services\ChannelConnectionService;
+use App\V2\Services\DailyUsageQuotaService;
 use App\V2\Services\LeadListService;
 use App\V2\Services\OutreachChannelInboxSettingsService;
 use App\V2\Support\DeletedCampaignArtifactCleaner;
@@ -95,6 +96,7 @@ class OutreachWebController extends Controller
             'attachedLists' => [],
             'initialStep' => 'template',
             'aiConfigured' => app(\App\V2\Services\OpenAIContentService::class)->isConfigured(),
+            'action_quotas' => $this->actionQuotasForUser($user),
         ]);
     }
 
@@ -291,7 +293,18 @@ class OutreachWebController extends Controller
                     is_array($campaign->node_model) ? $campaign->node_model : [],
                 ),
             ),
+            'action_quotas' => $this->actionQuotasForUser($user),
         ]);
+    }
+
+    /**
+     * Daily SociFusion caps for LinkedIn invite/message steps (from env).
+     *
+     * @return array{invites: array<string, mixed>, messages: array<string, mixed>}
+     */
+    private function actionQuotasForUser(\App\Models\User $user): array
+    {
+        return app(DailyUsageQuotaService::class)->linkedInActionQuotas($user);
     }
 
     public function edit(int $id, ChannelConnectionService $channels): Response
@@ -324,6 +337,7 @@ class OutreachWebController extends Controller
                 'node_model' => $campaign->node_model ?? [],
                 'meta' => $campaign->meta,
             ],
+            'action_quotas' => $this->actionQuotasForUser($user),
             'availableLeadLists' => $this->availableLeadLists(),
             'attachedLists' => $attachedLists,
             'initialStep' => request()->query('step', 'build'),

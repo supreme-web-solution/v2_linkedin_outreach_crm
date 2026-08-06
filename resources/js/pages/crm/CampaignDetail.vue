@@ -99,6 +99,10 @@ const props = defineProps<{
         action: string;
         message: string | null;
     };
+    action_quotas?: {
+        invites: { limit: number; used: number; remaining: number; unlimited: boolean; at_limit?: boolean };
+        messages: { limit: number; used: number; remaining: number; unlimited: boolean; at_limit?: boolean };
+    };
 }>();
 
 const leadSearch = ref(props.leadFilters?.search ?? '');
@@ -199,6 +203,20 @@ function flatten(nodes: Array<Record<string, unknown>>): Array<Record<string, un
 }
 
 const allSteps = flatten(props.campaign.node_model ?? []);
+
+const hasSendInviteStep = computed(() =>
+    allSteps.some((s) => s.type === 'action' && s.value === 'send-invite'),
+);
+const hasMessageStep = computed(() =>
+    allSteps.some((s) => s.type === 'action' && s.value === 'message'),
+);
+const inviteHasNote = computed(() =>
+    allSteps.some((s) =>
+        s.type === 'action'
+        && s.value === 'send-invite'
+        && String((s.config as { message?: string } | undefined)?.message ?? '').trim() !== '',
+    ),
+);
 
 function formatTime(iso: string | null) {
     if (!iso) return '';
@@ -355,6 +373,26 @@ function toggleStatus() {
                     Up to {{ concurrency.limit }} leads run at once
                     <span v-if="concurrency.in_flight > 0"> ({{ concurrency.in_flight }} active now)</span>.
                     The rest stay queued and start automatically when a slot frees — this protects your LinkedIn account.
+                </p>
+            </div>
+        </div>
+
+        <div
+            v-if="(hasSendInviteStep || hasMessageStep) && action_quotas"
+            class="flex items-start gap-3 rounded-xl border border-amber-200/70 bg-amber-50/80 px-4 py-3 text-sm text-amber-950"
+        >
+            <Info class="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div class="min-w-0 space-y-1 text-[13px] leading-snug">
+                <p class="font-medium">Daily send caps — leftovers are not lost</p>
+                <p v-if="hasSendInviteStep && !action_quotas.invites.unlimited && action_quotas.invites.limit > 0">
+                    Send Invite: up to {{ action_quotas.invites.limit }}/day
+                    ({{ action_quotas.invites.remaining }} left today). Anyone past the cap continues tomorrow automatically.
+                    <span v-if="inviteHasNote" class="text-amber-900/80"> This invite has a note — LinkedIn usually allows about 5 noted invites/day.</span>
+                    <span v-else class="text-amber-900/80"> If you add an invite note, LinkedIn usually allows about 5 noted invites/day.</span>
+                </p>
+                <p v-if="hasMessageStep && !action_quotas.messages.unlimited && action_quotas.messages.limit > 0">
+                    Messages: up to {{ action_quotas.messages.limit }}/day
+                    ({{ action_quotas.messages.remaining }} left). Extras queue for the next day.
                 </p>
             </div>
         </div>

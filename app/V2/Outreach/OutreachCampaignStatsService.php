@@ -130,6 +130,8 @@ class OutreachCampaignStatsService
                 'label' => (string) ($node['label'] ?? 'Step '.$key),
                 'type' => (string) ($node['type'] ?? 'action'),
                 'channel' => $node['channel'] ?? null,
+                'action' => $node['action'] ?? null,
+                'has_invite_note' => $this->nodeHasInviteNote($node),
                 'reached' => $reached,
                 'completed' => $completed,
                 'failed' => $failed,
@@ -140,5 +142,19 @@ class OutreachCampaignStatsService
         }
 
         return $funnel;
+    }
+
+    /**
+     * @param  array<string, mixed>  $node
+     */
+    private function nodeHasInviteNote(array $node): bool
+    {
+        if (($node['action'] ?? '') !== 'send_invite') {
+            return false;
+        }
+
+        $message = trim((string) (data_get($node, 'config.message') ?? ''));
+
+        return $message !== '';
     }
 }

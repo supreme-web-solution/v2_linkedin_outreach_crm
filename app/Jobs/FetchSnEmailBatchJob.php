@@ -35,6 +35,30 @@ class FetchSnEmailBatchJob implements ShouldQueue
         $this->onQueue('enrichment');
     }
 
+    /**
+     * Split large UI batches into smaller worker jobs so FullEnrich polling
+     * cannot blow past the Horizon/job timeout and mark unfinished leads failed.
+     *
+     * @param  array<int>  $snLeadIds
+     */
+    public static function dispatchChunked(array $snLeadIds, int $userId, string $listHash): void
+    {
+        $ids = array_values(array_unique(array_map('intval', $snLeadIds)));
+        if ($ids === []) {
+            return;
+        }
+
+        $chunkSize = max(1, (int) config('services.email_scraping.job_chunk_size', 5));
+        $stagger = max(0, (int) config('services.email_scraping.job_chunk_stagger_seconds', 3));
+
+        foreach (array_chunk($ids, $chunkSize) as $i => $chunk) {
+            $pending = self::dispatch($chunk, $userId, $listHash);
+            if ($i > 0 && $stagger > 0) {
+                $pending->delay(now()->addSeconds($i * $stagger));
+            }
+        }
+    }
+
     public function handle(
         LeadEnrichmentService $enrichmentService,
         LeadEnrichmentPersister $persister,
@@ -48,7 +72,7 @@ class FetchSnEmailBatchJob implements ShouldQueue
         $user = User::find($this->userId);
         if (! $user) {
             Log::warning('[FetchSnEmailBatchJob] user missing', ['user_id' => $this->userId]);
-            $this->markLeadsFailed($this->snLeadIds, 'User not found for enrichment job.');
+            $this->markLeadsRetryable($this->snLeadIds, 'User not found for enrichment job.');
 
             return;
         }
@@ -70,7 +94,7 @@ class FetchSnEmailBatchJob implements ShouldQueue
                 'list_hash' => $this->listHash,
                 'lead_ids' => $this->snLeadIds,
             ]);
-            $this->markLeadsFailed($this->snLeadIds, 'No matching leads for enrichment job.');
+            $this->markLeadsRetryable($this->snLeadIds, 'No matching leads for enrichment job.');
 
             return;
         }
@@ -78,8 +102,22 @@ class FetchSnEmailBatchJob implements ShouldQueue
         $lookupsDone = 0;
         $completed = 0;
         $failed = 0;
+        $startedAt = microtime(true);
+        // Leave enough room for one FullEnrich poll + Unipile call before worker kill.
+        $softDeadline = $startedAt + max(60, $this->timeout - 150);
+        $remainingIds = [];
 
-        foreach ($leads as $lead) {
+        foreach ($leads as $index => $lead) {
+            if (microtime(true) >= $softDeadline) {
+                $remainingIds = $leads->slice($index)->pluck('id')->map(fn ($id) => (int) $id)->all();
+                Log::warning('[FetchSnEmailBatchJob] soft deadline reached — re-queueing remainder', [
+                    'user_id' => $this->userId,
+                    'remaining' => count($remainingIds),
+                    'elapsed_seconds' => (int) (microtime(true) - $startedAt),
+                ]);
+                break;
+            }
+
             if (! empty($lead->email)) {
                 $lead->update(['email_fetch_status' => 'completed']);
                 $completed++;
@@ -96,12 +134,11 @@ class FetchSnEmailBatchJob implements ShouldQueue
             if ($user->daily_profile_email_scraping_count >= $dailyLimit) {
                 Log::warning('[FetchSnEmailBatchJob] daily limit reached mid-batch', [
                     'user_id' => $user->id,
-                    'remaining_ids' => $leads->skip($lookupsDone)->pluck('id')->all(),
+                    'remaining_ids' => $leads->slice($index)->pluck('id')->all(),
                 ]);
-                // Leave remaining as pending so the UI can re-queue tomorrow after stuck reset,
-                // or mark them clear so user can retry.
+                // Leave remaining clear so the UI can re-queue tomorrow.
                 SnLead::query()
-                    ->whereIn('id', $leads->pluck('id'))
+                    ->whereIn('id', $leads->slice($index)->pluck('id'))
                     ->whereIn('email_fetch_status', ['pending', 'processing'])
                     ->update(['email_fetch_status' => null, 'email_fetch_attempted_at' => null]);
                 break;
@@ -148,12 +185,23 @@ class FetchSnEmailBatchJob implements ShouldQueue
             }
         }
 
+        if ($remainingIds !== []) {
+            SnLead::query()
+                ->whereIn('id', $remainingIds)
+                ->whereIn('email_fetch_status', ['pending', 'processing'])
+                ->update(['email_fetch_status' => 'pending']);
+
+            self::dispatch($remainingIds, $this->userId, $this->listHash)
+                ->delay(now()->addSeconds(5));
+        }
+
         Log::info('[FetchSnEmailBatchJob] finished', [
             'user_id' => $this->userId,
             'list_hash' => $this->listHash,
             'lookups' => $lookupsDone,
             'completed' => $completed,
             'failed' => $failed,
+            'requeued' => count($remainingIds),
         ]);
     }
 
@@ -165,13 +213,14 @@ class FetchSnEmailBatchJob implements ShouldQueue
             'lead_ids' => $this->snLeadIds,
             'error' => $e?->getMessage(),
         ]);
-        $this->markLeadsFailed($this->snLeadIds, $e?->getMessage() ?: 'Enrichment job failed.');
+        // Keep completed rows; unfinished stay retryable (not permanently failed).
+        $this->markLeadsRetryable($this->snLeadIds, $e?->getMessage() ?: 'Enrichment job failed.');
     }
 
     /**
      * @param  array<int>  $ids
      */
-    private function markLeadsFailed(array $ids, string $reason): void
+    private function markLeadsRetryable(array $ids, string $reason): void
     {
         if ($ids === []) {
             return;
@@ -181,11 +230,11 @@ class FetchSnEmailBatchJob implements ShouldQueue
             ->whereIn('id', $ids)
             ->whereIn('email_fetch_status', ['pending', 'processing'])
             ->update([
-                'email_fetch_status' => 'failed',
+                'email_fetch_status' => 'timed_out',
                 'email_fetch_attempted_at' => now(),
             ]);
 
-        Log::warning('[FetchSnEmailBatchJob] marked leads failed', [
+        Log::warning('[FetchSnEmailBatchJob] marked leads retryable (timed_out)', [
             'ids' => $ids,
             'reason' => $reason,
         ]);

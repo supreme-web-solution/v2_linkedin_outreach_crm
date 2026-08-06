@@ -59,6 +59,34 @@ class DailyUsageQuotaService
     }
 
     /**
+     * Compact invite/message caps for campaign & outreach UI notices.
+     *
+     * @return array{invites: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool}, messages: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool}}
+     */
+    public function linkedInActionQuotas(User $user): array
+    {
+        $bundle = $this->forUser($user);
+        $items = collect($bundle['items'] ?? []);
+
+        $pick = function (string $key) use ($items): array {
+            $row = $items->firstWhere('key', $key) ?? [];
+
+            return [
+                'limit' => (int) ($row['limit'] ?? 0),
+                'used' => (int) ($row['used'] ?? 0),
+                'remaining' => (int) ($row['remaining'] ?? 0),
+                'unlimited' => (bool) ($row['unlimited'] ?? true),
+                'at_limit' => (bool) ($row['at_limit'] ?? false),
+            ];
+        };
+
+        return [
+            'invites' => $pick(UnipileDailyActionLimiter::ACTION_INVITES),
+            'messages' => $pick(UnipileDailyActionLimiter::ACTION_MESSAGES),
+        ];
+    }
+
+    /**
      * @return array{
      *     key: string,
      *     label: string,

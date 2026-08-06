@@ -566,7 +566,7 @@ class OutreachContactEnrichmentService
                 continue;
             }
 
-            FetchAudienceEmailBatchJob::dispatch($ids, $user->id);
+            FetchAudienceEmailBatchJob::dispatchChunked($ids, $user->id);
             $queued += count($ids);
         }
 

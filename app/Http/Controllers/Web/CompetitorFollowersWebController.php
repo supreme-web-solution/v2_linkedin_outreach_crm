@@ -557,7 +557,7 @@ class CompetitorFollowersWebController extends Controller
             ->update(['email_fetch_attempted_at' => now(), 'email_fetch_status' => 'pending']);
 
         try {
-            FetchAudienceEmailBatchJob::dispatch($idsToQueue, $user->id);
+            FetchAudienceEmailBatchJob::dispatchChunked($idsToQueue, $user->id);
 
             $queued = count($idsToQueue);
             $message = $queued < $profileCount

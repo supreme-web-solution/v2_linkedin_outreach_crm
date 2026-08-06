@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { usePage } from '@inertiajs/vue3';
 import { Trash2 } from '@lucide/vue';
 import FlowMessageAiHelp from '@/components/flow/FlowMessageAiHelp.vue';
-import ChannelRateLimitHint from '@/components/outreach/ChannelRateLimitHint.vue';
+import ChannelRateLimitHint, { type ActionQuotaSnapshot } from '@/components/outreach/ChannelRateLimitHint.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import { conditionPrerequisiteWarning } from '@/components/outreach/outreachStepMutations';
 import type { OutreachChannel, OutreachStep } from '@/components/outreach/types';
@@ -22,6 +23,21 @@ const emit = defineEmits<{
     updateConfig: [key: string, value: unknown];
     delete: [];
 }>();
+
+const page = usePage();
+const actionQuotas = computed(() => {
+    const raw = page.props.action_quotas as
+        | { invites?: ActionQuotaSnapshot; messages?: ActionQuotaSnapshot }
+        | undefined;
+    return raw ?? null;
+});
+const inviteQuota = computed(() => actionQuotas.value?.invites ?? null);
+const messageQuota = computed(() => actionQuotas.value?.messages ?? null);
+const hasInviteNote = computed(() => trimMessage((props.step.config?.message as string) ?? '') !== '');
+
+function trimMessage(value: string): string {
+    return value.trim();
+}
 
 const isAction = computed(() => props.step.type === 'action');
 const isDelay = computed(() => props.step.type === 'delay');
@@ -117,11 +133,14 @@ const prerequisiteWarning = computed(() =>
                         v-if="step.action === 'send_invite'"
                         channel="linkedin"
                         variant="invite"
+                        :quota="inviteQuota"
+                        :has-invite-note="hasInviteNote"
                     />
                     <ChannelRateLimitHint
                         v-else-if="step.channel && ['linkedin', 'whatsapp', 'instagram', 'telegram', 'twitter'].includes(step.channel)"
                         :channel="step.channel"
                         variant="action"
+                        :quota="step.channel === 'linkedin' ? messageQuota : null"
                     />
                 </div>
             </template>

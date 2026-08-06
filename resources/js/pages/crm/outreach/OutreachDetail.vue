@@ -7,6 +7,7 @@ import {
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import OutreachLeadReadinessPanel from '@/components/outreach/OutreachLeadReadinessPanel.vue';
+import ChannelRateLimitHint, { type ActionQuotaSnapshot } from '@/components/outreach/ChannelRateLimitHint.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import { Button } from '@/components/ui/button';
@@ -77,6 +78,8 @@ const props = defineProps<{
             label: string;
             type: string;
             channel: string | null;
+            action?: string | null;
+            has_invite_note?: boolean;
             reached: number;
             completed: number;
             failed: number;
@@ -96,6 +99,10 @@ const props = defineProps<{
         label: string;
         message: string | null;
     }>;
+    action_quotas?: {
+        invites: ActionQuotaSnapshot;
+        messages: ActionQuotaSnapshot;
+    };
 }>();
 
 const page = usePage();
@@ -189,6 +196,24 @@ const hasOutboundSendSteps = computed(() =>
         (s) => s.type === 'action' && ['send_message', 'send_email', 'send_invite'].includes(s.action ?? ''),
     ),
 );
+
+const hasCappedLinkedInSteps = computed(() =>
+    (props.stats?.funnel ?? []).some((s) =>
+        s.channel === 'linkedin' && (s.action === 'send_invite' || s.action === 'send_message'),
+    ),
+);
+
+function funnelQuotaForStep(step: NonNullable<typeof props.stats>['funnel'][number]): ActionQuotaSnapshot | null {
+    if (step.channel !== 'linkedin') return null;
+    if (step.action === 'send_invite') return props.action_quotas?.invites ?? null;
+    if (step.action === 'send_message') return props.action_quotas?.messages ?? null;
+    return null;
+}
+
+function showFunnelCapHint(step: NonNullable<typeof props.stats>['funnel'][number]): boolean {
+    return step.channel === 'linkedin'
+        && (step.action === 'send_invite' || step.action === 'send_message');
+}
 
 function formatDateTime(iso: string | null) {
     if (!iso) return '';
@@ -551,29 +576,59 @@ const channelActionEntries = computed(() =>
                     <Loader2 class="h-3 w-3 animate-spin" /> Live
                 </span>
             </div>
+            <div
+                v-if="hasCappedLinkedInSteps && action_quotas"
+                class="mt-3 flex items-start gap-2 rounded-lg border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-[11px] leading-snug text-amber-950"
+            >
+                <Info class="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                <div class="min-w-0 space-y-1">
+                    <p v-if="!action_quotas.invites.unlimited && action_quotas.invites.limit > 0">
+                        <span class="font-medium">Send Invite</span>
+                        — up to {{ action_quotas.invites.limit }}/day
+                        ({{ action_quotas.invites.remaining }} left today).
+                        Anyone past the cap stays in the sequence and continues tomorrow — not lost.
+                        <span class="text-amber-900/80">With an invite note, LinkedIn usually allows about 5/day.</span>
+                    </p>
+                    <p v-if="!action_quotas.messages.unlimited && action_quotas.messages.limit > 0">
+                        <span class="font-medium">Send Message</span>
+                        — up to {{ action_quotas.messages.limit }}/day
+                        ({{ action_quotas.messages.remaining }} left). Extras queue for the next day.
+                    </p>
+                </div>
+            </div>
             <div class="mt-4 space-y-2">
                 <div
                     v-for="step in stats.funnel"
                     :key="step.node_key"
-                    class="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2 transition-colors"
+                    class="rounded-lg border border-border/60 px-3 py-2 transition-colors"
                     :class="isRunning && step.waiting > 0 ? 'bg-blue-50/50 border-blue-200/60' : ''"
                 >
-                    <OutreachChannelIcon v-if="step.channel" :channel="step.channel" class="h-3.5 w-3.5 shrink-0" />
-                    <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-2">
-                            <p class="truncate text-xs font-medium">{{ step.label }}</p>
-                            <Clock v-if="isRunning && step.waiting > 0" class="h-3 w-3 shrink-0 text-blue-500 animate-pulse" />
+                    <div class="flex items-center gap-3">
+                        <OutreachChannelIcon v-if="step.channel" :channel="step.channel" class="h-3.5 w-3.5 shrink-0" />
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                                <p class="truncate text-xs font-medium">{{ step.label }}</p>
+                                <Clock v-if="isRunning && step.waiting > 0" class="h-3 w-3 shrink-0 text-blue-500 animate-pulse" />
+                            </div>
+                            <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                                <div
+                                    class="h-full rounded-full bg-primary transition-all duration-700 ease-out"
+                                    :style="{ width: `${Math.min(step.conversion_rate, 100)}%` }"
+                                />
+                            </div>
                         </div>
-                        <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
-                            <div
-                                class="h-full rounded-full bg-primary transition-all duration-700 ease-out"
-                                :style="{ width: `${Math.min(step.conversion_rate, 100)}%` }"
-                            />
+                        <div class="shrink-0 text-right text-[10px] text-muted-foreground">
+                            <p class="font-semibold text-foreground tabular-nums">{{ step.reached }}</p>
+                            <p class="tabular-nums">{{ step.conversion_rate }}%</p>
                         </div>
                     </div>
-                    <div class="shrink-0 text-right text-[10px] text-muted-foreground">
-                        <p class="font-semibold text-foreground tabular-nums">{{ step.reached }}</p>
-                        <p class="tabular-nums">{{ step.conversion_rate }}%</p>
+                    <div v-if="showFunnelCapHint(step)" class="mt-1.5 pl-6">
+                        <ChannelRateLimitHint
+                            channel="linkedin"
+                            :variant="step.action === 'send_invite' ? 'invite' : 'action'"
+                            :quota="funnelQuotaForStep(step)"
+                            :has-invite-note="!!step.has_invite_note"
+                        />
                     </div>
                 </div>
             </div>

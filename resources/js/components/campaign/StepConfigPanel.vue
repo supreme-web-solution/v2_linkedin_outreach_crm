@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { usePage } from '@inertiajs/vue3';
 import { Clock, GitBranch, Trash2 } from '@lucide/vue';
 import FlowMessageAiHelp from '@/components/flow/FlowMessageAiHelp.vue';
 import CampaignActionIcon from '@/components/campaign/CampaignActionIcon.vue';
-import InviteNoteLimitHint from '@/components/linkedin/InviteNoteLimitHint.vue';
+import InviteNoteLimitHint, { type ActionQuotaSnapshot } from '@/components/linkedin/InviteNoteLimitHint.vue';
 import { conditionPrerequisiteWarning } from '@/components/campaign/stepMutations';
 import { CAMPAIGN_ACTIONS, CAMPAIGN_CONDITIONS, type CampaignStep } from '@/components/campaign/types';
 
@@ -19,6 +20,17 @@ const emit = defineEmits<{
     addAfter: [type: 'action' | 'delay', value?: string];
     addCondition: [value: string, label: string];
 }>();
+
+const page = usePage();
+const actionQuotas = computed(() => {
+    const raw = page.props.action_quotas as
+        | { invites?: ActionQuotaSnapshot; messages?: ActionQuotaSnapshot }
+        | undefined;
+    return raw ?? null;
+});
+const inviteQuota = computed(() => actionQuotas.value?.invites ?? null);
+const messageQuota = computed(() => actionQuotas.value?.messages ?? null);
+const hasInviteNote = computed(() => String(props.step.config?.message ?? '').trim() !== '');
 
 const isAction = computed(() => props.step.type === 'action');
 const isDelay = computed(() => props.step.type === 'delay');
@@ -107,8 +119,17 @@ const prerequisiteWarning = computed(() =>
                         class="w-full min-h-[6rem] resize-y rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30"
                         @input="emit('updateConfig', 'message', ($event.target as HTMLTextAreaElement).value)"
                     />
-                    <InviteNoteLimitHint v-if="step.value === 'send-invite'" variant="invite" />
-                    <InviteNoteLimitHint v-else-if="step.value === 'message'" variant="action" />
+                    <InviteNoteLimitHint
+                        v-if="step.value === 'send-invite'"
+                        variant="invite"
+                        :quota="inviteQuota"
+                        :has-invite-note="hasInviteNote"
+                    />
+                    <InviteNoteLimitHint
+                        v-else-if="step.value === 'message'"
+                        variant="action"
+                        :quota="messageQuota"
+                    />
                     <p class="text-[10px] text-muted-foreground" v-pre>
                         Variables:
                         <code class="rounded bg-muted px-0.5">{{firstName}}</code>

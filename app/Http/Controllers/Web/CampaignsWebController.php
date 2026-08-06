@@ -19,6 +19,7 @@ use App\V2\Campaign\CampaignLeadSyncService;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Campaign\CampaignRunDispatcher;
 use App\V2\Campaign\CampaignSequenceResolver;
+use App\V2\Services\DailyUsageQuotaService;
 use App\V2\Services\LeadListService;
 use App\V2\Services\UnipileTemporaryLimitGuard;
 use App\V2\Support\DeletedCampaignArtifactCleaner;
@@ -115,12 +116,16 @@ class CampaignsWebController extends Controller
 
     public function create(): Response
     {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+
         return Inertia::render('crm/CampaignBuilder', [
             'templates' => V2Campaign::templates(),
             'campaign' => null,
             'availableLeadLists' => $this->availableLeadLists(),
             'attachedLists' => [],
             'initialStep' => 'template',
+            'action_quotas' => app(DailyUsageQuotaService::class)->linkedInActionQuotas($user),
         ]);
     }
 
@@ -193,6 +198,9 @@ class CampaignsWebController extends Controller
         $campaign = $this->findOwnedCampaign($id);
         $campaign->loadCount(['campaignLeads', 'campaignLists']);
         $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
+
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
 
         $leadSearch = trim((string) $request->query('lead_search', ''));
         $leadStatus = trim((string) $request->query('lead_status', ''));
@@ -269,6 +277,7 @@ class CampaignsWebController extends Controller
             'linkedin_limit' => app(UnipileTemporaryLimitGuard::class)->snapshot(
                 (int) $campaign->user_id,
             ),
+            'action_quotas' => app(DailyUsageQuotaService::class)->linkedInActionQuotas($user),
         ]);
     }
 
@@ -284,12 +293,16 @@ class CampaignsWebController extends Controller
             'lead_count' => $this->countListLeads($l->list_hash, $l->list_src),
         ]);
 
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+
         return Inertia::render('crm/CampaignBuilder', [
             'templates' => V2Campaign::templates(),
             'campaign' => $campaign,
             'availableLeadLists' => $this->availableLeadLists(),
             'attachedLists' => $attachedLists,
             'initialStep' => request()->query('step', 'build'),
+            'action_quotas' => app(DailyUsageQuotaService::class)->linkedInActionQuotas($user),
         ]);
     }
 

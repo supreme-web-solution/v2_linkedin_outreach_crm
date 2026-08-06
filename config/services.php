@@ -78,6 +78,9 @@ return [
         // Max leads queued per Enrich / Prepare click (Leads + Outreach).
         // Also used as the in-flight cap: no new click while this many are already pending.
         'batch_size' => (int) env('EMAIL_ENRICHMENT_BATCH_SIZE', 25),
+        // Worker chunk size — FullEnrich polls up to ~90s each; keep jobs small vs 900s timeout.
+        'job_chunk_size' => (int) env('EMAIL_ENRICHMENT_JOB_CHUNK_SIZE', 5),
+        'job_chunk_stagger_seconds' => (int) env('EMAIL_ENRICHMENT_JOB_CHUNK_STAGGER_SECONDS', 3),
     ],
 
     'fullenrich' => [

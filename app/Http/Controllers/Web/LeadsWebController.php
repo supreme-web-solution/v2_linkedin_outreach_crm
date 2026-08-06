@@ -729,7 +729,7 @@ class LeadsWebController extends Controller
             ->update(['email_fetch_attempted_at' => now(), 'email_fetch_status' => 'pending']);
 
         try {
-            FetchAudienceEmailBatchJob::dispatch($idsToQueue, $user->id);
+            FetchAudienceEmailBatchJob::dispatchChunked($idsToQueue, $user->id);
 
             $queued = count($idsToQueue);
             $message = $queued < $profileCount
@@ -826,7 +826,7 @@ class LeadsWebController extends Controller
             ->update(['email_fetch_attempted_at' => now(), 'email_fetch_status' => 'pending']);
 
         try {
-            FetchSnEmailBatchJob::dispatch($idsToQueue, $user->id, $listId);
+            FetchSnEmailBatchJob::dispatchChunked($idsToQueue, $user->id, $listId);
 
             $queued = count($idsToQueue);
             $message = $queued < $profileCount

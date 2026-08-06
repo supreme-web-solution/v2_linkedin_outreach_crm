@@ -4,9 +4,9 @@ namespace App\Jobs;
 
 use App\Models\AudienceList;
 use App\Models\User;
+use App\V2\Services\FullEnrichClient;
 use App\V2\Services\LeadEnrichmentPersister;
 use App\V2\Services\LeadEnrichmentService;
-use App\V2\Services\FullEnrichClient;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -34,12 +34,40 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
         $this->onQueue('enrichment');
     }
 
+    /**
+     * @param  array<int>  $audienceListItemIds
+     */
+    public static function dispatchChunked(array $audienceListItemIds, int $userId): void
+    {
+        $ids = array_values(array_unique(array_map('intval', $audienceListItemIds)));
+        if ($ids === []) {
+            return;
+        }
+
+        $chunkSize = max(1, (int) config('services.email_scraping.job_chunk_size', 5));
+        $stagger = max(0, (int) config('services.email_scraping.job_chunk_stagger_seconds', 3));
+
+        foreach (array_chunk($ids, $chunkSize) as $i => $chunk) {
+            $pending = self::dispatch($chunk, $userId);
+            if ($i > 0 && $stagger > 0) {
+                $pending->delay(now()->addSeconds($i * $stagger));
+            }
+        }
+    }
+
     public function handle(
         LeadEnrichmentService $enrichmentService,
         LeadEnrichmentPersister $persister,
     ): void {
+        Log::info('[FetchAudienceEmailBatchJob] started', [
+            'user_id' => $this->userId,
+            'count' => count($this->audienceListItemIds),
+        ]);
+
         $user = User::find($this->userId);
         if (! $user) {
+            $this->markItemsRetryable($this->audienceListItemIds, 'User not found for enrichment job.');
+
             return;
         }
 
@@ -51,16 +79,33 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
         $dailyLimit = (int) config('services.email_scraping.daily_limit_per_user', 100);
         $items = AudienceList::whereIn('id', $this->audienceListItemIds)->get();
         $lookupsDone = 0;
+        $startedAt = microtime(true);
+        $softDeadline = $startedAt + max(60, $this->timeout - 150);
+        $remainingIds = [];
 
-        foreach ($items as $item) {
+        foreach ($items as $index => $item) {
+            if (microtime(true) >= $softDeadline) {
+                $remainingIds = $items->slice($index)->pluck('id')->map(fn ($id) => (int) $id)->all();
+                Log::warning('[FetchAudienceEmailBatchJob] soft deadline reached — re-queueing remainder', [
+                    'user_id' => $this->userId,
+                    'remaining' => count($remainingIds),
+                    'elapsed_seconds' => (int) (microtime(true) - $startedAt),
+                ]);
+                break;
+            }
+
             if (! empty($item->email_fetch_attempted_at) && $item->email_fetch_status === 'completed') {
                 continue;
             }
 
             if ($user->daily_profile_email_scraping_count >= $dailyLimit) {
-                Log::warning('FetchAudienceEmailBatchJob: daily limit reached mid-batch', [
+                Log::warning('[FetchAudienceEmailBatchJob] daily limit reached mid-batch', [
                     'user_id' => $user->id,
                 ]);
+                AudienceList::query()
+                    ->whereIn('id', $items->slice($index)->pluck('id'))
+                    ->whereIn('email_fetch_status', ['pending', 'processing'])
+                    ->update(['email_fetch_status' => null, 'email_fetch_attempted_at' => null]);
                 break;
             }
 
@@ -94,7 +139,7 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
                     'email_fetch_attempted_at' => null,
                 ]);
 
-                Log::error('FetchAudienceEmailBatchJob: enrichment failed', [
+                Log::error('[FetchAudienceEmailBatchJob] enrichment failed', [
                     'audience_list_id' => $item->id,
                     'error' => $e->getMessage(),
                 ]);
@@ -106,6 +151,55 @@ class FetchAudienceEmailBatchJob implements ShouldQueue
                 $user->refresh();
             }
         }
+
+        if ($remainingIds !== []) {
+            AudienceList::query()
+                ->whereIn('id', $remainingIds)
+                ->whereIn('email_fetch_status', ['pending', 'processing'])
+                ->update(['email_fetch_status' => 'pending']);
+
+            self::dispatch($remainingIds, $this->userId)
+                ->delay(now()->addSeconds(5));
+        }
+
+        Log::info('[FetchAudienceEmailBatchJob] finished', [
+            'user_id' => $this->userId,
+            'lookups' => $lookupsDone,
+            'requeued' => count($remainingIds),
+        ]);
+    }
+
+    public function failed(?\Throwable $e): void
+    {
+        Log::error('[FetchAudienceEmailBatchJob] job failed', [
+            'user_id' => $this->userId,
+            'item_ids' => $this->audienceListItemIds,
+            'error' => $e?->getMessage(),
+        ]);
+        $this->markItemsRetryable($this->audienceListItemIds, $e?->getMessage() ?: 'Enrichment job failed.');
+    }
+
+    /**
+     * @param  array<int>  $ids
+     */
+    private function markItemsRetryable(array $ids, string $reason): void
+    {
+        if ($ids === []) {
+            return;
+        }
+
+        AudienceList::query()
+            ->whereIn('id', $ids)
+            ->whereIn('email_fetch_status', ['pending', 'processing'])
+            ->update([
+                'email_fetch_status' => 'timed_out',
+                'email_fetch_attempted_at' => now(),
+            ]);
+
+        Log::warning('[FetchAudienceEmailBatchJob] marked items retryable (timed_out)', [
+            'ids' => $ids,
+            'reason' => $reason,
+        ]);
     }
 
     private function humanPause(): void
