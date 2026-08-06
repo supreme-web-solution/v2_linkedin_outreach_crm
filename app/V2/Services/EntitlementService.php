@@ -94,28 +94,14 @@ class EntitlementService
     }
 
     /**
+     * Org-level API capabilities for workspace owners (extension + v2 API).
+     *
      * @return list<string>
      */
     public function orgCapabilitiesFor(User $user): array
     {
-        if (! config('billing.require_entitlement', true)) {
+        if ($this->canAccessCrm($user)) {
             return ['*'];
-        }
-
-        if ($this->isPlatformAdmin($user) || $this->has($user, 'Bundle') || $this->has($user, 'OTO8')) {
-            return ['*'];
-        }
-
-        if ($this->has($user, 'FE')) {
-            return [
-                'leads.read', 'leads.write',
-                'campaigns.read', 'campaigns.write',
-                'calls.read', 'calls.write',
-                'content.read', 'content.write',
-                'conversations.read', 'conversations.write',
-                'team.read', 'team.write',
-                'integrations.read', 'integrations.write',
-            ];
         }
 
         return [];

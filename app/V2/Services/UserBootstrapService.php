@@ -11,22 +11,23 @@ class UserBootstrapService
 {
     public function ensurePersonalOrganization(User $user): V2Organization
     {
+        $organization = null;
+
         if ($user->current_organization_id) {
-            $existing = V2Organization::query()->find($user->current_organization_id);
-            if ($existing) {
-                return $existing;
-            }
+            $organization = V2Organization::query()->find($user->current_organization_id);
         }
 
-        $slugBase = Str::slug($user->name ?: explode('@', $user->email)[0]).'-'.$user->id;
+        if (! $organization) {
+            $slugBase = Str::slug($user->name ?: explode('@', $user->email)[0]).'-'.$user->id;
 
-        $organization = V2Organization::query()->firstOrCreate(
-            ['slug' => $slugBase],
-            [
-                'name' => ($user->name ?: 'User').' Workspace',
-                'status' => 'active',
-            ]
-        );
+            $organization = V2Organization::query()->firstOrCreate(
+                ['slug' => $slugBase],
+                [
+                    'name' => ($user->name ?: 'User').' Workspace',
+                    'status' => 'active',
+                ]
+            );
+        }
 
         $capabilities = app(EntitlementService::class)->orgCapabilitiesFor($user);
 
@@ -42,7 +43,9 @@ class UserBootstrapService
             ]
         );
 
-        $user->forceFill(['current_organization_id' => $organization->id])->save();
+        if ((int) $user->current_organization_id !== (int) $organization->id) {
+            $user->forceFill(['current_organization_id' => $organization->id])->save();
+        }
 
         return $organization;
     }
