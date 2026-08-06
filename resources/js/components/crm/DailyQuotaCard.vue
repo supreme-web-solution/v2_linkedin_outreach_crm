@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { ShieldCheck, Sparkles } from 'lucide-vue';
+import { ShieldCheck, Sparkles } from '@lucide/vue';
 import EmailEnrichmentInfoTooltip from '@/components/crm/EmailEnrichmentInfoTooltip.vue';
 
 export type DailyQuotaItem = {
