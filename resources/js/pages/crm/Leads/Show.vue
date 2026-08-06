@@ -42,7 +42,6 @@ interface Lead {
     public_identifier: string | null;
     profile_url: string | null;
     network_distance: string | null;
-    outreach_status: string | null;
     email_fetch_status: string | null;
     email_fetch_attempted_at: string | null;
     contacts: LeadContacts;
@@ -116,14 +115,6 @@ const filters = [
     { key: 'without_email', label: 'No email found' },
     { key: 'not_fetched', label: 'Not fetched' },
     { key: 'pending', label: 'Pending' },
-];
-
-const statusOptions = [
-    { value: 'new', label: 'New' },
-    { value: 'contacted', label: 'Contacted' },
-    { value: 'connected', label: 'Connected' },
-    { value: 'replied', label: 'Replied' },
-    { value: 'not_interested', label: 'Not interested' },
 ];
 
 const hasPending = computed(() =>
@@ -379,10 +370,6 @@ function deleteList() {
     router.delete(`/leads/lists/${encodeURIComponent(props.listId)}?src=${props.src}`);
 }
 
-function updateLeadStatus(lead: Lead, outreach_status: string) {
-    router.patch(`/leads/lead/${lead.id}/status`, { src: props.src, outreach_status }, { preserveScroll: true });
-}
-
 async function exportCsv() {
     busy.value = true;
     try {
@@ -574,7 +561,6 @@ function distanceLabel(d: string | null): string {
                                 </span>
                             </th>
                             <th class="px-4 py-3">Channels</th>
-                            <th v-if="src === 'sn'" class="px-4 py-3">Status</th>
                             <th class="w-20 px-3 py-3" />
                         </tr>
                     </thead>
@@ -654,15 +640,6 @@ function distanceLabel(d: string | null): string {
                             </td>
                             <td class="px-4 py-4">
                                 <LeadContactTags :contacts="leadContacts(lead)" :show-email="false" />
-                            </td>
-                            <td v-if="src === 'sn'" class="px-4 py-4">
-                                <select
-                                    class="rounded-md border border-border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
-                                    :value="lead.outreach_status || 'new'"
-                                    @change="updateLeadStatus(lead, ($event.target as HTMLSelectElement).value)"
-                                >
-                                    <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                                </select>
                             </td>
                             <td class="px-3 py-4">
                                 <div class="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">

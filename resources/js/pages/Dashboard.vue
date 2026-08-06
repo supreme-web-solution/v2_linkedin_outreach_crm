@@ -26,6 +26,8 @@ const props = defineProps<{
         linkedin_leads: number;
         imported_leads: number;
         campaigns: number;
+        linkedin_campaigns?: number;
+        outreach_campaigns?: number;
         conversations: number;
         calls: number;
         messages_sent: number;
@@ -46,6 +48,15 @@ const todayLabel = new Intl.DateTimeFormat(undefined, {
     day: 'numeric',
 }).format(new Date());
 
+const campaignCardHref = computed(() => {
+    const linkedin = props.stats.linkedin_campaigns ?? 0;
+    const outreach = props.stats.outreach_campaigns ?? 0;
+    if (outreach > 0 && linkedin === 0) return '/outreach';
+    if (linkedin > 0 && outreach === 0) return '/campaigns';
+    // Both (or neither): prefer multi-channel hub; LinkedIn campaigns stay in the sidebar.
+    return outreach >= linkedin ? '/outreach' : '/campaigns';
+});
+
 const statCards = [
     {
         href: '/leads',
@@ -57,7 +68,7 @@ const statCards = [
         ring: 'ring-blue-500/10',
     },
     {
-        href: '/campaigns',
+        href: '/outreach',
         label: 'Campaigns',
         valueKey: 'campaigns' as const,
         sublabelKey: null,
@@ -98,6 +109,15 @@ function leadsSublabel(): string {
     if (props.stats.linkedin_leads > 0) parts.push(`${props.stats.linkedin_leads.toLocaleString()} LinkedIn`);
     if (props.stats.imported_leads > 0) parts.push(`${props.stats.imported_leads.toLocaleString()} imported`);
     return parts.join(' · ') || 'Import or sync lists to get started';
+}
+
+function campaignsSublabel(): string {
+    const linkedin = props.stats.linkedin_campaigns ?? 0;
+    const outreach = props.stats.outreach_campaigns ?? 0;
+    const parts: string[] = [];
+    if (linkedin > 0) parts.push(`${linkedin.toLocaleString()} LinkedIn`);
+    if (outreach > 0) parts.push(`${outreach.toLocaleString()} multi-channel`);
+    return parts.join(' · ') || 'Create a LinkedIn or multi-channel campaign';
 }
 </script>
 
@@ -148,7 +168,7 @@ function leadsSublabel(): string {
             <Link
                 v-for="card in statCards"
                 :key="card.label"
-                :href="card.href"
+                :href="card.valueKey === 'campaigns' ? campaignCardHref : card.href"
                 class="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg sm:p-5"
             >
                 <div class="flex items-start justify-between gap-3">
@@ -161,6 +181,9 @@ function leadsSublabel(): string {
                         </p>
                         <p v-if="card.valueKey === 'leads'" class="mt-1 truncate text-xs text-muted-foreground">
                             {{ leadsSublabel() }}
+                        </p>
+                        <p v-else-if="card.valueKey === 'campaigns'" class="mt-1 truncate text-xs text-muted-foreground">
+                            {{ campaignsSublabel() }}
                         </p>
                     </div>
                     <div

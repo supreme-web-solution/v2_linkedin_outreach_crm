@@ -11,6 +11,7 @@ use App\Models\V2Call;
 use App\Models\V2Campaign;
 use App\Models\V2Conversation;
 use App\Models\V2Lead;
+use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
 use App\Models\V2Organization;
@@ -163,6 +164,34 @@ class DashboardTest extends TestCase
 
         $this->actingAs($user)->get(route('dashboard'))
             ->assertInertia(fn ($page) => $page->where('stats.campaigns', 0));
+    }
+
+    public function test_dashboard_campaign_count_includes_multi_channel_outreach(): void
+    {
+        $user = $this->userWithOrg();
+
+        V2Campaign::query()->create([
+            'organization_id' => $user->current_organization_id,
+            'user_id' => $user->id,
+            'name' => 'LinkedIn campaign',
+            'status' => 'draft',
+        ]);
+
+        V2OutreachCampaign::query()->create([
+            'organization_id' => $user->current_organization_id,
+            'user_id' => $user->id,
+            'name' => 'Multi-channel run',
+            'template_type' => 'custom',
+            'status' => 'active',
+            'node_model' => [],
+        ]);
+
+        $this->actingAs($user)->get(route('dashboard'))
+            ->assertInertia(fn ($page) => $page
+                ->where('stats.campaigns', 2)
+                ->where('stats.linkedin_campaigns', 1)
+                ->where('stats.outreach_campaigns', 1)
+            );
     }
 
     private function userWithOrg(): User

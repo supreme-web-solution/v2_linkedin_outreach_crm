@@ -577,20 +577,28 @@ EOD;
     {
         $content = str_replace(["\r\n", "\r"], "\n", $content);
         $content = str_replace('**', '', $content);
+        $content = preg_replace('/\*\*(.+?)\*\*/s', '$1', $content) ?? $content;
 
         // Break out subject line if present
-        $content = preg_replace('/^\s*Subject:\s*/i', 'Subject: ', $content);
-        $content = preg_replace('/(Subject:[^\n]+)\s*(Dear\b)/i', "$1\n\n$2", $content);
+        $content = preg_replace('/^\s*Subject:\s*/i', 'Subject: ', $content) ?? $content;
+        $content = preg_replace('/(Subject:[^\n]+)\s*(Dear\b)/i', "$1\n\n$2", $content) ?? $content;
 
         // Add a clear break after greeting
-        $content = preg_replace('/(Dear[^,\n]*,)\s*/i', "$1\n\n", $content);
+        $content = preg_replace('/(Dear[^,\n]*,)\s*/i', "$1\n\n", $content) ?? $content;
 
         // Add a break before common sign-offs
-        $content = preg_replace('/\s*(Warm regards|Best regards|Kind regards|Sincerely|Regards),/i', "\n\n$1,", $content);
+        $content = preg_replace('/\s*(Warm regards|Best regards|Kind regards|Sincerely|Regards),/i', "\n\n$1,", $content) ?? $content;
 
-        // Normalize spacing/newlines
-        $content = preg_replace("/[ \t]+/", ' ', $content);
-        $content = preg_replace("/\n{3,}/", "\n\n", $content);
+        // Ice-breakers / connection notes: break packed sentences into short paragraphs
+        if (in_array($aiType, ['personalized_ice_breaker', 'linkedin_connection_message', 'first_cold_email'], true)) {
+            if (substr_count($content, "\n") < 2 && mb_strlen($content) > 100) {
+                $content = preg_replace('/([.!?])\s+(?=[A-Z“"\'])/u', "$1\n\n", $content) ?? $content;
+            }
+        }
+
+        // Normalize spacing/newlines (keep intentional blank lines)
+        $content = preg_replace("/[ \t]+/", ' ', $content) ?? $content;
+        $content = preg_replace("/\n{3,}/", "\n\n", $content) ?? $content;
 
         return trim($content);
     }

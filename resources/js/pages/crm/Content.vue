@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { AlertCircle, ChevronLeft, Clock, Copy, Edit2, FileText, Image as ImageIcon, Lightbulb, Loader2, PenLine, Rocket, Save, Send, Sparkles, Trash2, Type, Upload, Video, X } from '@lucide/vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
-import ToggleField from '@/components/ToggleField.vue';
+import SimpleTextEditor from '@/components/crm/SimpleTextEditor.vue';
 import { INSPIRATION_DRAFT_KEY } from '@/lib/contentDraft';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
@@ -88,7 +88,6 @@ const panel = ref<'list' | 'compose'>('list');
 const editingId = ref<number | null>(null);
 const fromInspiration = ref(false);
 const composeDraftHandled = ref(false);
-const contentTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const imageInputRef = ref<HTMLInputElement | null>(null);
 const videoInputRef = ref<HTMLInputElement | null>(null);
 
@@ -109,11 +108,11 @@ const form = useForm({
 });
 
 const aiTopic = ref('');
-const aiGenerateImage = ref(false);
 const aiStyle = ref<'professional' | 'casual' | 'motivational' | 'educational' | 'storytelling'>('professional');
 const aiLength = ref<'short' | 'medium' | 'long'>('medium');
 const aiTone = ref<'professional' | 'casual' | 'motivational' | 'educational' | 'storytelling'>('professional');
 const aiLoading = ref(false);
+const imageLoading = ref(false);
 const aiError = ref('');
 
 const charMax = 3000;
@@ -214,10 +213,6 @@ async function applyInspirationDraftFromUrl() {
 
     composeDraftHandled.value = true;
     cleanComposeQueryFromUrl();
-
-    await nextTick();
-    contentTextareaRef.value?.focus();
-    contentTextareaRef.value?.setSelectionRange(0, 0);
 }
 
 onMounted(() => {
@@ -269,6 +264,8 @@ function openVideoPicker() {
 
 function clearImages() {
     form.images = [];
+    form.ai_image_url = '';
+    form.ai_image_path = '';
     if (imageInputRef.value) {
         imageInputRef.value.value = '';
     }
@@ -466,26 +463,39 @@ async function generateAi() {
             topic: aiTopic.value,
             style: aiStyle.value,
             length: aiLength.value,
-            generate_image: aiGenerateImage.value,
+            generate_image: false,
         });
         applyContentAndHashtags(data.content ?? '', data.hashtags ?? '');
-
-        if (data.url && data.path) {
-            form.ai_image_url = data.url;
-            form.ai_image_path = data.path;
-            form.post_type = 'image';
-        } else if (aiGenerateImage.value) {
-            form.ai_image_url = '';
-            form.ai_image_path = '';
-        }
-
-        if (data.image_error) {
-            aiError.value = data.image_error;
-        }
     } catch (e) {
         aiError.value = e instanceof Error ? e.message : 'AI generation failed.';
     } finally {
         aiLoading.value = false;
+    }
+}
+
+async function generateImageFromContent() {
+    if (!form.content.trim()) {
+        aiError.value = 'Add or paste post content first, then generate an image.';
+        return;
+    }
+
+    imageLoading.value = true;
+    aiError.value = '';
+    try {
+        const data = await apiPost('/content/ai/generate-image', {
+            content: form.content,
+            topic: aiTopic.value || undefined,
+        });
+        if (data.url && data.path) {
+            form.ai_image_url = data.url;
+            form.ai_image_path = data.path;
+            form.post_type = 'image';
+            form.images = [];
+        }
+    } catch (e) {
+        aiError.value = e instanceof Error ? e.message : 'Image generation failed.';
+    } finally {
+        imageLoading.value = false;
     }
 }
 
@@ -731,21 +741,31 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                     <option value="long">Long</option>
                                 </select>
                             </div>
-                            <ToggleField v-model="aiGenerateImage" :disabled="aiLoading || !aiConfigured" description="Generate a related image.">
-                                Also generate a related image 
-                            </ToggleField>
-                            <AppToolbarButton class="w-full" :disabled="aiLoading || !aiConfigured || !aiTopic.trim()" @click="generateAi">
+                            <AppToolbarButton class="w-full" :disabled="aiLoading || imageLoading || !aiConfigured || !aiTopic.trim()" @click="generateAi">
                                 <Loader2 v-if="aiLoading" class="h-4 w-4 animate-spin" />
                                 <Sparkles v-else class="h-4 w-4" />
                                 Generate AI Content
                             </AppToolbarButton>
+                            <AppToolbarButton
+                                variant="slate"
+                                class="w-full"
+                                :disabled="aiLoading || imageLoading || !aiConfigured || !form.content.trim()"
+                                @click="generateImageFromContent"
+                            >
+                                <Loader2 v-if="imageLoading" class="h-4 w-4 animate-spin" />
+                                <ImageIcon v-else class="h-4 w-4" />
+                                Generate image from post
+                            </AppToolbarButton>
+                            <p class="text-[11px] leading-snug text-muted-foreground">
+                                Image uses the text in the post editor (AI-generated or pasted). Independent of content generation.
+                            </p>
                             <div class="grid grid-cols-2 gap-2">
-                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="improve('make_viral')">Make Viral</button>
-                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="improve('add_hook')">Add Hook</button>
-                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="improve('add_cta')">Add CTA</button>
-                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="improve('bullet_points')">Bullets</button>
-                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="rewrite('shorten')">Shorten</button>
-                                <button type="button" :disabled="aiLoading || !form.content.trim()" :class="aiChipClass" @click="rewrite('expand')">Expand</button>
+                                <button type="button" :disabled="aiLoading || imageLoading || !form.content.trim()" :class="aiChipClass" @click="improve('make_viral')">Make Viral</button>
+                                <button type="button" :disabled="aiLoading || imageLoading || !form.content.trim()" :class="aiChipClass" @click="improve('add_hook')">Add Hook</button>
+                                <button type="button" :disabled="aiLoading || imageLoading || !form.content.trim()" :class="aiChipClass" @click="improve('add_cta')">Add CTA</button>
+                                <button type="button" :disabled="aiLoading || imageLoading || !form.content.trim()" :class="aiChipClass" @click="improve('bullet_points')">Bullets</button>
+                                <button type="button" :disabled="aiLoading || imageLoading || !form.content.trim()" :class="aiChipClass" @click="rewrite('shorten')">Shorten</button>
+                                <button type="button" :disabled="aiLoading || imageLoading || !form.content.trim()" :class="aiChipClass" @click="rewrite('expand')">Expand</button>
                             </div>
                             <p v-if="aiError" class="text-xs text-red-500">{{ aiError }}</p>
                             <p v-if="!aiConfigured" class="text-xs text-orange-600">AI is not available right now. Contact your administrator.</p>
@@ -805,7 +825,6 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                         {{ form.images.length ? `${form.images.length} file(s) selected` : 'AI-generated image attached' }}
                                     </p>
                                     <button
-                                        v-if="form.images.length"
                                         type="button"
                                         class="inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:underline"
                                         @click="clearImages"
@@ -877,12 +896,11 @@ async function rewrite(mode: 'shorten' | 'expand') {
 
                     <div class="rounded-xl border border-border bg-card p-4 shadow-sm">
                         <label class="mb-2 block text-sm font-semibold">Post content</label>
-                        <textarea
-                            ref="contentTextareaRef"
+                        <SimpleTextEditor
                             v-model="form.content"
-                            rows="12"
-                            class="w-full rounded-xl border border-border bg-muted/20 px-5 py-5 text-sm leading-relaxed focus:border-blue-400 focus:bg-background focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                            placeholder="Write your LinkedIn post here…"
+                            :rows="12"
+                            min-height-class="min-h-[280px]"
+                            placeholder="Write or paste your LinkedIn post here… line breaks are kept."
                         />
                         <div class="mt-2 flex items-center justify-between gap-2 text-xs">
                             <span class="text-muted-foreground">Main post text — hashtags go in the field below.</span>

@@ -2,6 +2,7 @@
 import { useForm } from '@inertiajs/vue3';
 import { Loader2, Mail, MessageSquare, Sparkles } from '@lucide/vue';
 import { computed, ref } from 'vue';
+import SimpleTextEditor from '@/components/crm/SimpleTextEditor.vue';
 
 interface AiContent {
     id: number;
@@ -108,6 +109,7 @@ async function generate() {
         }
         form.content = data.content ?? '';
         form.words = data.words ?? 0;
+        recountWords();
     } catch (e) {
         error.value = 'Network error. Please try again.';
     } finally {
@@ -211,14 +213,20 @@ function submit() {
                     <textarea v-model="form.idea" rows="3" placeholder="Enter an idea or niche to generate content." class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"></textarea>
                 </label>
 
-                <label class="block text-sm">
+                <div class="block text-sm">
                     <div class="mb-1 flex items-center justify-between">
                         <span class="font-medium text-foreground">Content</span>
                         <span class="text-xs text-muted-foreground">{{ form.words }} words</span>
                     </div>
-                    <textarea v-model="form.content" rows="10" required placeholder="Generated content appears here. You can edit it before saving." class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" @input="recountWords"></textarea>
+                    <SimpleTextEditor
+                        v-model="form.content"
+                        :required="true"
+                        :rows="12"
+                        placeholder="Generated content appears here with line breaks. Edit, then copy or save."
+                        @input="recountWords"
+                    />
                     <span v-if="form.errors.content" class="text-xs text-red-500">{{ form.errors.content }}</span>
-                </label>
+                </div>
             </div>
 
             <div class="mt-5 flex flex-wrap justify-end gap-3">

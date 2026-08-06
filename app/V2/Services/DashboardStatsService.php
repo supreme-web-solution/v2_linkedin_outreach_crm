@@ -11,6 +11,7 @@ use App\Models\V2Call;
 use App\Models\V2Campaign;
 use App\Models\V2Conversation;
 use App\Models\V2Message;
+use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
 
@@ -22,6 +23,8 @@ class DashboardStatsService
      *     linkedin_leads: int,
      *     imported_leads: int,
      *     campaigns: int,
+     *     linkedin_campaigns: int,
+     *     outreach_campaigns: int,
      *     conversations: int,
      *     calls: int,
      *     messages_sent: int,
@@ -33,12 +36,16 @@ class DashboardStatsService
         $orgId = $user->current_organization_id;
         $linkedinLeads = $this->linkedinLeadCountForUser($user->id);
         $importedLeads = $this->importedLeadCountForUser($user->id);
+        $linkedinCampaigns = $this->linkedinCampaignCount($orgId);
+        $outreachCampaigns = $this->outreachCampaignCount($orgId, $user->id);
 
         return [
             'leads' => $linkedinLeads + $importedLeads,
             'linkedin_leads' => $linkedinLeads,
             'imported_leads' => $importedLeads,
-            'campaigns' => $orgId ? V2Campaign::query()->where('organization_id', $orgId)->count() : 0,
+            'campaigns' => $linkedinCampaigns + $outreachCampaigns,
+            'linkedin_campaigns' => $linkedinCampaigns,
+            'outreach_campaigns' => $outreachCampaigns,
             'conversations' => V2Conversation::query()
                 ->where('user_id', $user->id)
                 ->count(),
@@ -49,6 +56,33 @@ class DashboardStatsService
                 ->count(),
             'unread_conversations' => app(InboxUnreadService::class)->unreadCountForUser($user->id),
         ];
+    }
+
+    public function linkedinCampaignCount(?int $orgId): int
+    {
+        if (! $orgId) {
+            return 0;
+        }
+
+        return V2Campaign::query()->where('organization_id', $orgId)->count();
+    }
+
+    public function outreachCampaignCount(?int $orgId, int $userId): int
+    {
+        $query = V2OutreachCampaign::query();
+
+        if ($orgId) {
+            $query->where(function ($q) use ($orgId, $userId) {
+                $q->where('organization_id', $orgId)
+                    ->orWhere(function ($inner) use ($userId) {
+                        $inner->whereNull('organization_id')->where('user_id', $userId);
+                    });
+            });
+        } else {
+            $query->where('user_id', $userId);
+        }
+
+        return $query->count();
     }
 
     /**

@@ -496,12 +496,37 @@ PROMPT;
             return '';
         }
 
+        $text = str_replace(["\r\n", "\r"], "\n", $text);
         $text = preg_replace('/\*\*(.+?)\*\*/s', '$1', $text) ?? $text;
         $text = preg_replace('/__(.+?)__/s', '$1', $text) ?? $text;
         $text = str_replace('**', '', $text);
         $text = preg_replace('/^#{1,6}\s+/m', '', $text) ?? $text;
 
+        // Unpack jammed paragraphs when the model returns a single block
+        if (substr_count($text, "\n") < 2 && mb_strlen($text) > 160) {
+            $text = preg_replace('/([.!?])\s+(?=[A-Z“"\'🚀💡✅🔥])/u', "$1\n\n", $text) ?? $text;
+        }
+
+        // Break before emoji-led lines when jammed
+        $text = preg_replace('/([^\n])\s*([\x{1F300}-\x{1FAFF}])/u', "$1\n\n$2", $text) ?? $text;
+
+        $text = preg_replace("/[ \t]+/", ' ', $text) ?? $text;
+        $text = preg_replace("/\n{3,}/", "\n\n", $text) ?? $text;
+
         return trim($text);
+    }
+
+    /**
+     * Build an image prompt from post body (AI-generated or user-pasted).
+     */
+    public function imagePromptFromPostContent(string $content, ?string $topic = null): string
+    {
+        $topic = trim((string) $topic);
+        if ($topic === '') {
+            $topic = 'LinkedIn post';
+        }
+
+        return $this->buildPostImagePrompt($topic, $content);
     }
 }
 

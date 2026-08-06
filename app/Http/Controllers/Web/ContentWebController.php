@@ -375,15 +375,30 @@ class ContentWebController extends Controller
     public function generateImageAi(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'prompt' => ['required', 'string', 'max:700'],
+            'prompt' => ['nullable', 'string', 'max:2000'],
+            'content' => ['nullable', 'string', 'max:5000'],
+            'topic' => ['nullable', 'string', 'max:500'],
         ]);
+
+        $content = trim((string) ($data['content'] ?? ''));
+        $prompt = trim((string) ($data['prompt'] ?? ''));
+
+        if ($content === '' && $prompt === '') {
+            return response()->json([
+                'message' => 'Add post content (or a prompt) first, then generate an image.',
+            ], 422);
+        }
 
         if (!$this->openai->isConfigured()) {
             return response()->json(['message' => OpenAiUserError::NOT_CONFIGURED], 422);
         }
 
         try {
-            $image = $this->openai->generateImage($data['prompt'], (int) auth()->id());
+            $imagePrompt = $content !== ''
+                ? $this->openai->imagePromptFromPostContent($content, $data['topic'] ?? null)
+                : $prompt;
+
+            $image = $this->openai->generateImage($imagePrompt, (int) auth()->id());
         } catch (\Throwable $e) {
             return response()->json(['message' => OpenAiUserError::fromThrowable($e)], 422);
         }
