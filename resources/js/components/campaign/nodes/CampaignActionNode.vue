@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps } from '@vue-flow/core';
 import { Trash2 } from '@lucide/vue';
 import { computed, inject } from 'vue';
 import CampaignActionIcon from '@/components/campaign/CampaignActionIcon.vue';
+import CampaignNodeAddMenu from '@/components/campaign/CampaignNodeAddMenu.vue';
 import { actionMeta } from '@/components/campaign/types';
 import type { CampaignFlowNodeData } from '@/components/campaign/flowAdapter';
 
@@ -55,4 +56,8 @@ const step = computed(() => props.data.step);
     </div>
 
     <Handle id="main" type="source" :position="Position.Bottom" class="!border-slate-300 !bg-white" />
+
+    <div class="absolute left-1/2 top-full mt-2 -translate-x-1/2">
+        <CampaignNodeAddMenu :menu-id="`after-${step.key}`" :after-key="step.key" />
+    </div>
 </template>

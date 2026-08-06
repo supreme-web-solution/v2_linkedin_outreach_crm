@@ -16,12 +16,15 @@ import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
-import { Plus, Clock } from '@lucide/vue';
+import { Plus, Clock, GitBranch, Map, X } from '@lucide/vue';
 import CampaignActionIcon from '@/components/campaign/CampaignActionIcon.vue';
 import { nodeModelToFlow, type CampaignFlowNodeData } from '@/components/campaign/flowAdapter';
 import {
     findStepByKey,
     insertStepAfter,
+    insertConditionAfter,
+    insertIntoBranch,
+    insertDelayIntoBranch,
     disconnectStep,
     nextStepKey,
     removeStep,
@@ -29,10 +32,11 @@ import {
     updateStepConfig,
     updateStepField,
 } from '@/components/campaign/stepMutations';
-import { CAMPAIGN_ACTIONS, START_NODE_ID, type CampaignStep } from '@/components/campaign/types';
+import { CAMPAIGN_ACTIONS, CAMPAIGN_CONDITIONS, START_NODE_ID, type CampaignStep } from '@/components/campaign/types';
 import FlowDeletableEdge from '@/components/flow/FlowDeletableEdge.vue';
 import { FLOW_CANVAS_DOT_BG } from '@/components/flow/flowCanvasConfig';
 import '@/components/flow/flow-canvas-dots.css';
+import { useFlowMinimapVisibility } from '@/composables/useFlowMinimapVisibility';
 import CampaignActionNode from '@/components/campaign/nodes/CampaignActionNode.vue';
 import CampaignConditionNode from '@/components/campaign/nodes/CampaignConditionNode.vue';
 import CampaignDelayNode from '@/components/campaign/nodes/CampaignDelayNode.vue';
@@ -42,6 +46,10 @@ import StepConfigPanel from '@/components/campaign/StepConfigPanel.vue';
 
 const props = defineProps<{ steps: CampaignStep[] }>();
 const emit = defineEmits<{ stepsChanged: [steps: CampaignStep[]] }>();
+
+const { showMinimap, setMinimapVisible, toggleMinimap } = useFlowMinimapVisibility(
+    'socifusion_campaign_flow_minimap',
+);
 
 const nodeTypes = {
     campaignStart: markRaw(CampaignStartNode),
@@ -59,6 +67,7 @@ const nodes = ref<Node[]>([]);
 const edges = ref<Edge[]>([]);
 const selectedKey = ref<number | null>(null);
 const showAddMenu = ref(false);
+const openAddMenuId = ref<string | null>(null);
 const addStepTriggerRef = ref<HTMLElement | null>(null);
 const addMenuAnchor = ref({ top: 0, left: 0, width: 0 });
 
@@ -144,6 +153,41 @@ function onDelete(key: number) {
     }
 }
 
+provide('campaignAddMenu', {
+    openId: openAddMenuId,
+    toggle: (id: string) => { openAddMenuId.value = openAddMenuId.value === id ? null : id; },
+    close: () => { openAddMenuId.value = null; },
+});
+
+provide('campaignAddContext', {
+    addActionAfter: (afterKey: number, value: string) => {
+        const newKey = nextStepKey(props.steps);
+        pushSteps(insertStepAfter(props.steps, afterKey, 'action', value));
+        selectedKey.value = newKey;
+        openAddMenuId.value = null;
+    },
+    addDelayAfter: (afterKey: number) => {
+        const newKey = nextStepKey(props.steps);
+        pushSteps(insertStepAfter(props.steps, afterKey, 'delay'));
+        selectedKey.value = newKey;
+        openAddMenuId.value = null;
+    },
+    addConditionAfter: (afterKey: number, value: string, label: string) => {
+        const newKey = nextStepKey(props.steps);
+        pushSteps(insertConditionAfter(props.steps, afterKey, value, label));
+        selectedKey.value = newKey;
+        openAddMenuId.value = null;
+    },
+    addIntoBranch: (conditionKey: number, branch: 'accepted' | 'not_accepted', type: 'action' | 'delay', value = 'message') => {
+        pushSteps(insertIntoBranch(props.steps, conditionKey, branch, type, value));
+        openAddMenuId.value = null;
+    },
+    addDelayIntoBranch: (conditionKey: number, branch: 'accepted' | 'not_accepted') => {
+        pushSteps(insertDelayIntoBranch(props.steps, conditionKey, branch));
+        openAddMenuId.value = null;
+    },
+});
+
 provide('campaignFlowActions', {
     select: onSelect,
     delete: onDelete,
@@ -175,6 +219,7 @@ function onNodeClick(event: NodeMouseEvent) {
 function onPaneClick() {
     selectedKey.value = null;
     showAddMenu.value = false;
+    openAddMenuId.value = null;
 }
 
 function onNodeDragStop(event: NodeDragEvent) {
@@ -210,6 +255,14 @@ function onAddAfter(type: 'action' | 'delay', value?: string) {
 
 function addFromToolbar(type: 'action' | 'delay', value?: string) {
     onAddAfter(type, value);
+}
+
+function addConditionFromToolbar(value: string, label: string) {
+    const afterKey = selectedKey.value ?? findLastInsertKey();
+    const newKey = nextStepKey(props.steps);
+    pushSteps(insertConditionAfter(props.steps, afterKey, value, label));
+    selectedKey.value = newKey;
+    showAddMenu.value = false;
 }
 
 function minimapNodeColor(node: Node): string {
@@ -250,8 +303,18 @@ function minimapNodeColor(node: Node): string {
                 />
                 <Controls :position="Position.BottomLeft" :show-zoom="true" :show-fit-view="true" :show-interactive="true" />
 
-                <div class="campaign-flow-minimap-wrap">
-                    <p class="campaign-flow-minimap-label">Overview</p>
+                <div v-if="showMinimap" class="campaign-flow-minimap-wrap">
+                    <div class="flex items-center justify-between gap-2">
+                        <p class="campaign-flow-minimap-label">Overview</p>
+                        <button
+                            type="button"
+                            class="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                            title="Hide overview"
+                            @click.stop="setMinimapVisible(false)"
+                        >
+                            <X class="h-3.5 w-3.5" />
+                        </button>
+                    </div>
                     <MiniMap
                         :node-color="minimapNodeColor"
                         :mask-color="'rgba(255, 255, 255, 0.65)'"
@@ -260,6 +323,17 @@ function minimapNodeColor(node: Node): string {
                     />
                 </div>
             </VueFlow>
+
+            <button
+                v-if="!showMinimap"
+                type="button"
+                class="absolute bottom-4 right-4 z-10 inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+                title="Show overview map"
+                @click="toggleMinimap"
+            >
+                <Map class="h-3.5 w-3.5" />
+                Overview
+            </button>
 
             <div class="absolute bottom-4 left-4 z-10 flex flex-col items-start gap-3">
                 <div ref="addStepTriggerRef" class="relative">
@@ -297,6 +371,25 @@ function minimapNodeColor(node: Node): string {
                                 <span class="font-medium text-slate-700">{{ action.label }}</span>
                             </button>
                             <div class="my-1.5 border-t border-slate-100" />
+                            <p class="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-orange-500/90">
+                                Conditions · Yes / No paths
+                            </p>
+                            <button
+                                v-for="cond in CAMPAIGN_CONDITIONS"
+                                :key="cond.value"
+                                type="button"
+                                class="flex w-full items-center gap-3 rounded-xl border border-orange-200/80 bg-orange-50/60 px-2.5 py-2.5 text-left text-xs transition hover:border-orange-300 hover:bg-orange-50"
+                                @click="addConditionFromToolbar(cond.value, cond.label)"
+                            >
+                                <span class="flex h-8 w-8 items-center justify-center rounded-lg border border-orange-200 bg-white text-orange-600">
+                                    <GitBranch class="h-4 w-4" />
+                                </span>
+                                <span class="min-w-0 flex-1">
+                                    <span class="block font-semibold text-orange-950">{{ cond.label }}</span>
+                                    <span class="block text-[10px] font-normal text-orange-800/80">Branches to Yes (accepted) or No</span>
+                                </span>
+                            </button>
+                            <div class="my-1.5 border-t border-slate-100" />
                             <button
                                 type="button"
                                 class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-xs transition hover:bg-amber-50"
@@ -324,6 +417,7 @@ function minimapNodeColor(node: Node): string {
                 @update-config="onUpdateConfig"
                 @delete="selectedKey !== null && onDelete(selectedKey)"
                 @add-after="onAddAfter"
+                @add-condition="(value, label) => addConditionFromToolbar(value, label)"
             />
         </aside>
     </div>

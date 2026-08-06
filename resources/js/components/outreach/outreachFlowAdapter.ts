@@ -3,8 +3,10 @@ import { deletableEdge } from '@/components/flow/flowEdgeUtils';
 import { START_NODE_ID, type OutreachStep } from '@/components/outreach/types';
 
 const MAIN_X = 380;
-const ACCEPTED_X = 80;
-const NOT_ACCEPTED_X = 680;
+/** No / not_accepted branch — left side of canvas */
+const NOT_ACCEPTED_X = 80;
+/** Yes / accepted branch — right side of canvas */
+const ACCEPTED_X = 680;
 const Y_GAP = 110;
 const BRANCH_Y_GAP = 95;
 

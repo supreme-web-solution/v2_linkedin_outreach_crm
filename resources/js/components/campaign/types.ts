@@ -25,6 +25,10 @@ export const CAMPAIGN_ACTIONS: CampaignActionMeta[] = [
     { value: 'like-post', label: 'Like a Post', accent: '#e11d48', light: '#ffe4e6', border: '#fda4af', ring: '#e11d4833' },
 ];
 
+export const CAMPAIGN_CONDITIONS = [
+    { value: 'accepted', label: 'Invite accepted?' },
+] as const;
+
 export function actionMeta(value?: string | number): CampaignActionMeta {
     return CAMPAIGN_ACTIONS.find((a) => a.value === value) ?? CAMPAIGN_ACTIONS[0];
 }

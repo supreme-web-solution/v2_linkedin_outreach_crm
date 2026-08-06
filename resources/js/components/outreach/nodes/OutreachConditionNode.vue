@@ -47,20 +47,8 @@ const channelLabel = computed(() => {
         </button>
     </div>
 
+    <!-- No branch — left -->
     <div class="pointer-events-auto absolute -left-[4.5rem] top-1/2 flex -translate-y-1/2 flex-col items-center gap-1">
-        <div class="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
-            <Check class="h-3 w-3" />
-            Yes
-        </div>
-        <OutreachNodeAddMenu
-            :menu-id="`branch-${step.key}-yes`"
-            :after-key="step.key"
-            branch="accepted"
-            :condition-key="step.key"
-            align="left"
-        />
-    </div>
-    <div class="pointer-events-auto absolute -right-[5.5rem] top-1/2 flex -translate-y-1/2 flex-col items-center gap-1">
         <div class="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
             <X class="h-3 w-3" />
             No
@@ -70,12 +58,27 @@ const channelLabel = computed(() => {
             :after-key="step.key"
             branch="not_accepted"
             :condition-key="step.key"
+            align="left"
+        />
+    </div>
+
+    <!-- Yes branch — right -->
+    <div class="pointer-events-auto absolute -right-[5.5rem] top-1/2 flex -translate-y-1/2 flex-col items-center gap-1">
+        <div class="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
+            <Check class="h-3 w-3" />
+            Yes
+        </div>
+        <OutreachNodeAddMenu
+            :menu-id="`branch-${step.key}-yes`"
+            :after-key="step.key"
+            branch="accepted"
+            :condition-key="step.key"
             align="right"
         />
     </div>
 
-    <Handle id="accepted" type="source" :position="Position.Left" class="!border-emerald-400 !bg-white" />
-    <Handle id="not_accepted" type="source" :position="Position.Right" class="!border-slate-400 !bg-white" />
+    <Handle id="not_accepted" type="source" :position="Position.Left" class="!border-slate-400 !bg-white" />
+    <Handle id="accepted" type="source" :position="Position.Right" class="!border-emerald-400 !bg-white" />
     <Handle id="main" type="source" :position="Position.Bottom" class="!border-orange-300 !bg-white" />
 
     <div class="absolute left-1/2 top-full mt-2 -translate-x-1/2">

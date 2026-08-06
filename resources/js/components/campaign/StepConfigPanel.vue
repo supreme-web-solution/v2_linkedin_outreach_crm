@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Clock, Trash2 } from '@lucide/vue';
+import { Clock, GitBranch, Trash2 } from '@lucide/vue';
 import FlowMessageAiHelp from '@/components/flow/FlowMessageAiHelp.vue';
 import CampaignActionIcon from '@/components/campaign/CampaignActionIcon.vue';
 import InviteNoteLimitHint from '@/components/linkedin/InviteNoteLimitHint.vue';
 import { conditionPrerequisiteWarning } from '@/components/campaign/stepMutations';
-import { CAMPAIGN_ACTIONS, type CampaignStep } from '@/components/campaign/types';
+import { CAMPAIGN_ACTIONS, CAMPAIGN_CONDITIONS, type CampaignStep } from '@/components/campaign/types';
 
 const props = defineProps<{
     step: CampaignStep;
@@ -17,6 +17,7 @@ const emit = defineEmits<{
     updateConfig: [key: string, value: unknown];
     delete: [];
     addAfter: [type: 'action' | 'delay', value?: string];
+    addCondition: [value: string, label: string];
 }>();
 
 const isAction = computed(() => props.step.type === 'action');
@@ -103,7 +104,7 @@ const prerequisiteWarning = computed(() =>
                         :placeholder="step.value === 'send-invite'
                             ? 'Leave blank to send without a note, or write your own…'
                             : 'Use {{firstName}}, {{lastName}}, {{company}}, {{position}}'"
-                        class="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30"
+                        class="w-full min-h-[6rem] resize-y rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30"
                         @input="emit('updateConfig', 'message', ($event.target as HTMLTextAreaElement).value)"
                     />
                     <InviteNoteLimitHint v-if="step.value === 'send-invite'" variant="invite" />
@@ -152,7 +153,7 @@ const prerequisiteWarning = computed(() =>
                 {{ prerequisiteWarning }}
             </div>
             <p class="text-xs text-muted-foreground">
-                Edit the accepted and not-accepted branches on the canvas. Select any branch step to configure it.
+                Use the <strong>+</strong> on Yes (right) or No (left) to add steps to each branch. Select any branch step to configure it.
             </p>
         </template>
 
@@ -181,6 +182,22 @@ const prerequisiteWarning = computed(() =>
                 >
                     <Clock class="h-4 w-4" />
                     Add Wait / Delay
+                </button>
+                <p class="mb-1 mt-2 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-500/90">
+                    Conditions · Yes / No
+                </p>
+                <button
+                    v-for="cond in CAMPAIGN_CONDITIONS"
+                    :key="cond.value"
+                    type="button"
+                    class="flex w-full items-center gap-2 rounded-lg border border-orange-200/80 bg-orange-50/50 px-2 py-2 text-left text-xs text-orange-900 transition-colors hover:border-orange-300 hover:bg-orange-50"
+                    @click="emit('addCondition', cond.value, cond.label)"
+                >
+                    <GitBranch class="h-4 w-4 shrink-0 text-orange-600" />
+                    <span class="min-w-0">
+                        <span class="block font-semibold">{{ cond.label }}</span>
+                        <span class="block text-[10px] font-normal text-orange-800/80">Yes = accepted · No = not accepted</span>
+                    </span>
                 </button>
             </div>
         </div>

@@ -175,7 +175,22 @@ class OutreachWebController extends Controller
         /** @var \App\Models\User $user */
         $user = auth()->user();
 
-        $leads = $campaign->outreachLeads()->with('progress')->latest()->paginate(20);
+        $leads = $campaign->outreachLeads()
+            ->with('progress')
+            // Active / progressed leads first so the first page isn't only "Pending".
+            ->orderByRaw("CASE status
+                WHEN 'running' THEN 0
+                WHEN 'replied' THEN 1
+                WHEN 'error' THEN 2
+                WHEN 'done' THEN 3
+                WHEN 'skipped' THEN 4
+                WHEN 'pending' THEN 5
+                ELSE 6
+            END")
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->paginate(20)
+            ->appends($request->query());
         $leads->getCollection()->transform(function (V2OutreachLead $lead) use ($resolver, $campaign) {
             $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
             $progress = $lead->progress;

@@ -172,20 +172,8 @@ function pickDelay(afterIdx: number) {
                 <div class="w-full mt-3 grid grid-cols-2 gap-2 px-2">
                     <div class="flex flex-col items-center">
                         <div class="flex items-center gap-1 mb-2">
-                            <span class="h-px w-8 bg-green-300" />
-                            <span class="text-[10px] font-bold text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">✓ Accepted</span>
-                            <span class="h-px w-8 bg-green-300" />
-                        </div>
-                        <StepList
-                            v-if="step.branches"
-                            :steps="step.branches.accepted"
-                            :is-branch="true"
-                            @steps-changed="updateBranch(idx, 'accepted', $event)" />
-                    </div>
-                    <div class="flex flex-col items-center">
-                        <div class="flex items-center gap-1 mb-2">
                             <span class="h-px w-8 bg-slate-300" />
-                            <span class="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">✕ Not accepted</span>
+                            <span class="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">✕ No</span>
                             <span class="h-px w-8 bg-slate-300" />
                         </div>
                         <StepList
@@ -193,6 +181,18 @@ function pickDelay(afterIdx: number) {
                             :steps="step.branches.not_accepted"
                             :is-branch="true"
                             @steps-changed="updateBranch(idx, 'not_accepted', $event)" />
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <div class="flex items-center gap-1 mb-2">
+                            <span class="h-px w-8 bg-green-300" />
+                            <span class="text-[10px] font-bold text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">✓ Yes</span>
+                            <span class="h-px w-8 bg-green-300" />
+                        </div>
+                        <StepList
+                            v-if="step.branches"
+                            :steps="step.branches.accepted"
+                            :is-branch="true"
+                            @steps-changed="updateBranch(idx, 'accepted', $event)" />
                     </div>
                 </div>
             </template>
@@ -263,7 +263,7 @@ function pickDelay(afterIdx: number) {
                                 :placeholder="step.value === 'send-invite'
                                     ? 'Leave blank to send without a note, or write your own…'
                                     : 'Use {{firstName}}, {{lastName}}, {{company}}, {{position}}'"
-                                class="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30 resize-none" />
+                                class="w-full min-h-[6rem] rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30 resize-y" />
                             <InviteNoteLimitHint v-if="step.value === 'send-invite'" variant="invite" />
                             <InviteNoteLimitHint v-else-if="step.value === 'message'" variant="action" />
                             <p class="text-[10px] text-muted-foreground" v-pre>Variables: <code class="bg-muted px-0.5 rounded">{{firstName}}</code> <code class="bg-muted px-0.5 rounded">{{company}}</code> <code class="bg-muted px-0.5 rounded">{{position}}</code></p>

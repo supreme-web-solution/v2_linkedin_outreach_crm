@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { CheckCircle2, Download, FileSpreadsheet, Loader2, Upload } from '@lucide/vue';
-import { ref } from 'vue';
+import { usePage } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
 
 export interface ImportedListOption {
     list_name: string;
@@ -21,6 +22,31 @@ const emit = defineEmits<{
 
 const ACCEPTED_EXTENSIONS = ['.csv', '.xlsx', '.xls', '.ods'];
 const ACCEPT_ATTR = '.csv,.xlsx,.xls,.ods,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.oasis.opendocument.spreadsheet';
+
+const page = usePage();
+
+const enabledChannels = computed(() => {
+    const channels = page.props.enabledChannels;
+    return Array.isArray(channels) ? (channels as string[]) : [];
+});
+
+function isChannelEnabled(key: string): boolean {
+    const enabled = enabledChannels.value;
+    // Empty = treat as all on (older sessions without shared prop).
+    return enabled.length === 0 || enabled.includes(key);
+}
+
+/** Columns shown in guide / expected in templates for enabled platforms only. */
+const importContactColumns = computed(() => {
+    const cols: string[] = [];
+    if (isChannelEnabled('email')) cols.push('email');
+    if (isChannelEnabled('whatsapp')) cols.push('phone');
+    if (isChannelEnabled('linkedin')) cols.push('linkedin_url');
+    if (isChannelEnabled('instagram')) cols.push('instagram');
+    if (isChannelEnabled('telegram')) cols.push('telegram');
+    if (isChannelEnabled('twitter')) cols.push('twitter');
+    return cols;
+});
 
 const listName = ref('');
 const importing = ref(false);
@@ -187,7 +213,10 @@ function onDrop(event: DragEvent) {
             </a>
         </div>
 
-        <div class="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+        <div
+            v-if="isChannelEnabled('whatsapp')"
+            class="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground"
+        >
             <p class="font-medium text-foreground">Phone format for WhatsApp</p>
             <p class="mt-1">
                 Use international digits with country code — no <code class="rounded bg-muted px-1">+</code>, spaces, or leading <code class="rounded bg-muted px-1">0</code>.
@@ -197,19 +226,16 @@ function onDrop(event: DragEvent) {
             <p class="mt-1">In Excel, set the phone column to <strong>Text</strong> so digits are not changed.</p>
         </div>
 
-        <details class="rounded-lg border border-border bg-muted/20 text-xs">
+        <details v-if="importContactColumns.length" class="rounded-lg border border-border bg-muted/20 text-xs">
             <summary class="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground hover:text-foreground">
                 Column guide (optional)
             </summary>
             <div class="space-y-2 border-t border-border px-3 py-2.5 text-muted-foreground">
                 <p>
                     Include at least one of:
-                    <code class="rounded bg-muted px-1">email</code>,
-                    <code class="rounded bg-muted px-1">phone</code>,
-                    <code class="rounded bg-muted px-1">linkedin_url</code>,
-                    <code class="rounded bg-muted px-1">instagram</code>,
-                    <code class="rounded bg-muted px-1">telegram</code>,
-                    <code class="rounded bg-muted px-1">twitter</code>
+                    <template v-for="(col, index) in importContactColumns" :key="col">
+                        <code class="rounded bg-muted px-1">{{ col }}</code><span v-if="index < importContactColumns.length - 1">, </span>
+                    </template>
                     per row. Optional: <code class="rounded bg-muted px-1">full_name</code>.
                 </p>
             </div>

@@ -47,7 +47,8 @@ class InspirationWebController extends Controller
             $query->where('engagement', '>=', (int) $request->integer('engagement'));
         }
 
-        $posts = $query->orderByDesc('engagement')->latest()->paginate(12)->appends($request->query());
+        // Newest saves first so users see fresh posts without paging to the end.
+        $posts = $query->orderByDesc('updated_at')->orderByDesc('id')->paginate(12)->appends($request->query());
 
         $avgEngagement = (clone $base)->where('engagement', '>', 0)->avg('engagement');
 

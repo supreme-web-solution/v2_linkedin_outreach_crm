@@ -339,25 +339,29 @@ class LeadsWebController extends Controller
                 ->where('user_id', $userId)
                 ->firstOrFail();
 
-            $headers = ['full_name', 'email', 'phone', 'linkedin_url', 'instagram', 'telegram', 'twitter'];
+            $columnMap = [
+                'full_name' => fn (V2OutreachImportLead $r) => $r->full_name,
+                'email' => fn (V2OutreachImportLead $r) => $r->email,
+                'phone' => fn (V2OutreachImportLead $r) => $r->phone,
+                'linkedin_url' => fn (V2OutreachImportLead $r) => $r->profile_url,
+                'instagram' => fn (V2OutreachImportLead $r) => $r->instagram_handle,
+                'telegram' => fn (V2OutreachImportLead $r) => $r->telegram_handle,
+                'twitter' => fn (V2OutreachImportLead $r) => $r->twitter_handle,
+            ];
+            $headers = app(OutreachImportListService::class)->templateHeaders();
 
-            return response()->streamDownload(function () use ($importList, $headers) {
+            return response()->streamDownload(function () use ($importList, $headers, $columnMap) {
                 $handle = fopen('php://output', 'wb');
                 fputcsv($handle, $headers);
                 V2OutreachImportLead::query()
                     ->where('import_list_id', $importList->id)
                     ->orderBy('id')
                     ->cursor()
-                    ->each(function (V2OutreachImportLead $r) use ($handle) {
-                        fputcsv($handle, [
-                            $r->full_name,
-                            $r->email,
-                            $r->phone,
-                            $r->profile_url,
-                            $r->instagram_handle,
-                            $r->telegram_handle,
-                            $r->twitter_handle,
-                        ]);
+                    ->each(function (V2OutreachImportLead $r) use ($handle, $headers, $columnMap) {
+                        fputcsv($handle, array_map(
+                            fn (string $header) => ($columnMap[$header] ?? fn () => null)($r),
+                            $headers,
+                        ));
                     });
                 fclose($handle);
             }, $filename);

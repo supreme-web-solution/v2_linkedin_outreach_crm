@@ -110,7 +110,7 @@ const prerequisiteWarning = computed(() =>
                         :placeholder="step.action === 'send_invite'
                             ? 'Leave blank to send without a note, or write your own…'
                             : 'Use {{firstName}}, {{lastName}}, {{company}}, {{position}}'"
-                        class="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30"
+                        class="w-full min-h-[6rem] resize-y rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-400/30"
                         @input="emit('updateConfig', 'message', ($event.target as HTMLTextAreaElement).value)"
                     />
                     <ChannelRateLimitHint
@@ -159,7 +159,7 @@ const prerequisiteWarning = computed(() =>
                     <textarea
                         :value="(step.config?.body as string) ?? ''"
                         rows="4"
-                        class="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                        class="w-full min-h-[6rem] resize-y rounded-lg border border-border bg-background px-3 py-2 text-xs"
                         @input="emit('updateConfig', 'body', ($event.target as HTMLTextAreaElement).value)"
                     />
                 </div>

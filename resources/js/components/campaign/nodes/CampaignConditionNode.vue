@@ -2,6 +2,7 @@
 import { Handle, Position, type NodeProps } from '@vue-flow/core';
 import { Check, GitBranch, Trash2, X } from '@lucide/vue';
 import { computed, inject } from 'vue';
+import CampaignNodeAddMenu from '@/components/campaign/CampaignNodeAddMenu.vue';
 import type { CampaignFlowNodeData } from '@/components/campaign/flowAdapter';
 
 const props = defineProps<NodeProps<CampaignFlowNodeData>>();
@@ -24,7 +25,7 @@ const step = computed(() => props.data.step);
         </div>
         <div class="min-w-0 flex-1">
             <div class="text-[10px] font-semibold uppercase tracking-wide text-orange-600/80">Condition</div>
-            <div class="text-sm font-semibold text-orange-950">{{ step.label || 'Invite Accepted?' }}</div>
+            <div class="text-sm font-semibold text-orange-950">{{ step.label || 'Invite accepted?' }}</div>
         </div>
         <button
             type="button"
@@ -36,16 +37,41 @@ const step = computed(() => props.data.step);
         </button>
     </div>
 
-    <div class="pointer-events-none absolute -left-[4.5rem] top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
-        <Check class="h-3 w-3" />
-        Accepted
-    </div>
-    <div class="pointer-events-none absolute -right-[5.5rem] top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
-        <X class="h-3 w-3" />
-        Not accepted
+    <!-- No branch — left (handle id stays not_accepted for execution) -->
+    <div class="pointer-events-auto absolute -left-[4.5rem] top-1/2 flex -translate-y-1/2 flex-col items-center gap-1">
+        <div class="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
+            <X class="h-3 w-3" />
+            No
+        </div>
+        <CampaignNodeAddMenu
+            :menu-id="`branch-${step.key}-no`"
+            :after-key="step.key"
+            branch="not_accepted"
+            :condition-key="step.key"
+            align="left"
+        />
     </div>
 
-    <Handle id="accepted" type="source" :position="Position.Left" class="!border-emerald-400 !bg-white" />
-    <Handle id="not_accepted" type="source" :position="Position.Right" class="!border-slate-400 !bg-white" />
+    <!-- Yes branch — right (handle id stays accepted for execution) -->
+    <div class="pointer-events-auto absolute -right-[5.5rem] top-1/2 flex -translate-y-1/2 flex-col items-center gap-1">
+        <div class="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
+            <Check class="h-3 w-3" />
+            Yes
+        </div>
+        <CampaignNodeAddMenu
+            :menu-id="`branch-${step.key}-yes`"
+            :after-key="step.key"
+            branch="accepted"
+            :condition-key="step.key"
+            align="right"
+        />
+    </div>
+
+    <Handle id="not_accepted" type="source" :position="Position.Left" class="!border-slate-400 !bg-white" />
+    <Handle id="accepted" type="source" :position="Position.Right" class="!border-emerald-400 !bg-white" />
     <Handle id="main" type="source" :position="Position.Bottom" class="!border-orange-300 !bg-white" />
+
+    <div class="absolute left-1/2 top-full mt-2 -translate-x-1/2">
+        <CampaignNodeAddMenu :menu-id="`after-${step.key}`" :after-key="step.key" />
+    </div>
 </template>

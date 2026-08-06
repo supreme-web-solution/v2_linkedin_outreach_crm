@@ -124,7 +124,7 @@ const displaySteps = () => props.steps.filter((s) => s.type !== 'end');
 
                     <textarea
                         v-if="step.action === 'send_invite' || step.action === 'send_message'"
-                        class="mt-2 w-full rounded-lg border px-2 py-1.5 text-xs"
+                        class="mt-2 w-full min-h-[4rem] resize-y rounded-lg border px-2 py-1.5 text-xs"
                         rows="2"
                         placeholder="Message…"
                         :value="(step.config?.message as string) ?? ''"
@@ -139,7 +139,7 @@ const displaySteps = () => props.steps.filter((s) => s.type !== 'end');
                             @input="updateStep(index, { config: { ...step.config, subject: ($event.target as HTMLInputElement).value } })"
                         />
                         <textarea
-                            class="mt-2 w-full rounded-lg border px-2 py-1.5 text-xs"
+                            class="mt-2 w-full min-h-[5rem] resize-y rounded-lg border px-2 py-1.5 text-xs"
                             rows="3"
                             placeholder="Email body…"
                             :value="(step.config?.body as string) ?? ''"

@@ -68,18 +68,26 @@ function createStep(type: 'action' | 'delay', value = 'message', key: number): C
     };
 }
 
-export function insertStepAfter(
+function createConditionStep(value: string, label: string, key: number): CampaignStep {
+    return {
+        key,
+        type: 'condition',
+        value,
+        label,
+        branches: { accepted: [], not_accepted: [] },
+    };
+}
+
+function insertStep(
     steps: CampaignStep[],
     afterKey: number,
-    type: 'action' | 'delay',
-    value = 'message',
+    step: CampaignStep,
 ): CampaignStep[] {
     const next = cloneSteps(steps);
-    const key = nextStepKey(next);
 
     if (afterKey === -1) {
         const insertIdx = endInsertIndex(next, -1);
-        next.splice(insertIdx, 0, createStep(type, value, key));
+        next.splice(insertIdx, 0, step);
         return next;
     }
 
@@ -87,7 +95,63 @@ export function insertStepAfter(
     if (!location) return steps;
 
     const insertIdx = endInsertIndex(location.list, location.index);
-    location.list.splice(insertIdx, 0, createStep(type, value, key));
+    location.list.splice(insertIdx, 0, step);
+    return next;
+}
+
+export function insertStepAfter(
+    steps: CampaignStep[],
+    afterKey: number,
+    type: 'action' | 'delay',
+    value = 'message',
+): CampaignStep[] {
+    const key = nextStepKey(steps);
+    return insertStep(steps, afterKey, createStep(type, value, key));
+}
+
+export function insertConditionAfter(
+    steps: CampaignStep[],
+    afterKey: number,
+    value: string,
+    label: string,
+): CampaignStep[] {
+    const key = nextStepKey(steps);
+    return insertStep(steps, afterKey, createConditionStep(value, label, key));
+}
+
+export function insertIntoBranch(
+    steps: CampaignStep[],
+    conditionKey: number,
+    branch: 'accepted' | 'not_accepted',
+    type: 'action' | 'delay',
+    value = 'message',
+): CampaignStep[] {
+    const next = cloneSteps(steps);
+    const location = findStepLocation(next, conditionKey);
+    if (!location || location.list[location.index].type !== 'condition') return steps;
+
+    const cond = location.list[location.index];
+    if (!cond.branches) cond.branches = { accepted: [], not_accepted: [] };
+    const branchList = branch === 'accepted' ? cond.branches.accepted : cond.branches.not_accepted;
+    const key = nextStepKey(steps);
+    branchList.push(createStep(type, value, key));
+    return next;
+}
+
+export function insertDelayIntoBranch(
+    steps: CampaignStep[],
+    conditionKey: number,
+    branch: 'accepted' | 'not_accepted',
+): CampaignStep[] {
+    const next = cloneSteps(steps);
+    const location = findStepLocation(next, conditionKey);
+    if (!location || location.list[location.index].type !== 'condition') return steps;
+
+    const cond = location.list[location.index];
+    if (!cond.branches) cond.branches = { accepted: [], not_accepted: [] };
+    const branchList = branch === 'accepted' ? cond.branches.accepted : cond.branches.not_accepted;
+    const key = nextStepKey(steps);
+    branchList.push(createStep('delay', 'message', key));
     return next;
 }
 

@@ -8,6 +8,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import OutreachLeadReadinessPanel from '@/components/outreach/OutreachLeadReadinessPanel.vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
+import ListPagination from '@/components/crm/ListPagination.vue';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -28,7 +29,23 @@ const props = defineProps<{
         outreach_leads_count: number;
         created_at: string;
     };
-    leads: { data: Array<{ id: number; full_name: string | null; status: string; email: string | null; progress: { current_node_label: string | null; next_run_at: string | null } | null }> };
+    leads: {
+        data: Array<{
+            id: number;
+            full_name: string | null;
+            status: string;
+            email: string | null;
+            progress: { current_node_label: string | null; next_run_at: string | null } | null;
+        }>;
+        total: number;
+        current_page: number;
+        last_page: number;
+        prev_page_url: string | null;
+        next_page_url: string | null;
+        from?: number | null;
+        to?: number | null;
+        links?: Array<{ url: string | null; label: string; active: boolean }>;
+    };
     attachedLists: Array<{ id: number; list_name: string; list_hash: string; list_src: 'aud' | 'sn' | 'csv'; lead_count: number }>;
     connectedChannels: ConnectedChannel[];
     inboxSummary?: {
@@ -740,10 +757,13 @@ const channelActionEntries = computed(() =>
             <div class="flex items-center justify-between gap-2">
                 <h2 class="flex items-center gap-2 text-sm font-semibold">
                     <Users class="h-4 w-4" />
-                    Leads ({{ leads.data.length }})
+                    Leads ({{ leads.total }})
                 </h2>
-                <span v-if="isRunning" class="text-[10px] text-emerald-600">Status updates live</span>
+                <span v-if="isRunning" class="text-[10px] text-emerald-600">Status updates live · active leads first</span>
             </div>
+            <p v-if="leads.total > leads.data.length" class="mt-1 text-[11px] text-muted-foreground">
+                Showing {{ leads.from ?? 1 }}–{{ leads.to ?? leads.data.length }} of {{ leads.total }}. Running / progressed leads appear first.
+            </p>
             <table class="mt-3 w-full text-xs">
                 <thead>
                     <tr class="border-b text-left text-muted-foreground">
@@ -780,8 +800,12 @@ const channelActionEntries = computed(() =>
                             </div>
                         </td>
                     </tr>
+                    <tr v-if="leads.data.length === 0">
+                        <td colspan="3" class="py-6 text-center text-muted-foreground">No leads yet.</td>
+                    </tr>
                 </tbody>
             </table>
+            <ListPagination v-if="leads.data.length" :paginator="leads" label="leads" />
         </div>
 
     </div>

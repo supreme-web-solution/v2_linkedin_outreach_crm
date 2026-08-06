@@ -22,17 +22,26 @@ class OutreachImportListService
 
     public function csvTemplate(): string
     {
-        return implode("\n", $this->templateRows())."\n";
+        return implode("\n", array_map(
+            fn (array $row) => $this->csvLine($row),
+            $this->templateRows(),
+        ))."\n";
     }
 
     public function xlsxTemplateResponse(): StreamedResponse
     {
         $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
-        $sheet->fromArray($this->templateRows());
+        $rows = $this->templateRows();
+        $sheet->fromArray($rows);
 
-        foreach (range(1, 5) as $rowIndex) {
-            $sheet->getCell('C'.$rowIndex)->getStyle()->getNumberFormat()->setFormatCode('@');
+        $headers = $rows[0] ?? [];
+        $phoneColIndex = array_search('phone', $headers, true);
+        if ($phoneColIndex !== false) {
+            $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($phoneColIndex + 1);
+            foreach (range(1, count($rows)) as $rowIndex) {
+                $sheet->getCell($colLetter.$rowIndex)->getStyle()->getNumberFormat()->setFormatCode('@');
+            }
         }
 
         return response()->streamDownload(function () use ($spreadsheet) {
@@ -120,15 +129,27 @@ class OutreachImportListService
             V2OutreachImportLead::create([
                 'import_list_id' => $importList->id,
                 'full_name' => $parsed['full_name'] ?? $parsed['name'] ?? null,
-                'email' => $parsed['email'] ?? null,
-                'phone' => isset($parsed['phone']) ? $this->unipile->normalizePhone($parsed['phone']) : null,
-                'linkedin_id' => $linkedinId !== '' ? $linkedinId : null,
-                'profile_url' => $linkedinId !== ''
+                'email' => OutreachChannelRegistry::isEnabled('email')
+                    ? ($parsed['email'] ?? null)
+                    : null,
+                'phone' => OutreachChannelRegistry::isEnabled('whatsapp') && isset($parsed['phone'])
+                    ? $this->unipile->normalizePhone($parsed['phone'])
+                    : null,
+                'linkedin_id' => OutreachChannelRegistry::isEnabled('linkedin') && $linkedinId !== ''
+                    ? $linkedinId
+                    : null,
+                'profile_url' => OutreachChannelRegistry::isEnabled('linkedin') && $linkedinId !== ''
                     ? 'https://www.linkedin.com/in/'.$linkedinId
-                    : ($parsed['linkedin_url'] ?? null),
-                'instagram_handle' => $this->cleanHandle($parsed['instagram'] ?? $parsed['instagram_handle'] ?? null),
-                'telegram_handle' => $this->cleanHandle($parsed['telegram'] ?? $parsed['telegram_handle'] ?? null),
-                'twitter_handle' => $this->cleanHandle($parsed['twitter'] ?? $parsed['twitter_handle'] ?? $parsed['x'] ?? null),
+                    : (OutreachChannelRegistry::isEnabled('linkedin') ? ($parsed['linkedin_url'] ?? null) : null),
+                'instagram_handle' => OutreachChannelRegistry::isEnabled('instagram')
+                    ? $this->cleanHandle($parsed['instagram'] ?? $parsed['instagram_handle'] ?? null)
+                    : null,
+                'telegram_handle' => OutreachChannelRegistry::isEnabled('telegram')
+                    ? $this->cleanHandle($parsed['telegram'] ?? $parsed['telegram_handle'] ?? null)
+                    : null,
+                'twitter_handle' => OutreachChannelRegistry::isEnabled('twitter')
+                    ? $this->cleanHandle($parsed['twitter'] ?? $parsed['twitter_handle'] ?? $parsed['x'] ?? null)
+                    : null,
             ]);
 
             $imported++;
@@ -136,7 +157,9 @@ class OutreachImportListService
 
         if ($imported === 0) {
             $importList->delete();
-            throw new \InvalidArgumentException('No valid rows found. Each row needs at least one of: email, phone, linkedin_url, instagram, telegram, or twitter.');
+            throw new \InvalidArgumentException(
+                'No valid rows found. Each row needs at least one of: '.$this->requiredContactColumnsLabel().'.'
+            );
         }
 
         $importList->update(['lead_count' => $imported]);
@@ -153,13 +176,151 @@ class OutreachImportListService
      */
     private function templateRows(): array
     {
-        return [
-            ['full_name', 'email', 'phone', 'linkedin_url', 'instagram', 'telegram', 'twitter'],
-            ['John Doe', 'john@example.com', '33612345678', 'https://www.linkedin.com/in/johndoe', 'johndoe', 'johndoe_tg', 'johndoe_x'],
-            ['Jane Smith', 'jane@company.com', '33698765432', '', 'janesmith', '', ''],
-            ['WhatsApp Lead', '', '33611112222', '', '', '', ''],
-            ['Email Only', 'prospect@email.com', '', '', '', '', ''],
+        $headers = $this->templateHeaders();
+        $samples = [
+            [
+                'full_name' => 'John Doe',
+                'email' => 'john@example.com',
+                'phone' => '33612345678',
+                'linkedin_url' => 'https://www.linkedin.com/in/johndoe',
+                'instagram' => 'johndoe',
+                'telegram' => 'johndoe_tg',
+                'twitter' => 'johndoe_x',
+            ],
+            [
+                'full_name' => 'Jane Smith',
+                'email' => 'jane@company.com',
+                'phone' => '33698765432',
+                'linkedin_url' => '',
+                'instagram' => 'janesmith',
+                'telegram' => '',
+                'twitter' => '',
+            ],
+            [
+                'full_name' => 'WhatsApp Lead',
+                'email' => '',
+                'phone' => '33611112222',
+                'linkedin_url' => '',
+                'instagram' => '',
+                'telegram' => '',
+                'twitter' => '',
+            ],
+            [
+                'full_name' => 'Email Only',
+                'email' => 'prospect@email.com',
+                'phone' => '',
+                'linkedin_url' => '',
+                'instagram' => '',
+                'telegram' => '',
+                'twitter' => '',
+            ],
         ];
+
+        $rows = [$headers];
+        foreach ($samples as $sample) {
+            $rows[] = array_map(
+                fn (string $header) => (string) ($sample[$header] ?? ''),
+                $headers,
+            );
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function templateHeaders(): array
+    {
+        $headers = ['full_name'];
+
+        if (OutreachChannelRegistry::isEnabled('email')) {
+            $headers[] = 'email';
+        }
+        if (OutreachChannelRegistry::isEnabled('whatsapp')) {
+            $headers[] = 'phone';
+        }
+        if (OutreachChannelRegistry::isEnabled('linkedin')) {
+            $headers[] = 'linkedin_url';
+        }
+        if (OutreachChannelRegistry::isEnabled('instagram')) {
+            $headers[] = 'instagram';
+        }
+        if (OutreachChannelRegistry::isEnabled('telegram')) {
+            $headers[] = 'telegram';
+        }
+        if (OutreachChannelRegistry::isEnabled('twitter')) {
+            $headers[] = 'twitter';
+        }
+
+        return $headers;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function enabledContactColumnKeys(): array
+    {
+        $keys = [];
+
+        if (OutreachChannelRegistry::isEnabled('email')) {
+            $keys[] = 'email';
+        }
+        if (OutreachChannelRegistry::isEnabled('whatsapp')) {
+            $keys[] = 'phone';
+        }
+        if (OutreachChannelRegistry::isEnabled('linkedin')) {
+            array_push($keys, 'linkedin_url', 'linkedin_id', 'linkedin');
+        }
+        if (OutreachChannelRegistry::isEnabled('instagram')) {
+            array_push($keys, 'instagram', 'instagram_handle');
+        }
+        if (OutreachChannelRegistry::isEnabled('telegram')) {
+            array_push($keys, 'telegram', 'telegram_handle');
+        }
+        if (OutreachChannelRegistry::isEnabled('twitter')) {
+            array_push($keys, 'twitter', 'twitter_handle', 'x');
+        }
+
+        return $keys;
+    }
+
+    private function requiredContactColumnsLabel(): string
+    {
+        $labels = array_values(array_filter([
+            OutreachChannelRegistry::isEnabled('email') ? 'email' : null,
+            OutreachChannelRegistry::isEnabled('whatsapp') ? 'phone' : null,
+            OutreachChannelRegistry::isEnabled('linkedin') ? 'linkedin_url' : null,
+            OutreachChannelRegistry::isEnabled('instagram') ? 'instagram' : null,
+            OutreachChannelRegistry::isEnabled('telegram') ? 'telegram' : null,
+            OutreachChannelRegistry::isEnabled('twitter') ? 'twitter' : null,
+        ]));
+
+        if ($labels === []) {
+            return 'a contact field';
+        }
+
+        if (count($labels) === 1) {
+            return $labels[0];
+        }
+
+        $last = array_pop($labels);
+
+        return implode(', ', $labels).', or '.$last;
+    }
+
+    /**
+     * @param  array<int, string>  $cols
+     */
+    private function csvLine(array $cols): string
+    {
+        return implode(',', array_map(function (string $value): string {
+            if (str_contains($value, ',') || str_contains($value, '"') || str_contains($value, "\n")) {
+                return '"'.str_replace('"', '""', $value).'"';
+            }
+
+            return $value;
+        }, $cols));
     }
 
     /**
@@ -197,7 +358,7 @@ class OutreachImportListService
      */
     private function rowHasContactData(array $parsed): bool
     {
-        foreach (['email', 'phone', 'linkedin_url', 'linkedin_id', 'linkedin', 'instagram', 'instagram_handle', 'telegram', 'telegram_handle', 'twitter', 'twitter_handle', 'x'] as $field) {
+        foreach ($this->enabledContactColumnKeys() as $field) {
             if (trim((string) ($parsed[$field] ?? '')) !== '') {
                 return true;
             }

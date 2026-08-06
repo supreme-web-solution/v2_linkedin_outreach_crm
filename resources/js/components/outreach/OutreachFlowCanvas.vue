@@ -16,7 +16,7 @@ import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
-import { Clock, GitBranch, ChevronDown, ChevronRight, Layers, Plus, X } from '@lucide/vue';
+import { Clock, GitBranch, ChevronDown, ChevronRight, Layers, Map, Plus, X } from '@lucide/vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import { nodeModelToFlow, type OutreachFlowNodeData } from '@/components/outreach/outreachFlowAdapter';
 import {
@@ -38,6 +38,7 @@ import FlowDeletableEdge from '@/components/flow/FlowDeletableEdge.vue';
 import FlowCanvasFitView from '@/components/flow/FlowCanvasFitView.vue';
 import { FLOW_CANVAS_DOT_BG } from '@/components/flow/flowCanvasConfig';
 import '@/components/flow/flow-canvas-dots.css';
+import { useFlowMinimapVisibility } from '@/composables/useFlowMinimapVisibility';
 import OutreachActionNode from '@/components/outreach/nodes/OutreachActionNode.vue';
 import OutreachConditionNode from '@/components/outreach/nodes/OutreachConditionNode.vue';
 import OutreachDelayNode from '@/components/outreach/nodes/OutreachDelayNode.vue';
@@ -56,6 +57,10 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ stepsChanged: [steps: OutreachStep[]] }>();
+
+const { showMinimap, setMinimapVisible, toggleMinimap } = useFlowMinimapVisibility(
+    'socifusion_outreach_flow_minimap',
+);
 
 const nodeTypes = {
     outreachStart: markRaw(OutreachStartNode),
@@ -304,8 +309,18 @@ function minimapNodeColor(node: Node): string {
                 />
                 <Controls :position="Position.BottomLeft" :show-zoom="true" :show-fit-view="true" :show-interactive="true" />
 
-                <div class="outreach-flow-minimap-wrap">
-                    <p class="outreach-flow-minimap-label">Overview</p>
+                <div v-if="showMinimap" class="outreach-flow-minimap-wrap">
+                    <div class="flex items-center justify-between gap-2">
+                        <p class="outreach-flow-minimap-label">Overview</p>
+                        <button
+                            type="button"
+                            class="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                            title="Hide overview"
+                            @click.stop="setMinimapVisible(false)"
+                        >
+                            <X class="h-3.5 w-3.5" />
+                        </button>
+                    </div>
                     <MiniMap
                         :node-color="minimapNodeColor"
                         :mask-color="'rgba(255, 255, 255, 0.65)'"
@@ -314,6 +329,17 @@ function minimapNodeColor(node: Node): string {
                     />
                 </div>
             </VueFlow>
+
+            <button
+                v-if="!showMinimap"
+                type="button"
+                class="absolute bottom-4 right-4 z-10 inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+                title="Show overview map"
+                @click="toggleMinimap"
+            >
+                <Map class="h-3.5 w-3.5" />
+                Overview
+            </button>
 
             <div v-if="selectedKey !== null" class="absolute bottom-4 left-4 z-10 max-w-xs rounded-xl border border-slate-200 bg-white/95 px-3 py-2 text-[11px] text-slate-600 shadow-sm backdrop-blur">
                 Selected — use the <strong>+</strong> on any node to add the next step, or open the <strong>Step library</strong> tab on the right.
@@ -465,7 +491,7 @@ function minimapNodeColor(node: Node): string {
 
                             <div class="shrink-0 border-t border-slate-200 bg-white p-3">
                                 <p class="text-[10px] leading-relaxed text-muted-foreground">
-                                    Or use <strong class="text-slate-600">+</strong> on any canvas node. Condition nodes have <strong class="text-slate-600">+</strong> on Yes / No for branches.
+                                    Or use <strong class="text-slate-600">+</strong> on any canvas node. Condition nodes have <strong class="text-slate-600">+</strong> on No (left) / Yes (right) branches.
                                 </p>
                             </div>
                         </aside>
