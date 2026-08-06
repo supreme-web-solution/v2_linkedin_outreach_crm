@@ -103,6 +103,47 @@ class LeadsWebRoutesTest extends TestCase
         $response = $this->actingAs($user)->get('/leads/search-1-eleazar?src=sn');
 
         $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('crm/Leads/Show')
+            ->has('counts')
+            ->where('counts.all', 1));
+    }
+
+    public function test_show_sn_list_applies_email_filter(): void
+    {
+        $user = User::factory()->create();
+
+        SnLeadList::query()->create([
+            'name' => 'SEO Agencies',
+            'list_hash' => 'search-2-seo',
+            'user_id' => $user->id,
+        ]);
+
+        SnLead::query()->create([
+            'first_name' => 'With',
+            'last_name' => 'Email',
+            'sn_list_id' => 'search-2-seo',
+            'email' => 'found@example.com',
+            'outreach_status' => 'new',
+        ]);
+
+        SnLead::query()->create([
+            'first_name' => 'No',
+            'last_name' => 'Email',
+            'sn_list_id' => 'search-2-seo',
+            'email_fetch_status' => 'completed',
+            'email_fetch_attempted_at' => now(),
+            'outreach_status' => 'new',
+        ]);
+
+        $response = $this->actingAs($user)->get('/leads/search-2-seo?src=sn&email_filter=with_email');
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('crm/Leads/Show')
+            ->has('leads.data', 1)
+            ->where('counts.with_email', 1)
+            ->where('counts.without_email', 1));
     }
 
     public function test_delete_list_accepts_string_list_hash(): void

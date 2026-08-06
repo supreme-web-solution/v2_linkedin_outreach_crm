@@ -441,7 +441,7 @@ function distanceLabel(d: string | null): string {
                     <LinkedInPageHeading :title="listName" show-badge>
                         <template #subtitle>
                             {{ leads.total.toLocaleString() }} leads ·
-                            <span :class="src === 'aud' ? 'text-blue-600' : 'text-amber-600'">{{ src === 'aud' ? 'Audience' : 'Sales Navigator' }}</span>
+                            <span class="text-blue-600">Audience</span>
                         </template>
                     </LinkedInPageHeading>
                 </div>
@@ -520,7 +520,7 @@ function distanceLabel(d: string | null): string {
 
         <!-- Filters + search -->
         <div class="flex flex-wrap items-center gap-3">
-            <div v-if="src === 'aud'" class="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1">
+            <div v-if="src === 'aud' || src === 'sn'" class="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1">
                 <button
                     v-for="f in filters"
                     :key="f.key"

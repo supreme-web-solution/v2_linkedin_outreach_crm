@@ -151,7 +151,7 @@ class LeadsWebController extends Controller
             $counts = app(LeadListStatsService::class)->emailFilterCountsForAudience($listId);
         } else {
             $list = SnLeadList::where('list_hash', $listId)->where('user_id', Auth::id())->first();
-            $listName = $list?->name ?: 'Sales Navigator';
+            $listName = $list?->name ?: 'Audience';
             $listRecordId = $list?->id;
 
             $query = SnLead::where('sn_list_id', $listId)->with('company');
@@ -164,6 +164,7 @@ class LeadsWebController extends Controller
                         ->orWhere('email', 'like', "%{$search}%");
                 });
             }
+            $this->applySnEmailFilter($query, $emailFilter);
 
             $leads = $query->latest()->paginate(20)->appends($request->query());
             $resolver = app(OutreachLeadContactResolver::class);
@@ -172,6 +173,8 @@ class LeadsWebController extends Controller
                 $resolver->linkedinKeysFromRows($leads->getCollection(), 'sn')
             );
             $leads->through(fn (SnLead $row) => $this->transformSnLead($row, $overlays));
+
+            $counts = app(LeadListStatsService::class)->emailFilterCountsForSnList($listId);
         }
 
         $pendingCount = in_array($src, ['aud', 'sn'], true)
@@ -1033,6 +1036,29 @@ class LeadsWebController extends Controller
             case 'not_found':
                 $query->where('email_fetch_status', 'completed')
                     ->where(fn ($q) => $q->whereNull('con_email')->orWhere('con_email', '=', ''));
+                break;
+            case 'not_fetched':
+                $query->whereNull('email_fetch_status')->whereNull('email_fetch_attempted_at');
+                break;
+            case 'pending':
+                $query->whereIn('email_fetch_status', ['pending', 'processing']);
+                break;
+        }
+    }
+
+    private function applySnEmailFilter($query, string $filter): void
+    {
+        switch ($filter) {
+            case 'with_email':
+                $query->whereNotNull('email')->where('email', '!=', '');
+                break;
+            case 'without_email':
+                $query->where(fn ($q) => $q->whereNull('email')->orWhere('email', '=', ''))
+                    ->where(fn ($q) => $q->where('email_fetch_status', 'completed')->orWhereNotNull('email_fetch_attempted_at'));
+                break;
+            case 'not_found':
+                $query->where('email_fetch_status', 'completed')
+                    ->where(fn ($q) => $q->whereNull('email')->orWhere('email', '=', ''));
                 break;
             case 'not_fetched':
                 $query->whereNull('email_fetch_status')->whereNull('email_fetch_attempted_at');

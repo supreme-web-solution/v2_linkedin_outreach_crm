@@ -59,7 +59,7 @@ class LeadListService
             'list_id' => (string) $l->list_hash,
             'list_name' => $l->name ?: 'Untitled list',
             'total_leads' => (int) ($snCounts[$l->list_hash] ?? 0),
-            'source' => 'Sales Navigator',
+            'source' => 'Audience',
             'src' => 'sn',
             'created_at' => optional($l->created_at)->toIso8601String(),
         ]);

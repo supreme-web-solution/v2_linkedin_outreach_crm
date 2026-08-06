@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
-import { Database, Eye, FileSpreadsheet, Layers, Pencil, Plus, Search, Trash2, Upload, Users2, X } from '@lucide/vue';
+import { Eye, FileSpreadsheet, Layers, Pencil, Plus, Search, Trash2, Upload, Users2, X } from '@lucide/vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import ClientPagination from '@/components/crm/ClientPagination.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
@@ -51,7 +51,6 @@ const props = defineProps<{
 
 const activeTab = ref<'linkedin' | 'imported'>('linkedin');
 const importModalOpen = ref(false);
-const sourceFilter = ref<'all' | 'aud' | 'sn'>('all');
 
 onMounted(() => {
     if (new URLSearchParams(window.location.search).get('tab') === 'imported') {
@@ -68,7 +67,6 @@ const {
 } = useClientList(computed(() => props.lists), {
     perPage: 10,
     searchKeys: (l) => [l.list_name, l.source, l.list_hash],
-    filterFn: (l) => sourceFilter.value === 'all' || l.src === sourceFilter.value,
 });
 
 const {
@@ -80,10 +78,6 @@ const {
 } = useClientList(computed(() => props.importLists), {
     perPage: 10,
     searchKeys: (l) => [l.list_name, l.source, l.list_hash],
-});
-
-watch(sourceFilter, () => {
-    page.value = 1;
 });
 
 const renameForm = useForm({ list_name: '', src: 'aud' as 'aud' | 'sn' | 'csv' });
@@ -187,11 +181,11 @@ function listHref(list: LeadList): string {
     return `/leads/${encodeURIComponent(list.list_hash)}?src=${list.src}`;
 }
 
-function sourceBadgeClass(src: LeadList['src']): string {
-    if (src === 'aud') return 'bg-blue-500/10 text-blue-600';
-    if (src === 'sn') return 'bg-amber-500/10 text-amber-600';
+function sourceBadgeClass(): string {
     return 'bg-blue-500/10 text-blue-600';
 }
+
+const audienceListCount = computed(() => props.stats.audience_lists + props.stats.sn_lists);
 </script>
 
 <template>
@@ -200,11 +194,11 @@ function sourceBadgeClass(src: LeadList['src']): string {
     <div class="flex flex-col gap-5 p-4">
         <LinkedInPageHeading title="Leads" show-badge>
             <template #subtitle>
-                LinkedIn audiences, Sales Navigator lists, and spreadsheet imports — use imported lists for WhatsApp, email, and multi-channel outreach.
+                LinkedIn audiences and spreadsheet imports — use imported lists for WhatsApp, email, and multi-channel outreach.
             </template>
         </LinkedInPageHeading>
 
-        <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
                 <div class="rounded-lg bg-primary/10 p-2 text-primary"><Layers class="h-5 w-5" /></div>
                 <div>
@@ -216,14 +210,7 @@ function sourceBadgeClass(src: LeadList['src']): string {
                 <div class="rounded-lg bg-blue-500/10 p-2 text-blue-500"><Users2 class="h-5 w-5" /></div>
                 <div>
                     <p class="text-xs text-muted-foreground">Audience lists</p>
-                    <p class="text-xl font-semibold">{{ stats.audience_lists.toLocaleString() }}</p>
-                </div>
-            </div>
-            <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
-                <div class="rounded-lg bg-amber-500/10 p-2 text-amber-500"><Database class="h-5 w-5" /></div>
-                <div>
-                    <p class="text-xs text-muted-foreground">Sales Navigator</p>
-                    <p class="text-xl font-semibold">{{ stats.sn_lists.toLocaleString() }}</p>
+                    <p class="text-xl font-semibold">{{ audienceListCount.toLocaleString() }}</p>
                 </div>
             </div>
             <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
@@ -233,7 +220,7 @@ function sourceBadgeClass(src: LeadList['src']): string {
                     <p class="text-xl font-semibold">{{ stats.import_lists.toLocaleString() }}</p>
                 </div>
             </div>
-            <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4 sm:col-span-2 lg:col-span-1">
+            <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
                 <div class="rounded-lg bg-green-500/10 p-2 text-green-500"><Users2 class="h-5 w-5" /></div>
                 <div>
                     <p class="text-xs text-muted-foreground">Total contacts</p>
@@ -273,11 +260,6 @@ function sourceBadgeClass(src: LeadList['src']): string {
                     <Search class="h-4 w-4 text-muted-foreground" />
                     <input v-model="search" type="search" placeholder="Search lists…" class="w-full bg-transparent text-sm outline-none" />
                 </div>
-                <select v-model="sourceFilter" class="rounded-lg border border-border bg-card px-3 py-2 text-sm">
-                    <option value="all">All sources</option>
-                    <option value="aud">Audience</option>
-                    <option value="sn">Sales Navigator</option>
-                </select>
             </div>
 
             <div v-if="selectedLinkedinLists.size > 0" class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
@@ -295,7 +277,7 @@ function sourceBadgeClass(src: LeadList['src']): string {
             <div v-if="total === 0" class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-12 text-center">
                 <Layers class="h-10 w-10 text-muted-foreground/40" />
                 <p class="font-medium">No LinkedIn lists yet</p>
-                <p class="text-sm text-muted-foreground">Harvest audiences from Competitor Active Followers or import Sales Navigator leads via the extension.</p>
+                <p class="text-sm text-muted-foreground">Harvest audiences from Competitor Active Followers or import leads via the extension.</p>
             </div>
 
             <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
@@ -327,7 +309,7 @@ function sourceBadgeClass(src: LeadList['src']): string {
                                 </Link>
                             </td>
                             <td class="px-4 py-3">
-                                <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="sourceBadgeClass(list.src)">{{ list.source }}</span>
+                                <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="sourceBadgeClass()">{{ list.source }}</span>
                             </td>
                             <td class="px-4 py-3 text-right tabular-nums">{{ list.total_leads.toLocaleString() }}</td>
                             <td class="px-4 py-3 text-muted-foreground">{{ fmtDate(list.created_at) }}</td>

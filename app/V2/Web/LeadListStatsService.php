@@ -65,6 +65,34 @@ class LeadListStatsService
     }
 
     /**
+     * @return array<string, int>
+     */
+    public function emailFilterCountsForSnList(string $listHash): array
+    {
+        $row = SnLead::query()
+            ->where('sn_list_id', $listHash)
+            ->selectRaw("
+                COUNT(*) as total_all,
+                SUM(CASE WHEN email IS NOT NULL AND email != '' THEN 1 ELSE 0 END) as with_email,
+                SUM(CASE
+                    WHEN (email IS NULL OR email = '')
+                        AND (email_fetch_status = 'completed' OR email_fetch_attempted_at IS NOT NULL)
+                    THEN 1 ELSE 0 END) as without_email,
+                SUM(CASE WHEN email_fetch_status IS NULL AND email_fetch_attempted_at IS NULL THEN 1 ELSE 0 END) as not_fetched,
+                SUM(CASE WHEN email_fetch_status IN ('pending', 'processing') THEN 1 ELSE 0 END) as pending
+            ")
+            ->first();
+
+        return [
+            'all' => (int) ($row->total_all ?? 0),
+            'with_email' => (int) ($row->with_email ?? 0),
+            'without_email' => (int) ($row->without_email ?? 0),
+            'not_fetched' => (int) ($row->not_fetched ?? 0),
+            'pending' => (int) ($row->pending ?? 0),
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function contactStatsForSnList(string $listHash, int $queuePending): array
