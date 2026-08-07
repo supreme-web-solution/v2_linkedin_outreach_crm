@@ -1578,10 +1578,99 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             throw new UnipileException('LinkedIn unfollow is not supported.');
         }
 
+        if ($action === 'like_post') {
+            return $this->likeLatestUserPost($providerId, $accountId);
+        }
+
+        if ($action === 'comment_post') {
+            $postId = trim((string) (Arr::get($payload, 'post_id') ?? ''));
+            $text = trim((string) (Arr::get($payload, 'text') ?? 'Great insights.'));
+            if ($postId === '') {
+                throw new UnipileException('post_id is required to comment on a LinkedIn post.');
+            }
+
+            return $this->request('POST', '/posts/'.$this->encodePostId($postId).'/comments', array_filter([
+                'account_id' => $accountId,
+                'text' => $text !== '' ? $text : 'Great insights.',
+            ], fn ($value) => $value !== null && $value !== ''));
+        }
+
         return $this->request('POST', '/linkedin/user/'.$providerId, array_filter([
             'account_id' => $accountId,
             'action' => $action,
         ], fn ($value) => $value !== null && $value !== ''));
+    }
+
+    /**
+     * Like the most recent public post for a LinkedIn profile.
+     *
+     * Unipile requires the post social_id (urn:li:activity:…) and reaction type
+     * linkedin_like — not a /linkedin/user/{id} action named like_post.
+     *
+     * @return array<string, mixed>
+     */
+    public function likeLatestUserPost(string $providerId, string $accountId): array
+    {
+        $postsResponse = $this->listUserPosts($providerId, [
+            'account_id' => $accountId,
+            'limit' => 5,
+        ], ['account_id' => $accountId]);
+
+        $posts = Arr::get($postsResponse, 'items', Arr::get($postsResponse, 'data.items', []));
+        if (! is_array($posts) || $posts === []) {
+            throw new UnipileException('No recent LinkedIn posts found to like for this profile.', 422);
+        }
+
+        $socialId = '';
+        $picked = null;
+        foreach ($posts as $post) {
+            if (! is_array($post)) {
+                continue;
+            }
+
+            $candidate = trim((string) (
+                Arr::get($post, 'social_id')
+                ?? Arr::get($post, 'id')
+                ?? ''
+            ));
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            // Prefer social_id / urn forms Unipile expects for reactions.
+            if (str_starts_with($candidate, 'urn:li:') || ctype_digit($candidate)) {
+                $socialId = $candidate;
+                $picked = $post;
+                break;
+            }
+
+            if ($socialId === '') {
+                $socialId = $candidate;
+                $picked = $post;
+            }
+        }
+
+        if ($socialId === '') {
+            throw new UnipileException('No recent LinkedIn posts found to like for this profile.', 422);
+        }
+
+        $reaction = $this->reactToPost($socialId, 'linkedin_like', [
+            'account_id' => $accountId,
+        ]);
+
+        Log::info('[Unipile] Liked latest post', [
+            'profile_id' => $providerId,
+            'social_id' => $socialId,
+            'post_id' => Arr::get($picked, 'id'),
+        ]);
+
+        return [
+            'action' => 'like_post',
+            'social_id' => $socialId,
+            'post' => $picked,
+            'reaction' => $reaction,
+        ];
     }
 
     /**
@@ -1826,9 +1915,29 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
 
     public function reactToPost(string $postId, string $reaction, array $context = []): array
     {
-        return $this->request('POST', '/posts/'.$postId.'/reactions', array_merge([
-            'reaction' => $reaction,
+        $postId = trim($postId);
+        if ($postId === '') {
+            throw new UnipileException('post_id is required to react to a LinkedIn post.');
+        }
+
+        return $this->request('POST', '/posts/'.$this->encodePostId($postId).'/reactions', array_merge([
+            'reaction' => $this->normalizeLinkedInReaction($reaction),
         ], $context));
+    }
+
+    private function normalizeLinkedInReaction(string $reaction): string
+    {
+        $normalized = strtolower(trim($reaction));
+
+        return match ($normalized) {
+            '', 'like', 'linkedin_like' => 'linkedin_like',
+            'celebrate', 'linkedin_celebrate' => 'linkedin_celebrate',
+            'support', 'linkedin_support' => 'linkedin_support',
+            'love', 'linkedin_love' => 'linkedin_love',
+            'insightful', 'linkedin_insightful', 'linkedin_insighful' => 'linkedin_insightful',
+            'funny', 'linkedin_funny' => 'linkedin_funny',
+            default => str_starts_with($normalized, 'linkedin_') ? $normalized : 'linkedin_like',
+        };
     }
 
     public function verifySignature(array $headers, string $rawBody): bool

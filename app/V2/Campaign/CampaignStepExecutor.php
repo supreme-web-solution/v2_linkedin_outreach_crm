@@ -184,25 +184,37 @@ class CampaignStepExecutor
                 return $tempLimit->deferredResult($userId);
             }
 
-            return $this->executeWithProviderFallback(
-                'campaign_profile_action',
-                function (string $providerKey) use ($normalized, $recipientId, $context): array {
-                    if ($normalized === 'profile-view') {
-                        $response = $this->providerManager->profile($providerKey)->getProfileByIdentifier($recipientId, $context);
+            return $this->softContinueEngagementStep(
+                $this->executeWithProviderFallback(
+                    'campaign_profile_action',
+                    function (string $providerKey) use ($normalized, $recipientId, $context): array {
+                        if ($normalized === 'profile-view') {
+                            $response = $this->providerManager->profile($providerKey)->getProfileByIdentifier($recipientId, $context);
 
-                        return ['action' => $normalized, 'response' => $response];
-                    }
+                            return ['action' => $normalized, 'response' => $response];
+                        }
 
-                    /** @var UnipileProvider $concrete */
-                    $concrete = $this->providerManager->get($providerKey, UnipileProvider::class);
-                    $mapped = $normalized === 'like-post' ? 'like_post' : 'endorse';
-                    $response = $concrete->performLinkedinProfileAction($mapped, array_merge($context, [
-                        'recipient_id' => $recipientId,
-                    ]));
+                        /** @var UnipileProvider $concrete */
+                        $concrete = $this->providerManager->get($providerKey, UnipileProvider::class);
 
-                    return ['action' => $mapped, 'response' => $response];
-                },
-                $userId,
+                        if ($normalized === 'like-post') {
+                            $response = $concrete->performLinkedinProfileAction('like_post', array_merge($context, [
+                                'recipient_id' => $recipientId,
+                            ]));
+
+                            return ['action' => 'like_post', 'response' => $response];
+                        }
+
+                        $response = $concrete->performLinkedinProfileAction('endorse', array_merge($context, [
+                            'recipient_id' => $recipientId,
+                        ]));
+
+                        return ['action' => 'endorse', 'response' => $response];
+                    },
+                    $userId,
+                ),
+                $normalized === 'like-post' ? 'like_post' : null,
+                $recipientId,
             );
         }
 
@@ -270,6 +282,33 @@ class CampaignStepExecutor
         ];
 
         return $aliases[$value] ?? $value;
+    }
+
+    /**
+     * Engagement steps (like post) should not halt a live sequence on soft failures.
+     *
+     * @param  array<string, mixed>  $result
+     * @return array<string, mixed>
+     */
+    private function softContinueEngagementStep(array $result, ?string $action, string $recipientId): array
+    {
+        if ($action !== 'like_post' || ($result['status'] ?? '') !== 'failed') {
+            return $result;
+        }
+
+        $error = (string) ($result['error_message'] ?? 'Like post failed');
+        Log::warning('[Campaign] Like post skipped — continuing sequence', [
+            'recipient_id' => $recipientId,
+            'error' => $error,
+        ]);
+
+        return [
+            'status' => 'skipped',
+            'payload' => [
+                'reason' => 'like_post_unavailable',
+                'error' => $error,
+            ],
+        ];
     }
 
     /**

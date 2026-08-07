@@ -51,7 +51,8 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
                     'message' => $message,
                 ], $context)),
                 'send_message' => $this->sendMessage($providerKey, $recipientId, $message, $context),
-                'like_post', 'endorse' => $this->profileAction($providerKey, $action, $recipientId, $context),
+                'like_post' => $this->likePost($providerKey, $recipientId, $context),
+                'endorse' => $this->profileAction($providerKey, 'endorse', $recipientId, $context),
                 'follow' => $this->completed($this->providerManager->profile($providerKey)->getProfileByIdentifier($recipientId, $context)),
                 default => ['status' => 'failed', 'error_message' => "Unsupported LinkedIn action: {$action}"],
             };
@@ -182,11 +183,49 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
      * @param  array<string, mixed>  $context
      * @return array<string, mixed>
      */
+    private function likePost(string $providerKey, string $recipientId, array $context): array
+    {
+        /** @var UnipileProvider $concrete */
+        $concrete = $this->providerManager->get($providerKey, UnipileProvider::class);
+
+        try {
+            return $this->completed($concrete->performLinkedinProfileAction('like_post', array_merge($context, [
+                'recipient_id' => $recipientId,
+            ])));
+        } catch (\Throwable $e) {
+            $linkedIn = app(\App\V2\Services\LinkedInConnectionService::class);
+            if ($linkedIn->isDisconnectedError($e)
+                || app(\App\V2\Outreach\OutreachChannelGuard::class)->isDisconnected($e)
+                || app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->isTemporaryLimit($e)) {
+                throw $e;
+            }
+
+            // Engagement step — never halt the whole sequence if like fails.
+            Log::warning('[Outreach] Like post skipped — continuing sequence', [
+                'recipient_id' => $recipientId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'status' => 'skipped',
+                'error_message' => $e->getMessage(),
+                'payload' => [
+                    'reason' => 'like_post_unavailable',
+                    'error' => $e->getMessage(),
+                ],
+            ];
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
     private function profileAction(string $providerKey, string $action, string $recipientId, array $context): array
     {
         /** @var UnipileProvider $concrete */
         $concrete = $this->providerManager->get($providerKey, UnipileProvider::class);
-        $mapped = $action === 'like_post' ? 'like_post' : ($action === 'endorse' ? 'endorse' : 'view_profile');
+        $mapped = $action === 'endorse' ? 'endorse' : 'view_profile';
 
         return $this->completed($concrete->performLinkedinProfileAction($mapped, array_merge($context, [
             'recipient_id' => $recipientId,

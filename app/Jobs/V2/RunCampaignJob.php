@@ -468,7 +468,7 @@ class RunCampaignJob implements ShouldQueue
                         return ['action' => 'comment_post', 'response' => $response];
                     }
 
-                    $response = $concrete->reactToPost($postId, 'like', $context);
+                    $response = $concrete->reactToPost($postId, 'linkedin_like', $context);
                     return ['action' => 'like_post', 'response' => $response];
                 }
             );
