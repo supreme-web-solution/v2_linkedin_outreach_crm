@@ -437,14 +437,21 @@ class ProcessCampaignLeadJob implements ShouldQueue
         CampaignLeadProfileService $profileService,
     ): void {
         $nodeLabel = $resolver->nodeLabel($node);
+        // Refresh — avoid stale acceptance_status from a long-lived queue worker model instance.
+        $progress->refresh();
         $acceptance = $progress->acceptance_status;
 
         // Classic campaigns historically only set acceptance_status at invite-time or never.
         // Poll LinkedIn so accepted invites advance even when the Unipile webhook was missed.
         $live = null;
-        if ($acceptance === null) {
+        if ($acceptance !== true) {
+            Log::info('[Campaign] Invite-accepted live poll starting', [
+                'campaign_id' => $campaign->id,
+                'lead_id' => $lead->id,
+                'acceptance_status' => $acceptance,
+            ]);
             $live = $profileService->checkLiveConnection($campaign, $lead->fresh() ?? $lead);
-            if ($live['connected']) {
+            if (! empty($live['connected'])) {
                 $acceptance = true;
                 $progress->forceFill(['acceptance_status' => true])->save();
                 $logger->log(
@@ -459,6 +466,10 @@ class ProcessCampaignLeadJob implements ShouldQueue
                         'source' => $live['source'] ?? 'live_profile_poll',
                     ],
                 );
+            } elseif ($acceptance === false) {
+                // Keep explicit false (timed-out / not-accepted path). Do not re-enter waiting.
+            } else {
+                $acceptance = null;
             }
         }
 
