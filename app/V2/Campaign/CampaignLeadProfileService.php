@@ -31,13 +31,6 @@ class CampaignLeadProfileService
             }
         }
 
-        Log::debug('[Campaign] resolveRecipient', [
-            'campaign_id' => $campaign->id,
-            'lead_id' => $lead->id,
-            'raw_id' => $raw,
-            'profile_url' => $profileUrl,
-        ]);
-
         if ($raw === '') {
             return ['provider_id' => '', 'profile' => [], 'source' => 'empty'];
         }
@@ -65,12 +58,6 @@ class CampaignLeadProfileService
                 $normalized = $provider->getProfileByUrl($profileUrl, $accountId);
                 $providerId = (string) ($normalized['provider_id'] ?? $normalized['id'] ?? '');
 
-                Log::debug('[Campaign] Resolved via profile URL', [
-                    'lead_id' => $lead->id,
-                    'provider_id' => $providerId,
-                    'network_distance' => $normalized['network_distance'] ?? null,
-                ]);
-
                 if ($providerId !== '') {
                     return ['provider_id' => $providerId, 'profile' => $normalized, 'source' => 'profile_url'];
                 }
@@ -88,13 +75,6 @@ class CampaignLeadProfileService
                     ?? ''
                 );
             }
-
-            Log::debug('[Campaign] Resolved via identifier', [
-                'lead_id' => $lead->id,
-                'identifier' => $raw,
-                'provider_id' => $providerId,
-                'network_distance' => Arr::get($profile, 'network_distance'),
-            ]);
 
             return [
                 'provider_id' => $providerId !== '' ? $providerId : $raw,
@@ -175,11 +155,6 @@ class CampaignLeadProfileService
                 } catch (Throwable $e) {
                     $error = $e->getMessage();
                     if ($this->isBusyError($error)) {
-                        Log::warning('[Campaign] Live connection check busy', [
-                            'lead_id' => $lead->id,
-                            'error' => $error,
-                        ]);
-
                         return [
                             'connected' => false,
                             'profile' => [],
@@ -255,15 +230,6 @@ class CampaignLeadProfileService
             $lead->forceFill($updates)->save();
             $this->persistSourceNetworkDistance($lead, $networkDistance);
         }
-
-        Log::info('[Campaign] Live connection check', [
-            'lead_id' => $lead->id,
-            'connected' => $connected,
-            'network_distance' => $networkDistance,
-            'is_relationship' => Arr::get($profile, 'is_relationship'),
-            'source' => $source,
-            'error' => $error,
-        ]);
 
         return [
             'connected' => $connected,
@@ -450,18 +416,11 @@ class CampaignLeadProfileService
 
         foreach ($candidates as $value) {
             if ($this->isFirstDegree($value)) {
-                Log::debug('[Campaign] Lead is 1st-degree connection', [
-                    'lead_id' => $lead->id,
-                    'signal' => $value,
-                ]);
-
                 return true;
             }
         }
 
         if (Arr::get($profile, 'is_relationship') === true || Arr::get($profile, 'connected') === true) {
-            Log::debug('[Campaign] Lead profile marks connected relationship', ['lead_id' => $lead->id]);
-
             return true;
         }
 

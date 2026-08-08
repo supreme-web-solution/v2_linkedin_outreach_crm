@@ -6,6 +6,7 @@ use App\Models\V2Campaign;
 use App\Models\V2Call;
 use App\Models\V2CampaignRun;
 use App\Models\V2CampaignStep;
+use App\Models\V2IntegrationAccount;
 use App\Models\V2Lead;
 use App\Models\V2UserActivity;
 use App\V2\Integrations\ProviderManager;
@@ -144,12 +145,14 @@ class RunCampaignJob implements ShouldQueue
         ProviderManager $providerManager
     ): array
     {
-        $context = [
+        $accountId = V2IntegrationAccount::activeUnipileAccountId((int) $run->user_id);
+        $context = array_filter([
             'owner_id' => (string) $run->user_id,
             'organization_id' => $campaign?->organization_id,
+            'account_id' => $accountId,
             'campaign_id' => $campaign?->id,
             'campaign_run_id' => $run->id,
-        ];
+        ], fn ($value) => $value !== null && $value !== '');
 
         $recipientId = $this->resolveRecipientId($run, $node);
         $chatId = $this->resolveChatId($node);

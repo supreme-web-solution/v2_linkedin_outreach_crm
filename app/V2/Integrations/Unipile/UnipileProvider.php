@@ -1405,7 +1405,16 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             throw new UnipileException('Profile identifier is required.');
         }
 
-        return $this->request('GET', '/users/'.rawurlencode($identifier), $context);
+        // Campaign/outreach callers often pass owner_id / campaign ids in $context.
+        // Unipile only accepts account_id (+ optional section flags) on GET /users/{id}.
+        $accountId = $this->resolveAccountId([], $context);
+        $query = array_filter([
+            'account_id' => $accountId,
+            'linkedin_sections' => $context['linkedin_sections'] ?? null,
+            'notify' => $context['notify'] ?? null,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        return $this->request('GET', '/users/'.rawurlencode($identifier), $query);
     }
 
     public function listRelations(array $filters = [], array $context = []): array

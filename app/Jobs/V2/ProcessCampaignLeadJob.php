@@ -250,14 +250,26 @@ class ProcessCampaignLeadJob implements ShouldQueue
             ]);
         }
 
-        $logger->log(
-            $campaign->id,
-            $lead->id,
-            $run?->id,
-            $node,
-            'started',
-            "Starting \"{$nodeLabel}\" for {$lead->full_name}.",
-        );
+        // Avoid spamming lead activity with Started/Waiting on every Invite Accepted? recheck.
+        if ($stepType === 'condition') {
+            $logger->logUnlessRecent(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'started',
+                "Starting \"{$nodeLabel}\" for {$lead->full_name}.",
+            );
+        } else {
+            $logger->log(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'started',
+                "Starting \"{$nodeLabel}\" for {$lead->full_name}.",
+            );
+        }
 
         try {
             if ($stepType === 'condition') {
@@ -445,11 +457,6 @@ class ProcessCampaignLeadJob implements ShouldQueue
         // Poll LinkedIn so accepted invites advance even when the Unipile webhook was missed.
         $live = null;
         if ($acceptance !== true) {
-            Log::info('[Campaign] Invite-accepted live poll starting', [
-                'campaign_id' => $campaign->id,
-                'lead_id' => $lead->id,
-                'acceptance_status' => $acceptance,
-            ]);
             $live = $profileService->checkLiveConnection($campaign, $lead->fresh() ?? $lead);
             if (! empty($live['connected'])) {
                 $acceptance = true;
@@ -482,7 +489,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
                 : ($distance !== null && $distance !== ''
                     ? "Unipile still reports {$distance}"
                     : 'invite not accepted yet');
-            $logger->log(
+            $logger->logUnlessRecent(
                 $campaign->id,
                 $lead->id,
                 $run?->id,

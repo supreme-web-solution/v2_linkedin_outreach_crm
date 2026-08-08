@@ -5,6 +5,7 @@ namespace App\V2\Campaign;
 use App\Models\V2Campaign;
 use App\Models\V2CampaignLead;
 use App\Models\V2CampaignRun;
+use App\Models\V2IntegrationAccount;
 use App\Models\User;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Integrations\ProviderManager;
@@ -38,13 +39,15 @@ class CampaignStepExecutor
         ?string $resolvedProviderId = null,
     ): array {
         $normalized = $this->normalizeStepType($stepType);
-        $context = [
+        $accountId = V2IntegrationAccount::activeUnipileAccountId((int) $campaign->user_id);
+        $context = array_filter([
             'owner_id' => (string) $campaign->user_id,
             'organization_id' => $campaign->organization_id,
+            'account_id' => $accountId,
             'campaign_id' => $campaign->id,
             'campaign_run_id' => $run?->id,
             'campaign_lead_id' => $lead->id,
-        ];
+        ], fn ($value) => $value !== null && $value !== '');
 
         $recipientId = trim($resolvedProviderId ?? (string) ($lead->provider_profile_id ?? ''));
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);

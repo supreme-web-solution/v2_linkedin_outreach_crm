@@ -41,6 +41,36 @@ class CampaignActivityLogger
     }
 
     /**
+     * Skip noisy repeat rows (e.g. Invite Accepted? started/waiting every recheck).
+     */
+    public function logUnlessRecent(
+        int $campaignId,
+        ?int $campaignLeadId,
+        ?int $campaignRunId,
+        ?array $node,
+        string $status,
+        string $message,
+        array $payload = [],
+        int $withinMinutes = 360,
+    ): ?V2CampaignNodeEvent {
+        $nodeKey = $node ? (int) ($node['key'] ?? 0) : 0;
+
+        $exists = V2CampaignNodeEvent::query()
+            ->where('campaign_id', $campaignId)
+            ->when($campaignLeadId !== null, fn ($q) => $q->where('campaign_lead_id', $campaignLeadId))
+            ->when($nodeKey > 0, fn ($q) => $q->where('node_key', $nodeKey))
+            ->where('status', $status)
+            ->where('executed_at', '>=', now()->subMinutes(max(1, $withinMinutes)))
+            ->exists();
+
+        if ($exists) {
+            return null;
+        }
+
+        return $this->log($campaignId, $campaignLeadId, $campaignRunId, $node, $status, $message, $payload);
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     public function recentForCampaign(
