@@ -346,7 +346,15 @@ class OutreachWebhookProgressService
     {
         $inner = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
 
-        foreach (['profile_id', 'invitee_id', 'provider_id', 'public_identifier', 'linkedin_id'] as $key) {
+        foreach ([
+            'user_provider_id',
+            'user_public_identifier',
+            'profile_id',
+            'invitee_id',
+            'provider_id',
+            'public_identifier',
+            'linkedin_id',
+        ] as $key) {
             $value = trim((string) (Arr::get($inner, $key) ?? Arr::get($payload, $key) ?? ''));
             if ($value !== '') {
                 return $value;

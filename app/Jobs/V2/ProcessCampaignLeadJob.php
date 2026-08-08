@@ -441,6 +441,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
 
         // Classic campaigns historically only set acceptance_status at invite-time or never.
         // Poll LinkedIn so accepted invites advance even when the Unipile webhook was missed.
+        $live = null;
         if ($acceptance === null) {
             $live = $profileService->checkLiveConnection($campaign, $lead->fresh() ?? $lead);
             if ($live['connected']) {
@@ -455,21 +456,33 @@ class ProcessCampaignLeadJob implements ShouldQueue
                     "Detected 1st-degree connection for {$lead->full_name} — invite accepted.",
                     [
                         'network_distance' => $live['network_distance'],
-                        'source' => 'live_profile_poll',
+                        'source' => $live['source'] ?? 'live_profile_poll',
                     ],
                 );
             }
         }
 
         if ($acceptance === null) {
-            $resumeAt = now()->addHours(6);
+            $busy = ($live['error'] ?? null) === 'busy';
+            $resumeAt = $busy ? now()->addMinutes(3) : now()->addHours(6);
+            $distance = $live['network_distance'] ?? null;
+            $detail = $busy
+                ? 'LinkedIn busy — retrying soon'
+                : ($distance !== null && $distance !== ''
+                    ? "Unipile still reports {$distance}"
+                    : 'invite not accepted yet');
             $logger->log(
                 $campaign->id,
                 $lead->id,
                 $run?->id,
                 $node,
                 'waiting',
-                "Waiting at \"{$nodeLabel}\" — invite not accepted yet for {$lead->full_name}.",
+                "Waiting at \"{$nodeLabel}\" — {$detail} for {$lead->full_name}.",
+                [
+                    'network_distance' => $distance,
+                    'check_source' => $live['source'] ?? null,
+                    'check_error' => $live['error'] ?? null,
+                ],
             );
             $progress->update([
                 'current_node_key' => (int) ($node['key'] ?? 0),

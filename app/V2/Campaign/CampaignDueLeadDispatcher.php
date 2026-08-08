@@ -19,6 +19,7 @@ class CampaignDueLeadDispatcher
     {
         $dispatched = 0;
         $limit = max(1, min($limit, 500));
+        $staggerSeconds = max(15, (int) config('services.unipile_pacing.campaign_lead_stagger_seconds', 45));
 
         $due = V2CampaignLeadProgress::query()
             ->whereNotNull('next_run_at')
@@ -31,7 +32,7 @@ class CampaignDueLeadDispatcher
             ->get(['id', 'campaign_id', 'campaign_lead_id']);
 
         foreach ($due as $progress) {
-            if ($this->dispatchOne($progress)) {
+            if ($this->dispatchOne($progress, $dispatched * $staggerSeconds)) {
                 $dispatched++;
             }
         }
@@ -55,30 +56,37 @@ class CampaignDueLeadDispatcher
                     continue;
                 }
 
-                if ($this->dispatchOne($progress)) {
+                if ($this->dispatchOne($progress, $dispatched * $staggerSeconds)) {
                     $dispatched++;
                 }
             }
         }
 
         if ($dispatched > 0) {
-            Log::info('[Campaign] Dispatched due waiting leads', ['dispatched' => $dispatched]);
+            Log::info('[Campaign] Dispatched due waiting leads', [
+                'dispatched' => $dispatched,
+                'stagger_seconds' => $staggerSeconds,
+            ]);
         }
 
         return ['dispatched' => $dispatched];
     }
 
-    private function dispatchOne(V2CampaignLeadProgress $progress): bool
+    private function dispatchOne(V2CampaignLeadProgress $progress, int $delaySeconds = 0): bool
     {
         $lockKey = 'campaign:due-dispatch:'.$progress->campaign_id.':'.$progress->campaign_lead_id;
         if (! Cache::add($lockKey, 1, now()->addMinutes(10))) {
             return false;
         }
 
-        ProcessCampaignLeadJob::dispatch(
+        $pending = ProcessCampaignLeadJob::dispatch(
             (int) $progress->campaign_id,
             (int) $progress->campaign_lead_id,
         );
+
+        if ($delaySeconds > 0) {
+            $pending->delay(now()->addSeconds($delaySeconds));
+        }
 
         return true;
     }

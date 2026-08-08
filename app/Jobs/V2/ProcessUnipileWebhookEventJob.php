@@ -64,6 +64,8 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             'message.reaction',
             'invitation.accepted',
             'connection.accepted',
+            'new_relation',
+            'users.new_relation',
             'invitation.received',
             'invitation.sent',
             'invitation.rejected',
@@ -272,7 +274,8 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             );
         }
 
-        if (in_array($eventType, ['invitation.accepted', 'connection.accepted'], true) && $event->user_id) {
+        // Unipile's documented accepted-invite event is "new_relation" (USERS webhook).
+        if (in_array($eventType, ['invitation.accepted', 'connection.accepted', 'new_relation', 'users.new_relation'], true) && $event->user_id) {
             app(\App\V2\Outreach\OutreachWebhookProgressService::class)
                 ->handleInvitationAccepted((int) $event->user_id, $payload);
             app(\App\V2\Campaign\CampaignWebhookProgressService::class)
@@ -282,7 +285,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                 (int) $event->user_id,
                 'webhook.connection.accepted',
                 1,
-                ['event_id' => $event->event_id]
+                ['event_id' => $event->event_id, 'event_type' => $eventType]
             );
         }
 
