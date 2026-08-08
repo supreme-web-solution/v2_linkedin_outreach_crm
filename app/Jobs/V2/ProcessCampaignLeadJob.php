@@ -106,10 +106,12 @@ class ProcessCampaignLeadJob implements ShouldQueue
         }
 
         if ($progress->next_run_at !== null && $progress->next_run_at->isFuture()) {
-            Log::debug('[Campaign] Job skipped — waiting for scheduled time', [
+            Log::debug('[Campaign] Job deferred — waiting for scheduled time', [
                 'lead_id' => $lead->id,
                 'next_run_at' => $progress->next_run_at->toIso8601String(),
             ]);
+            self::dispatch($this->campaignId, $this->campaignLeadId, $this->campaignRunId)
+                ->delay($progress->next_run_at);
 
             return;
         }
@@ -259,7 +261,17 @@ class ProcessCampaignLeadJob implements ShouldQueue
 
         try {
             if ($stepType === 'condition') {
-                $this->handleCondition($campaign, $lead, $progress, $run, $node, $nodes, $resolver, $logger);
+                $this->handleCondition(
+                    $campaign,
+                    $lead,
+                    $progress,
+                    $run,
+                    $node,
+                    $nodes,
+                    $resolver,
+                    $logger,
+                    $profileService,
+                );
 
                 return;
             }
@@ -422,11 +434,35 @@ class ProcessCampaignLeadJob implements ShouldQueue
         array $nodes,
         CampaignSequenceResolver $resolver,
         CampaignActivityLogger $logger,
+        CampaignLeadProfileService $profileService,
     ): void {
         $nodeLabel = $resolver->nodeLabel($node);
         $acceptance = $progress->acceptance_status;
 
+        // Classic campaigns historically only set acceptance_status at invite-time or never.
+        // Poll LinkedIn so accepted invites advance even when the Unipile webhook was missed.
         if ($acceptance === null) {
+            $live = $profileService->checkLiveConnection($campaign, $lead->fresh() ?? $lead);
+            if ($live['connected']) {
+                $acceptance = true;
+                $progress->forceFill(['acceptance_status' => true])->save();
+                $logger->log(
+                    $campaign->id,
+                    $lead->id,
+                    $run?->id,
+                    $node,
+                    'condition_met',
+                    "Detected 1st-degree connection for {$lead->full_name} — invite accepted.",
+                    [
+                        'network_distance' => $live['network_distance'],
+                        'source' => 'live_profile_poll',
+                    ],
+                );
+            }
+        }
+
+        if ($acceptance === null) {
+            $resumeAt = now()->addHours(6);
             $logger->log(
                 $campaign->id,
                 $lead->id,
@@ -438,8 +474,9 @@ class ProcessCampaignLeadJob implements ShouldQueue
             $progress->update([
                 'current_node_key' => (int) ($node['key'] ?? 0),
                 'run_status' => max((int) $progress->run_status, 1),
-                'next_run_at' => now()->addHours(6),
+                'next_run_at' => $resumeAt,
             ]);
+            self::dispatch($campaign->id, $lead->id, $run?->id)->delay($resumeAt);
 
             return;
         }

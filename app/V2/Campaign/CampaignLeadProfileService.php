@@ -112,15 +112,79 @@ class CampaignLeadProfileService
     }
 
     /**
+     * Live Unipile check for 1st-degree / accepted invite.
+     * Always fetches a fresh profile (resolveRecipient skips fetch once provider_id is known).
+     *
+     * @return array{connected: bool, profile: array<string, mixed>, network_distance: mixed}
+     */
+    public function checkLiveConnection(V2Campaign $campaign, V2CampaignLead $lead): array
+    {
+        $resolved = $this->resolveRecipient($campaign, $lead);
+        $providerId = trim((string) ($resolved['provider_id'] ?? ''));
+        $profile = is_array($resolved['profile'] ?? null) ? $resolved['profile'] : [];
+
+        $accountId = V2IntegrationAccount::activeUnipileAccountId((int) $campaign->user_id);
+        if ($providerId !== '' && $accountId) {
+            try {
+                $providerKey = $this->providerManager->defaultProvider();
+                /** @var UnipileProvider $provider */
+                $provider = $this->providerManager->profile($providerKey);
+                $fresh = $provider->getProfileByIdentifier($providerId, ['account_id' => $accountId]);
+                if (is_array($fresh) && $fresh !== []) {
+                    $profile = $fresh;
+                }
+            } catch (Throwable $e) {
+                Log::warning('[Campaign] Live connection check failed', [
+                    'lead_id' => $lead->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $networkDistance = Arr::get($profile, 'network_distance')
+            ?? Arr::get($profile, 'provider_data.network_distance')
+            ?? Arr::get($profile, 'distance')
+            ?? Arr::get($profile, 'member_distance');
+
+        // Prefer live Unipile signals; only fall back to stored meta when the fetch returned nothing useful.
+        if ($networkDistance !== null && $networkDistance !== '') {
+            $connected = $this->isFirstDegree($networkDistance)
+                || Arr::get($profile, 'is_relationship') === true
+                || Arr::get($profile, 'connected') === true;
+        } else {
+            $connected = $this->isAlreadyConnected($lead, $profile);
+        }
+
+        if ($networkDistance !== null && $networkDistance !== '') {
+            $meta = is_array($lead->meta) ? $lead->meta : [];
+            $meta['network_distance'] = $networkDistance;
+            $updates = ['meta' => $meta];
+            if ($providerId !== '' && $providerId !== (string) $lead->provider_profile_id) {
+                $updates['provider_profile_id'] = $providerId;
+            }
+            $lead->forceFill($updates)->save();
+            $this->persistSourceNetworkDistance($lead, $networkDistance);
+        }
+
+        return [
+            'connected' => $connected,
+            'profile' => $profile,
+            'network_distance' => $networkDistance,
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $profile
      */
     public function isAlreadyConnected(V2CampaignLead $lead, array $profile = []): bool
     {
         $candidates = [
-            Arr::get($lead->meta, 'network_distance'),
             Arr::get($profile, 'network_distance'),
+            Arr::get($profile, 'provider_data.network_distance'),
             Arr::get($profile, 'distance'),
             Arr::get($profile, 'member_distance'),
+            // Stored import distance — may be stale; checkLiveConnection prefers a fresh fetch.
+            Arr::get($lead->meta, 'network_distance'),
         ];
 
         foreach ($candidates as $value) {
@@ -141,6 +205,31 @@ class CampaignLeadProfileService
         }
 
         return false;
+    }
+
+    private function persistSourceNetworkDistance(V2CampaignLead $lead, mixed $networkDistance): void
+    {
+        $recordId = (int) ($lead->source_record_id ?? 0);
+        if ($recordId <= 0) {
+            return;
+        }
+
+        try {
+            if ($lead->source_list_src === 'sn') {
+                \App\Models\SnLead::query()->where('id', $recordId)->update([
+                    'degree' => is_scalar($networkDistance) ? (string) $networkDistance : null,
+                ]);
+            } elseif ($lead->source_list_src === 'aud') {
+                \App\Models\AudienceList::query()->where('id', $recordId)->update([
+                    'con_distance' => is_scalar($networkDistance) ? (string) $networkDistance : null,
+                ]);
+            }
+        } catch (Throwable $e) {
+            Log::debug('[Campaign] Could not persist source network_distance', [
+                'lead_id' => $lead->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function isAlreadyConnectedError(string $message): bool
@@ -165,6 +254,9 @@ class CampaignLeadProfileService
 
         return in_array($normalized, [
             '1', '1st', 'first', 'distance_1', 'dist_1', 'f', 'first_degree',
-        ], true) || str_contains($normalized, 'distance_1');
+        ], true)
+            || str_contains($normalized, 'distance_1')
+            || str_contains($normalized, 'first_degree')
+            || $normalized === 'distance1';
     }
 }

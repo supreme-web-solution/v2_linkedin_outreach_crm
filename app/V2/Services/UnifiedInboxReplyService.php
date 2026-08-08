@@ -58,13 +58,23 @@ class UnifiedInboxReplyService
         $campaign = $campaignId > 0 ? V2OutreachCampaign::query()->find($campaignId) : null;
 
         if ($lead && $campaign) {
-            app(OutreachWebhookProgressService::class)->recordInboundReply(
+            $channel = OutreachChannelRegistry::normalizeChannelKey((string) $conversation->provider);
+            $webhookProgress = app(OutreachWebhookProgressService::class);
+            $webhookProgress->recordInboundReply(
                 $lead,
                 $campaign,
-                (string) $conversation->provider,
+                $channel,
                 $inboundBody,
             );
-            $this->pauseOutreachOnReply($conversation, $lead, $campaign, $inboundBody);
+            // Keep original pause-on-reply everywhere, except while sitting on a reply condition
+            // (Has replied? / Message replied? / No reply?). Those need the inbound flag first,
+            // then the Yes/No branch — pause-on-reply must not hard-stop them mid-evaluation.
+            // Invite accepted / email opened / bounce waits still pause immediately on reply.
+            if ($webhookProgress->isWaitingOnReplyCondition($lead->fresh() ?? $lead, $campaign)) {
+                $this->markPendingPauseOnReply($lead, $campaign, $channel);
+            } else {
+                $this->pauseOutreachOnReply($conversation, $lead, $campaign, $inboundBody);
+            }
         }
 
         if ($organizationId <= 0) {
@@ -96,13 +106,33 @@ class UnifiedInboxReplyService
         }
     }
 
+    private function markPendingPauseOnReply(
+        V2OutreachLead $lead,
+        V2OutreachCampaign $campaign,
+        string $channel,
+    ): void {
+        if (! $this->channelSettings->pauseOnReply($campaign, $channel)) {
+            return;
+        }
+
+        $progress = V2OutreachLeadProgress::query()->firstOrCreate(
+            ['outreach_campaign_id' => $campaign->id, 'outreach_lead_id' => $lead->id],
+            ['current_node_key' => 0, 'next_node_key' => 1, 'run_status' => 0, 'channel_state' => []]
+        );
+
+        $progressMeta = is_array($progress->meta) ? $progress->meta : [];
+        $progressMeta['pending_pause_on_reply'] = true;
+        $progressMeta['paused_channel'] = $channel;
+        $progress->forceFill(['meta' => $progressMeta])->save();
+    }
+
     private function pauseOutreachOnReply(
         V2Conversation $conversation,
         V2OutreachLead $lead,
         V2OutreachCampaign $campaign,
         string $inboundBody,
     ): void {
-        $provider = (string) $conversation->provider;
+        $provider = OutreachChannelRegistry::normalizeChannelKey((string) $conversation->provider);
         if (! $this->channelSettings->pauseOnReply($campaign, $provider)) {
             return;
         }
@@ -116,11 +146,11 @@ class UnifiedInboxReplyService
             ['current_node_key' => 0, 'next_node_key' => 1, 'run_status' => 0, 'channel_state' => []]
         );
 
-        $provider = (string) $conversation->provider;
         $progressMeta = is_array($progress->meta) ? $progress->meta : [];
         $progressMeta['paused_reason'] = 'inbound_reply';
         $progressMeta['paused_at'] = now()->toIso8601String();
         $progressMeta['paused_channel'] = $provider;
+        unset($progressMeta['pending_pause_on_reply']);
 
         $progress->forceFill([
             'next_run_at' => null,

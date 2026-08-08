@@ -11,13 +11,26 @@ class OutreachConditionEvaluator
 
     public const NO_REPLY_TIMEOUT_DAYS = 3;
 
+    /** @var array<int, string> */
+    public const REPLY_CONDITIONS = [
+        'has_replied',
+        'message_replied',
+        'email_replied',
+        'no_reply',
+    ];
+
+    public static function isReplyCondition(string $condition): bool
+    {
+        return in_array($condition, self::REPLY_CONDITIONS, true);
+    }
+
     /**
      * @param  array<string, mixed>  $node
      */
     public function evaluate(V2OutreachLeadProgress $progress, array $node): ?bool
     {
         $condition = (string) ($node['condition'] ?? 'invite_accepted');
-        $channel = (string) ($node['channel'] ?? 'linkedin');
+        $channel = OutreachChannelRegistry::normalizeChannelKey((string) ($node['channel'] ?? 'linkedin'));
         $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
         $channelData = is_array($channelState[$channel] ?? null) ? $channelState[$channel] : [];
         $replied = (bool) ($channelData['replied'] ?? false);

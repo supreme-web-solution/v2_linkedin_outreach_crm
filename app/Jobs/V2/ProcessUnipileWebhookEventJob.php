@@ -275,6 +275,8 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
         if (in_array($eventType, ['invitation.accepted', 'connection.accepted'], true) && $event->user_id) {
             app(\App\V2\Outreach\OutreachWebhookProgressService::class)
                 ->handleInvitationAccepted((int) $event->user_id, $payload);
+            app(\App\V2\Campaign\CampaignWebhookProgressService::class)
+                ->handleInvitationAccepted((int) $event->user_id, $payload);
 
             $this->recordWebhookActivity(
                 (int) $event->user_id,

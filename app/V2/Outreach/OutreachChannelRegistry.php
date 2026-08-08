@@ -280,6 +280,26 @@ class OutreachChannelRegistry
         return (string) (self::allChannels()[$channel]['label'] ?? ucfirst($channel));
     }
 
+    /**
+     * Normalize Unipile / inbox provider strings to outreach channel keys.
+     */
+    public static function normalizeChannelKey(string $channel): string
+    {
+        $raw = trim($channel);
+        if ($raw === '') {
+            return 'linkedin';
+        }
+
+        $lower = strtolower($raw);
+        if (array_key_exists($lower, self::allChannels())) {
+            return $lower;
+        }
+
+        return self::channelKeyForUnipileType($raw)
+            ?? self::channelKeyForUnipileType(strtoupper($raw))
+            ?? $lower;
+    }
+
     public static function channelKeyForUnipileType(string $type): ?string
     {
         $type = strtoupper($type);

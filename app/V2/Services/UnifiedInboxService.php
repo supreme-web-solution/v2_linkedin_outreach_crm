@@ -783,7 +783,7 @@ class UnifiedInboxService
     /**
      * Pull messages from Unipile when webhooks did not arrive (common on local dev).
      */
-    public function syncMessagesFromProvider(V2Conversation $conversation): void
+    public function syncMessagesFromProvider(V2Conversation $conversation, bool $triggerReplyHandlers = true): void
     {
         $provider = (string) $conversation->provider;
         if ($provider === 'email') {
@@ -950,7 +950,7 @@ class UnifiedInboxService
             ])->save();
         }
 
-        if ($newInboundBodies !== [] && $conversation->isInboxThread()) {
+        if ($triggerReplyHandlers && $newInboundBodies !== [] && $conversation->isInboxThread()) {
             $replyService = app(UnifiedInboxReplyService::class);
             $fresh = $conversation->fresh();
 

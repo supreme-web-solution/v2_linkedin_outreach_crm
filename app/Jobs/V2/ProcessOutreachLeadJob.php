@@ -8,6 +8,7 @@ use App\Models\V2OutreachLeadProgress;
 use App\Models\V2OutreachRun;
 use App\V2\Outreach\OutreachActivityLogger;
 use App\V2\Outreach\OutreachChannelGuard;
+use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Outreach\OutreachCompletionService;
 use App\V2\Outreach\OutreachConcurrencyLimiter;
 use App\V2\Outreach\OutreachConditionEvaluator;
@@ -60,7 +61,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
             ->where('id', $this->outreachLeadId)
             ->first();
 
-        if (! $lead || in_array($lead->status, ['done', 'skipped', 'replied'], true)) {
+        if (! $lead || in_array($lead->status, ['done', 'skipped'], true)) {
             return;
         }
 
@@ -68,6 +69,21 @@ class ProcessOutreachLeadJob implements ShouldQueue
             ['outreach_campaign_id' => $campaign->id, 'outreach_lead_id' => $lead->id],
             ['current_node_key' => 0, 'next_node_key' => 1, 'run_status' => 0, 'channel_state' => []]
         );
+
+        // Preserve pause-on-reply hard-stop. Only allow one more pass when the next node is a
+        // reply condition (legacy race: status flipped to replied before the condition resolved).
+        if ($lead->status === 'replied') {
+            $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
+            $nodeKey = (int) ($progress->next_node_key ?: $progress->current_node_key);
+            $node = $resolver->findNodeByKey($nodes, $nodeKey);
+            $condition = (string) ($node['condition'] ?? '');
+            $allow = $node
+                && (string) ($node['type'] ?? '') === 'condition'
+                && OutreachConditionEvaluator::isReplyCondition($condition);
+            if (! $allow) {
+                return;
+            }
+        }
 
         if ($progress->next_run_at !== null && $progress->next_run_at->isFuture()) {
             self::dispatch($this->outreachCampaignId, $this->outreachLeadId, $this->outreachRunId)
@@ -349,6 +365,23 @@ class ProcessOutreachLeadJob implements ShouldQueue
                 ? "Confirmed sent \"{$nodeLabel}\" for {$lead->full_name}."
                 : "Completed \"{$nodeLabel}\" for {$lead->full_name}.";
 
+            // Persist chat/conversation ids so Has replied? can poll Unipile later.
+            if (OutreachSendProof::nodeIsOutboundSend($node)) {
+                $channel = OutreachChannelRegistry::normalizeChannelKey((string) ($node['channel'] ?? 'linkedin'));
+                $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
+                $channelState[$channel] = array_merge(
+                    is_array($channelState[$channel] ?? null) ? $channelState[$channel] : [],
+                    array_filter([
+                        'chat_id' => (string) ($result['payload']['chat_id'] ?? ''),
+                        'conversation_id' => (int) ($result['payload']['conversation_id'] ?? 0) ?: null,
+                        'provider_message_id' => (string) ($result['payload']['provider_message_id'] ?? ''),
+                        'sent_at' => now()->toIso8601String(),
+                        'confirmed_sent' => true,
+                    ], fn ($v) => $v !== null && $v !== '' && $v !== 0),
+                );
+                $progress->forceFill(['channel_state' => $channelState])->save();
+            }
+
             $logger->log($campaign->id, $lead->id, $run?->id, $node, $logStatus, $logMessage, $result['payload'] ?? []);
             $this->advanceAfterStep($campaign, $lead, $progress, $run, $node, $nodes, $result, $resolver, $logger, $completion, $completed, $nodeKey, $nodeLabel, 'completed');
 
@@ -587,11 +620,31 @@ class ProcessOutreachLeadJob implements ShouldQueue
         OutreachConditionEvaluator $conditionEvaluator,
     ): void {
         $acceptance = $conditionEvaluator->evaluate($progress, $node);
+
+        // Poll Unipile / inbox when webhooks were missed (LinkedIn, WhatsApp, email, etc.).
+        if ($acceptance === null) {
+            $probed = app(\App\V2\Outreach\OutreachReplyProbeService::class)
+                ->probe($campaign, $lead, $progress, $node);
+            if ($probed) {
+                $progress->refresh();
+                $acceptance = $conditionEvaluator->evaluate($progress, $node);
+            }
+        }
+
         if ($acceptance === null) {
             $conditionEvaluator->markConditionWaiting($progress);
-            $logger->log($campaign->id, $lead->id, $run?->id, $node, 'waiting', 'Waiting for condition.');
-            $progress->update(['next_run_at' => now()->addHours(6)]);
-            self::dispatch($campaign->id, $lead->id, $run?->id)->delay(now()->addHours(6));
+            $nodeLabel = $resolver->nodeLabel($node);
+            $logger->log(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'waiting',
+                "Waiting at \"{$nodeLabel}\" for {$lead->full_name}.",
+            );
+            $resumeAt = now()->addHours(6);
+            $progress->update(['next_run_at' => $resumeAt]);
+            self::dispatch($campaign->id, $lead->id, $run?->id)->delay($resumeAt);
 
             return;
         }
@@ -599,14 +652,57 @@ class ProcessOutreachLeadJob implements ShouldQueue
         $nextKey = $resolver->resolveNextNodeKey($nodes, (int) ($node['key'] ?? 0), $acceptance);
         $completed = is_array($progress->completed_keys) ? $progress->completed_keys : [];
         $completed[] = (int) ($node['key'] ?? 0);
+        $nodeLabel = $resolver->nodeLabel($node);
+        $branchLabel = $acceptance ? 'yes' : 'no';
 
-        $progress->update([
+        $logger->log(
+            $campaign->id,
+            $lead->id,
+            $run?->id,
+            $node,
+            'completed',
+            "Condition \"{$nodeLabel}\" — {$branchLabel} path for {$lead->full_name}.",
+        );
+
+        $condition = (string) ($node['condition'] ?? '');
+        $meta = is_array($progress->meta) ? $progress->meta : [];
+        $meta['condition_wait_since'] = null;
+        $pendingPause = ! empty($meta['pending_pause_on_reply']);
+        unset($meta['pending_pause_on_reply']);
+
+        // acceptance_status is the invite-accepted signal used by stats + later path resolution.
+        // Do not overwrite it with Has replied? / email_opened results.
+        $progressUpdate = [
             'current_node_key' => (int) ($node['key'] ?? 0),
             'next_node_key' => $nextKey,
             'completed_keys' => array_values(array_unique($completed)),
             'next_run_at' => null,
-            'meta' => array_merge(is_array($progress->meta) ? $progress->meta : [], ['condition_wait_since' => null]),
-        ]);
+            'meta' => $meta,
+        ];
+        if ($condition === 'invite_accepted') {
+            $progressUpdate['acceptance_status'] = $acceptance;
+        }
+
+        $progress->update($progressUpdate);
+
+        // Deferred pause-on-reply (only for reply conditions): let the Yes/No branch run when
+        // the sequence has a next step; otherwise apply the original paused/replied outcome.
+        if ($pendingPause && OutreachConditionEvaluator::isReplyCondition($condition)) {
+            if ($nextKey === null) {
+                $lead->forceFill(['status' => 'replied'])->save();
+                $logger->log(
+                    $campaign->id,
+                    $lead->id,
+                    $run?->id,
+                    $node,
+                    'paused',
+                    sprintf('%s replied — sequence complete after condition.', $lead->full_name ?? 'Lead'),
+                );
+            } elseif ($lead->status === 'replied') {
+                // Only reopen when we ourselves deferred pause for this reply condition.
+                $lead->forceFill(['status' => 'running'])->save();
+            }
+        }
 
         if ($nextKey !== null) {
             self::dispatch($campaign->id, $lead->id, $run?->id)->delay(now()->addSeconds(2));

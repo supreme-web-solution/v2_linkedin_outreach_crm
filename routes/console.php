@@ -16,6 +16,16 @@ Artisan::command('calls:dispatch-due', function (CallOrchestrationService $orche
 
 Schedule::command('calls:dispatch-due')->everyMinute();
 
+Schedule::command('campaigns:dispatch-due')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('outreach:dispatch-due')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
 Schedule::command('queue:recover --release-stale')
     ->everyFiveMinutes()
     ->withoutOverlapping()

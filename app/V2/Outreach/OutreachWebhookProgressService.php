@@ -48,12 +48,13 @@ class OutreachWebhookProgressService
         V2OutreachCampaign $campaign,
         string $channel,
         string $inboundBody,
+        bool $advanceCondition = true,
     ): void {
         $this->updateChannelState($lead, $campaign, $channel, [
             'replied' => true,
             'replied_at' => now()->toIso8601String(),
             'last_inbound_preview' => mb_substr(trim($inboundBody), 0, 200),
-        ]);
+        ], $advanceCondition);
     }
 
     /**
@@ -96,6 +97,7 @@ class OutreachWebhookProgressService
         V2OutreachCampaign $campaign,
         string $channel,
         array $updates,
+        bool $advanceCondition = true,
     ): void {
         if (in_array($lead->status, ['done', 'skipped'], true)) {
             return;
@@ -104,6 +106,8 @@ class OutreachWebhookProgressService
         if (! in_array($campaign->status, ['active', 'running'], true)) {
             return;
         }
+
+        $channel = OutreachChannelRegistry::normalizeChannelKey($channel);
 
         $progress = V2OutreachLeadProgress::query()->firstOrCreate(
             ['outreach_campaign_id' => $campaign->id, 'outreach_lead_id' => $lead->id],
@@ -125,7 +129,9 @@ class OutreachWebhookProgressService
             $progress->forceFill(['acceptance_status' => true])->save();
         }
 
-        $this->tryAdvanceWaitingCondition($lead->fresh(), $progress->fresh(), $campaign);
+        if ($advanceCondition) {
+            $this->tryAdvanceWaitingCondition($lead->fresh() ?? $lead, $progress->fresh() ?? $progress, $campaign);
+        }
     }
 
     /**
@@ -184,7 +190,7 @@ class OutreachWebhookProgressService
         return '';
     }
 
-    public function markLinkedInInviteAccepted(V2OutreachLead $lead): void
+    public function markLinkedInInviteAccepted(V2OutreachLead $lead, bool $advanceCondition = true): void
     {
         $campaign = $lead->campaign;
         if (! $campaign || ! in_array($campaign->status, ['active', 'running'], true)) {
@@ -194,7 +200,7 @@ class OutreachWebhookProgressService
         $this->updateChannelState($lead, $campaign, 'linkedin', [
             'invite_accepted' => true,
             'invite_accepted_at' => now()->toIso8601String(),
-        ]);
+        ], $advanceCondition);
 
         $this->logger->log(
             $campaign->id,
@@ -279,7 +285,8 @@ class OutreachWebhookProgressService
         V2OutreachLeadProgress $progress,
         V2OutreachCampaign $campaign,
     ): void {
-        if (in_array($lead->status, ['done', 'skipped', 'replied'], true)) {
+        // Allow status=replied so Has replied? / Message replied can still resolve after pause-on-reply.
+        if (in_array($lead->status, ['done', 'skipped'], true)) {
             return;
         }
 
@@ -300,6 +307,36 @@ class OutreachWebhookProgressService
         }
 
         ProcessOutreachLeadJob::dispatch($campaign->id, $lead->id)->delay(now()->addSeconds(2));
+    }
+
+    /**
+     * True only when waiting on a reply-branch condition (Has replied? / Message replied? / No reply?).
+     * Used to briefly defer pause-on-reply so that branch can resolve — does NOT cover invite/open/bounce.
+     */
+    public function isWaitingOnReplyCondition(V2OutreachLead $lead, V2OutreachCampaign $campaign): bool
+    {
+        $progress = V2OutreachLeadProgress::query()
+            ->where('outreach_campaign_id', $campaign->id)
+            ->where('outreach_lead_id', $lead->id)
+            ->first();
+        if (! $progress) {
+            return false;
+        }
+
+        $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
+        $nodeKey = (int) ($progress->next_node_key ?: $progress->current_node_key);
+        $node = $this->resolver->findNodeByKey($nodes, $nodeKey);
+        if (! $node || (string) ($node['type'] ?? '') !== 'condition') {
+            return false;
+        }
+
+        return OutreachConditionEvaluator::isReplyCondition((string) ($node['condition'] ?? ''));
+    }
+
+    /** @deprecated Use isWaitingOnReplyCondition() */
+    public function isWaitingOnResolvableCondition(V2OutreachLead $lead, V2OutreachCampaign $campaign): bool
+    {
+        return $this->isWaitingOnReplyCondition($lead, $campaign);
     }
 
     /**
