@@ -292,8 +292,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
 
     /**
      * Scoped Unipile routes require account_id as a query/path param on this API — not in JSON body.
-     */
-    /**
+     *
      * @param  array<string, scalar|null>  $extraQuery
      */
     private function accountScopedRequest(string $method, string $endpoint, string $accountId, array $payload = [], array $extraQuery = []): array
@@ -845,20 +844,15 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             }
 
             $payload = $basePayload;
-            $pageLimit = max(1, min(100, (int) ($payload['count'] ?? $remaining), $remaining));
-            $payload['count'] = $pageLimit;
-            unset($payload['cursor']);
+            $payload['count'] = max(1, min(100, (int) ($payload['count'] ?? $remaining), $remaining));
 
-            $response = $this->accountScopedRequest(
-                'POST',
-                $this->endpoint('search'),
-                $accountId,
-                $payload,
-                array_filter([
-                    'limit' => $pageLimit,
-                    'cursor' => $cursor,
-                ], static fn ($value) => $value !== null && $value !== '')
-            );
+            if ($cursor) {
+                $payload['cursor'] = $cursor;
+            } else {
+                unset($payload['cursor']);
+            }
+
+            $response = $this->accountScopedRequest('POST', $this->endpoint('search'), $accountId, $payload);
             $lastResponse = $response;
             $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
             $items = is_array($items) ? array_values($items) : [];
