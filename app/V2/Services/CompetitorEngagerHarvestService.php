@@ -285,6 +285,24 @@ class CompetitorEngagerHarvestService
             ];
         }
 
+        $accountId = trim((string) ($context['account_id'] ?? ''));
+        if ($accountId !== '') {
+            try {
+                $profile = $provider->getCompanyProfile($slug, $accountId);
+                $id = (string) (Arr::get($profile, 'id') ?? '');
+                if ($id !== '') {
+                    return [
+                        'id' => $id,
+                        'name' => Arr::get($profile, 'name'),
+                        'profile_url' => Arr::get($profile, 'profile_url')
+                            ?? 'https://www.linkedin.com/company/'.$slug.'/',
+                    ];
+                }
+            } catch (\Throwable) {
+                // Search and direct lookup both failed — throw below.
+            }
+        }
+
         throw new \RuntimeException('Company not found on LinkedIn for URL: '.$companyUrl);
     }
 

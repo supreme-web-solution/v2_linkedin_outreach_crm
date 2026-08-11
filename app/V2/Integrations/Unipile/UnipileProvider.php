@@ -932,6 +932,23 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     }
 
     /**
+     * Fetch a LinkedIn company profile by public slug, numeric ID, or URN.
+     *
+     * @return array<string, mixed>
+     */
+    public function getCompanyProfile(string $identifier, string $accountId): array
+    {
+        $identifier = trim($identifier);
+        if ($identifier === '') {
+            throw new UnipileException('Company identifier is required.', 422);
+        }
+
+        return $this->request('GET', '/linkedin/company/'.rawurlencode($identifier), [
+            'account_id' => $accountId,
+        ]);
+    }
+
+    /**
      * Fetch a single LinkedIn profile by its public URL or identifier.
      */
     public function getProfileByUrl(string $url, string $accountId): array

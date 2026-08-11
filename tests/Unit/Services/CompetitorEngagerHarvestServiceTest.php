@@ -158,4 +158,39 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
             $service->resolveCompanyIdentifier('https://www.linkedin.com/company/microsoft/')
         );
     }
+
+    public function test_resolve_company_falls_back_to_direct_profile_when_search_is_empty(): void
+    {
+        config([
+            'services.unipile.base_url' => 'https://unipile.test/api/v1',
+            'services.unipile.api_key' => 'test-key',
+            'services.unipile.mock' => false,
+        ]);
+
+        Http::fake([
+            'unipile.test/api/v1/linkedin/search*' => Http::response([
+                'items' => [],
+                'paging' => ['total_count' => 0],
+            ]),
+            'unipile.test/api/v1/linkedin/company/microsoft*' => Http::response([
+                'object' => 'CompanyProfile',
+                'id' => '1035',
+                'name' => 'Microsoft',
+                'public_identifier' => 'microsoft',
+                'profile_url' => 'https://www.linkedin.com/company/microsoft/',
+            ]),
+        ]);
+
+        $provider = app(\App\V2\Integrations\Unipile\UnipileProvider::class);
+        $service = app(CompetitorEngagerHarvestService::class);
+
+        $company = $service->resolveCompany(
+            $provider,
+            'https://www.linkedin.com/company/microsoft/',
+            ['account_id' => 'acc-test']
+        );
+
+        $this->assertSame('1035', $company['id']);
+        $this->assertSame('Microsoft', $company['name']);
+    }
 }
