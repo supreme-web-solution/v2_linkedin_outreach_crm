@@ -1,0 +1,31 @@
+[
+  {"key": 100, "type": "action", "label": "Visit Profile", "action": "visit_profile", "config": [], "channel": "linkedin"},
+  {"key": 101, "time": "days", "type": "delay", "label": "Wait 1 day", "value": 1},
+  {"key": 102, "type": "action", "label": "Like Post", "action": "like_post", "config": [], "channel": "linkedin"},
+  {"key": 103, "time": "days", "type": "delay", "label": "Wait 1 day", "value": 1},
+  {"key": 104, "type": "action", "label": "Visit Profile", "action": "visit_profile", "config": [], "channel": "linkedin"},
+  {"key": 105, "type": "action", "label": "Send Invite", "action": "send_invite", "config": {"message": null}, "channel": "linkedin"},
+  {
+    "key": 106,
+    "type": "condition",
+    "label": "Invite accepted",
+    "config": {"timeout_days": 1},
+    "channel": "linkedin",
+    "branches": {
+      "accepted": [
+        {"key": 107, "time": "days", "type": "delay", "label": "Wait 1 day", "value": 1},
+        {"key": 108, "type": "action", "label": "Send Message", "action": "send_message", "config": {"message": "Hey {{first_name}} — thanks for accepting!\n\nGenuinely curious: as an agency owner, is new client acquisition something you have systemized, or is it still mostly manual/referral-based?\n\nReason I ask — built a tool that automates targeted LinkedIn outreach to your most ideal prospects. A few agencies are using it to fill their pipeline hands-free.\n\nOpen to a quick look if it's relevant?"}, "channel": "linkedin"},
+        {"key": 113, "time": "days", "type": "delay", "label": "Wait 3 days", "value": 3},
+        {"key": 114, "type": "action", "label": "Send Message", "action": "send_message", "config": {"message": "Hey {{first_name}}, this might be the part that actually gets you to try it —\n\nYou can grab the entire follower list of any SEO influencer or competitor agency, then run outreach straight to that list. These are people already interested in SEO/AEO — not cold traffic.\n\nMost agency owners I've shown this to didn't realize how fast that turns into booked calls. Takes less time to set up than writing this message did.\n\nWant a quick look at how it's done?"}, "channel": "linkedin"}
+      ],
+      "not_accepted": [
+        {"key": 109, "time": "days", "type": "delay", "label": "Wait 1 day", "value": 1},
+        {"key": 110, "type": "action", "label": "Visit Profile", "action": "visit_profile", "config": [], "channel": "linkedin"},
+        {"key": 111, "time": "days", "type": "delay", "label": "Wait 1 day", "value": 1},
+        {"key": 112, "type": "action", "label": "Send Message", "action": "send_message", "config": {"message": "Hey {{first_name}} — thanks for accepting!\n\nGenuinely curious: as an agency owner, is new client acquisition something you have systemized, or is it still mostly manual/referral-based?\n\nReason I ask — built a tool that automates targeted LinkedIn outreach to your most ideal prospects. A few agencies are using it to fill their pipeline hands-free.\n\nOpen to a quick look if it's relevant?"}, "channel": "linkedin"}
+      ]
+    },
+    "condition": "invite_accepted"
+  },
+  {"key": 99, "type": "end", "label": "End"}
+]

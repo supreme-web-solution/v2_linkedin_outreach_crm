@@ -293,7 +293,10 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     /**
      * Scoped Unipile routes require account_id as a query/path param on this API — not in JSON body.
      */
-    private function accountScopedRequest(string $method, string $endpoint, string $accountId, array $payload = []): array
+    /**
+     * @param  array<string, scalar|null>  $extraQuery
+     */
+    private function accountScopedRequest(string $method, string $endpoint, string $accountId, array $payload = [], array $extraQuery = []): array
     {
         $mode = (string) config('services.unipile.account_id_param', 'query');
 
@@ -309,11 +312,18 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             return $this->request($method, $endpoint, $payload);
         }
 
+        $query = array_merge(['account_id' => $accountId], $extraQuery);
+        $queryString = http_build_query(
+            array_filter($query, static fn ($value) => $value !== null && $value !== ''),
+            '',
+            '&',
+            PHP_QUERY_RFC3986
+        );
         $separator = str_contains($endpoint, '?') ? '&' : '?';
 
         return $this->request(
             $method,
-            $endpoint.$separator.'account_id='.rawurlencode($accountId),
+            $endpoint.$separator.$queryString,
             $payload
         );
     }
@@ -835,15 +845,20 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             }
 
             $payload = $basePayload;
-            $payload['count'] = max(1, min(100, (int) ($payload['count'] ?? $remaining), $remaining));
+            $pageLimit = max(1, min(100, (int) ($payload['count'] ?? $remaining), $remaining));
+            $payload['count'] = $pageLimit;
+            unset($payload['cursor']);
 
-            if ($cursor) {
-                $payload['cursor'] = $cursor;
-            } else {
-                unset($payload['cursor']);
-            }
-
-            $response = $this->accountScopedRequest('POST', $this->endpoint('search'), $accountId, $payload);
+            $response = $this->accountScopedRequest(
+                'POST',
+                $this->endpoint('search'),
+                $accountId,
+                $payload,
+                array_filter([
+                    'limit' => $pageLimit,
+                    'cursor' => $cursor,
+                ], static fn ($value) => $value !== null && $value !== '')
+            );
             $lastResponse = $response;
             $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
             $items = is_array($items) ? array_values($items) : [];

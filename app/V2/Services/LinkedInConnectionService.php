@@ -527,17 +527,17 @@ class LinkedInConnectionService
 
 
 
-    public function connectViaCookie(User $user, string $liAt, string $userAgent, int $orgId): V2IntegrationAccount
+    public function connectViaCookie(User $user, string $liAt, string $userAgent, int $orgId, ?string $country = null): V2IntegrationAccount
 
     {
 
-        return $this->connectOrReconnectViaCookie($user, $liAt, $userAgent, $orgId);
+        return $this->connectOrReconnectViaCookie($user, $liAt, $userAgent, $orgId, $country);
 
     }
 
 
 
-    public function connectOrReconnectViaCookie(User $user, string $liAt, string $userAgent, int $orgId): V2IntegrationAccount
+    public function connectOrReconnectViaCookie(User $user, string $liAt, string $userAgent, int $orgId, ?string $country = null): V2IntegrationAccount
 
     {
 
@@ -553,13 +553,15 @@ class LinkedInConnectionService
 
         $result = null;
 
+        $connectOptions = $this->cookieConnectOptions($country);
+
 
 
         if ($unipileAccountId) {
 
             try {
 
-                $result = $provider->reconnectAccount($unipileAccountId, [
+                $result = $provider->reconnectAccount($unipileAccountId, array_merge([
 
                     'provider' => 'LINKEDIN',
 
@@ -567,11 +569,11 @@ class LinkedInConnectionService
 
                     'user_agent' => $userAgent,
 
-                ]);
+                ], $connectOptions));
 
             } catch (\Throwable) {
 
-                $result = $provider->connectWithCookie($liAt, $userAgent);
+                $result = $provider->connectWithCookie($liAt, $userAgent, $connectOptions);
 
                 $unipileAccountId = $result['account_id'] ?? $result['id'] ?? null;
 
@@ -579,7 +581,7 @@ class LinkedInConnectionService
 
         } else {
 
-            $result = $provider->connectWithCookie($liAt, $userAgent);
+            $result = $provider->connectWithCookie($liAt, $userAgent, $connectOptions);
 
             $unipileAccountId = $result['account_id'] ?? $result['id'] ?? null;
 
@@ -650,6 +652,8 @@ class LinkedInConnectionService
                     'connected_at' => now()->toIso8601String(),
 
                     'connection_method' => 'cookie',
+
+                    'proxy_country' => $connectOptions['country'] ?? null,
 
                     'live_status' => 'connected',
 
@@ -773,6 +777,22 @@ class LinkedInConnectionService
 
         $account->update(['status' => 'disconnected']);
 
+    }
+
+
+
+    /**
+     * @return array<string, string>
+     */
+    private function cookieConnectOptions(?string $country = null): array
+    {
+        $country = strtoupper(trim((string) ($country ?? config('services.unipile.default_country', ''))));
+
+        if ($country === '' || strlen($country) !== 2) {
+            return [];
+        }
+
+        return ['country' => $country];
     }
 
 }

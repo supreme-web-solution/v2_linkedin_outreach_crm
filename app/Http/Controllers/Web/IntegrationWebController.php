@@ -150,6 +150,7 @@ class IntegrationWebController extends Controller
         $data = $request->validate([
             'li_at' => ['required', 'string', 'max:2048'],
             'user_agent' => ['nullable', 'string', 'max:512'],
+            'country' => ['nullable', 'string', 'size:2'],
         ]);
 
         /** @var \App\Models\User $user */
@@ -161,7 +162,8 @@ class IntegrationWebController extends Controller
                 $user,
                 $data['li_at'],
                 trim((string) ($data['user_agent'] ?? $request->userAgent() ?? '')) ?: 'Socifusion/2.0',
-                $orgId
+                $orgId,
+                $data['country'] ?? null,
             );
         } catch (\Throwable $e) {
             IntegrationUserErrorMapper::log($e, 'connect_linkedin_cookie');

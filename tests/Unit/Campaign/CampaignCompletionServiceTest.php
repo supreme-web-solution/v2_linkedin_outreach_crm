@@ -84,4 +84,43 @@ class CampaignCompletionServiceTest extends TestCase
 
         $this->assertSame('running', $campaign->fresh()->status);
     }
+
+    public function test_marks_campaign_failed_when_all_leads_errored(): void
+    {
+        $user = User::factory()->create();
+        $org = V2Organization::query()->create([
+            'name' => 'Test Org',
+            'slug' => 'test-org-failed',
+            'owner_id' => $user->id,
+        ]);
+
+        $campaign = V2Campaign::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $org->id,
+            'name' => 'Failed Campaign',
+            'sequence_type' => 'custom',
+            'status' => 'running',
+            'node_model' => [],
+        ]);
+
+        V2CampaignLead::query()->create([
+            'campaign_id' => $campaign->id,
+            'lead_id' => null,
+            'full_name' => 'Eleazar Nzerem',
+            'status' => 'error',
+        ]);
+
+        $run = V2CampaignRun::query()->create([
+            'user_id' => $user->id,
+            'legacy_campaign_id' => $campaign->id,
+            'status' => 'running',
+            'started_at' => now(),
+        ]);
+
+        $service = new CampaignCompletionService();
+        $this->assertTrue($service->maybeFinish($campaign->fresh(), $run));
+
+        $this->assertSame('failed', $campaign->fresh()->status);
+        $this->assertSame('failed', $run->fresh()->status);
+    }
 }

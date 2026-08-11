@@ -127,6 +127,7 @@ class IntegrationAccountController extends Controller
         $data = $request->validate([
             'li_at'      => ['required', 'string', 'max:2048'],
             'user_agent' => ['nullable', 'string', 'max:512'],
+            'country'    => ['nullable', 'string', 'size:2'],
         ]);
 
         $providerKey = $this->providerManager->defaultProvider();
@@ -143,6 +144,7 @@ class IntegrationAccountController extends Controller
                 $data['li_at'],
                 $data['user_agent'] ?? request()->userAgent() ?? '',
                 $organizationId,
+                $data['country'] ?? null,
             );
             Log::info('[Connect] Cookie connection success', ['account_id' => $account->id]);
         } catch (\Throwable $e) {
