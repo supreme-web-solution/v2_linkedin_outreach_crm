@@ -786,10 +786,10 @@ class LinkedInConnectionService
      */
     private function cookieConnectOptions(?string $country = null): array
     {
-        $country = strtoupper(trim((string) ($country ?? config('services.unipile.default_country', ''))));
+        $country = strtoupper(trim((string) ($country ?? config('services.unipile.default_country', 'US'))));
 
         if ($country === '' || strlen($country) !== 2) {
-            return [];
+            $country = 'US';
         }
 
         return ['country' => $country];

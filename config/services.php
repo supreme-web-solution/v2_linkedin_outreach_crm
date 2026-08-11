@@ -142,9 +142,8 @@ return [
 
     'unipile' => [
         'base_url' => env('UNIPILE_BASE_URL', 'https://api1.unipile.com:13111/api/v1'),
-        // ISO 3166-1 alpha-2 — Unipile picks a proxy in this country for cookie/credential connects.
-        // Must match where the LinkedIn session (li_at) was created, or people search may return 0 results.
-        'default_country' => env('UNIPILE_DEFAULT_COUNTRY'),
+        // ISO 3166-1 alpha-2 — Unipile proxy country for cookie/credential connects (defaults to US).
+        'default_country' => env('UNIPILE_DEFAULT_COUNTRY', 'US'),
         'api_key' => env('UNIPILE_API_KEY'),
         'webhook_secret' => env('UNIPILE_WEBHOOK_SECRET'),
         // Paste this path in Unipile Dashboard → Webhooks (Messaging source).

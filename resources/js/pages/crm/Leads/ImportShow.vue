@@ -256,7 +256,7 @@ async function exportCsv() {
                     </p>
                     <p class="mt-1 text-[11px] text-muted-foreground/90">
                         Green phone = number imported. Green WhatsApp = ready to message.
-                        Format: country code digits only (e.g. 2348085204156).
+                        Format: country code digits only (e.g. 15551234567).
                     </p>
                 </div>
                 <div class="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-sm">

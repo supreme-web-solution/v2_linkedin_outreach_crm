@@ -1093,7 +1093,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
 
     /**
      * Format a phone for WhatsApp profile lookup / chat start.
-     * Example: +234 808 520 4156 → 2348085204156@s.whatsapp.net
+     * Example: +1 555 123 4567 → 15551234567@s.whatsapp.net
      */
     public function whatsappIdentifierFromPhone(string $phone): string
     {

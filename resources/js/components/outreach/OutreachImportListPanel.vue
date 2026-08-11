@@ -220,8 +220,8 @@ function onDrop(event: DragEvent) {
             <p class="font-medium text-foreground">Phone format for WhatsApp</p>
             <p class="mt-1">
                 Use international digits with country code — no <code class="rounded bg-muted px-1">+</code>, spaces, or leading <code class="rounded bg-muted px-1">0</code>.
-                Nigeria example: <code class="rounded bg-muted px-1">2348085204156</code>
-                (same as <code class="rounded bg-muted px-1">+234 808 520 4156</code>).
+                US example: <code class="rounded bg-muted px-1">15551234567</code>
+                (same as <code class="rounded bg-muted px-1">+1 555 123 4567</code>).
             </p>
             <p class="mt-1">In Excel, set the phone column to <strong>Text</strong> so digits are not changed.</p>
         </div>
