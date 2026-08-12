@@ -116,10 +116,7 @@ class ChannelConnectionService
             ->latest('id')
             ->first();
 
-        if ($unipileId = $existing?->getUnipileAccountId()) {
-            $context['type'] = 'reconnect';
-            $context['reconnect_account'] = $unipileId;
-        }
+        $context = $this->appendHostedAuthReconnect($context, $existing?->getUnipileAccountId());
 
         return $this->providerManager->account(
             $this->providerManager->defaultProvider()
@@ -229,6 +226,38 @@ class ChannelConnectionService
         } catch (\Throwable) {
             // Unipile account may already be gone — local row is still updated.
         }
+    }
+
+    /**
+     * Only use hosted-auth reconnect when the remote Unipile account still exists.
+     *
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    private function appendHostedAuthReconnect(array $context, ?string $unipileAccountId): array
+    {
+        $unipileAccountId = trim((string) $unipileAccountId);
+        if ($unipileAccountId === '') {
+            return $context;
+        }
+
+        try {
+            $this->providerManager->account(
+                $this->providerManager->defaultProvider()
+            )->getAccount($unipileAccountId);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::info('[Connect] Hosted auth using create flow — remote account missing', [
+                'account_id' => $unipileAccountId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $context;
+        }
+
+        $context['type'] = 'reconnect';
+        $context['reconnect_account'] = $unipileAccountId;
+
+        return $context;
     }
 
     /**

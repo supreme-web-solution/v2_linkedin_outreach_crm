@@ -131,13 +131,7 @@ class LinkedInConnectionService
 
         $existing = $this->consolidateProviderAccount($user->id, 'linkedin');
 
-        if ($unipileId = $existing?->getUnipileAccountId()) {
-
-            $context['type'] = 'reconnect';
-
-            $context['reconnect_account'] = $unipileId;
-
-        }
+        $context = $this->appendHostedAuthReconnect($context, $existing?->getUnipileAccountId());
 
         return $this->providerManager->account(
 
@@ -831,6 +825,38 @@ class LinkedInConnectionService
 
         }
 
+    }
+
+
+
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    private function appendHostedAuthReconnect(array $context, ?string $unipileAccountId): array
+    {
+        $unipileAccountId = trim((string) $unipileAccountId);
+        if ($unipileAccountId === '') {
+            return $context;
+        }
+
+        try {
+            $this->providerManager->account(
+                $this->providerManager->defaultProvider()
+            )->getAccount($unipileAccountId);
+        } catch (\Throwable $e) {
+            Log::info('[Connect] Hosted auth using create flow — remote account missing', [
+                'account_id' => $unipileAccountId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $context;
+        }
+
+        $context['type'] = 'reconnect';
+        $context['reconnect_account'] = $unipileAccountId;
+
+        return $context;
     }
 
 
