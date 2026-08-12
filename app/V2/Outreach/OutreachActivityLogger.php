@@ -61,6 +61,7 @@ class OutreachActivityLogger
             'outreach_lead_id' => $event->outreach_lead_id,
             'lead_name' => $event->lead?->full_name,
             'node_key' => $event->node_key,
+            'node_label' => $this->eventNodeLabel($event),
             'channel' => $event->channel,
             'action' => $event->action,
             'status' => $event->status,
@@ -68,5 +69,22 @@ class OutreachActivityLogger
             'payload' => $event->payload,
             'executed_at' => $event->executed_at?->toIso8601String(),
         ])->values()->all();
+    }
+
+    private function eventNodeLabel(V2OutreachNodeEvent $event): ?string
+    {
+        $action = trim((string) ($event->action ?? ''));
+        if ($action === '') {
+            return null;
+        }
+
+        $label = ucwords(str_replace('_', ' ', $action));
+        $channel = trim((string) ($event->channel ?? ''));
+
+        if ($channel !== '') {
+            return OutreachChannelRegistry::channelLabel($channel).' · '.$label;
+        }
+
+        return $label;
     }
 }

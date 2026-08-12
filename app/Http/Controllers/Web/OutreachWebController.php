@@ -554,14 +554,16 @@ class OutreachWebController extends Controller
     public function activity(int $id, OutreachActivityLogger $logger): JsonResponse
     {
         $campaign = $this->findOwned($id);
+        $afterId = request()->query('after_id') ? (int) request()->query('after_id') : null;
+        $leadId = request()->query('lead_id') ? (int) request()->query('lead_id') : null;
+        $limit = min(100, max(10, (int) (request()->query('limit') ?? 50)));
 
         return response()->json([
             'success' => true,
-            'events' => $logger->recentForCampaign(
-                $campaign->id,
-                min(100, max(10, (int) (request()->query('limit') ?? 50))),
-                request()->query('after_id') ? (int) request()->query('after_id') : null,
-            ),
+            'campaign_id' => $campaign->id,
+            'lead_id' => $leadId,
+            'events' => $logger->recentForCampaign($campaign->id, $limit, $afterId, $leadId),
+            'timestamp' => now()->toIso8601String(),
         ]);
     }
 

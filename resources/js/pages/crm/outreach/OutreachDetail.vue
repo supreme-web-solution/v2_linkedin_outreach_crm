@@ -2,9 +2,16 @@
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import {
     Activity, AlertCircle, CheckCircle2, Clock, Copy, Inbox, Info, Layers, Loader2,
-    Pause, Play, Pencil, Radio, Rocket, Sparkles, Trash2, Users, XCircle, Zap,
+    Pause, Play, Pencil, Radio, Rocket, ScrollText, Sparkles, Trash2, Users, XCircle, Zap,
 } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import OutreachLeadReadinessPanel from '@/components/outreach/OutreachLeadReadinessPanel.vue';
 import ChannelRateLimitHint, { type ActionQuotaSnapshot } from '@/components/outreach/ChannelRateLimitHint.vue';
@@ -119,9 +126,21 @@ const launching = ref(false);
 const duplicating = ref(false);
 const savingTemplate = ref(false);
 const togglingStatus = ref(false);
+type LeadRow = {
+    id: number;
+    full_name: string | null;
+    status: string;
+    email: string | null;
+    progress: { current_node_label: string | null; next_run_at: string | null } | null;
+};
+
 const activityEvents = ref<ActivityEvent[]>([]);
 const activityLoading = ref(false);
 const lastEventId = ref(0);
+const leadLogOpen = ref(false);
+const leadLogLead = ref<LeadRow | null>(null);
+const leadLogEvents = ref<ActivityEvent[]>([]);
+const leadLogLoading = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const isRunning = computed(() => ['active', 'running', 'preparing'].includes(props.campaign.status));
@@ -220,19 +239,28 @@ function formatDateTime(iso: string | null) {
     return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-async function fetchActivity(initial = false) {
-    if (activityLoading.value && !initial) return;
-    activityLoading.value = true;
+async function fetchActivity(initial = false, leadId?: number) {
+    if (activityLoading.value && !initial && !leadId) return;
+    if (leadId) leadLogLoading.value = true;
+    else activityLoading.value = true;
 
     try {
-        const params = new URLSearchParams({ limit: '50' });
-        if (!initial && lastEventId.value > 0) {
+        const params = new URLSearchParams({ limit: leadId ? '100' : '50' });
+        if (!leadId && !initial && lastEventId.value > 0) {
             params.set('after_id', String(lastEventId.value));
+        }
+        if (leadId) {
+            params.set('lead_id', String(leadId));
         }
         const res = await fetch(`/outreach/${props.campaign.id}/activity?${params}`, { headers: { Accept: 'application/json' } });
         if (!res.ok) return;
         const json = await res.json();
         const events: ActivityEvent[] = json.events ?? [];
+
+        if (leadId) {
+            leadLogEvents.value = events;
+            return;
+        }
 
         if (initial) {
             activityEvents.value = events;
@@ -243,9 +271,23 @@ async function fetchActivity(initial = false) {
             lastEventId.value = Math.max(...activityEvents.value.map((e) => e.id));
         }
     } finally {
-        activityLoading.value = false;
+        if (leadId) leadLogLoading.value = false;
+        else activityLoading.value = false;
     }
 }
+
+function openLeadLogs(lead: LeadRow) {
+    leadLogLead.value = lead;
+    leadLogOpen.value = true;
+    fetchActivity(true, lead.id);
+}
+
+watch(leadLogOpen, (open) => {
+    if (!open) {
+        leadLogLead.value = null;
+        leadLogEvents.value = [];
+    }
+});
 
 async function refreshLiveData() {
     if (!isRunning.value) return;
@@ -285,6 +327,9 @@ function startLiveUpdates() {
     fetchActivity(true);
     pollTimer = setInterval(() => {
         fetchActivity(false);
+        if (leadLogOpen.value && leadLogLead.value) {
+            fetchActivity(true, leadLogLead.value.id);
+        }
         refreshLiveData();
     }, 5000);
 }
@@ -825,6 +870,7 @@ const channelActionEntries = computed(() =>
                         <th class="py-2">Name</th>
                         <th>Step</th>
                         <th>Status</th>
+                        <th class="py-2 text-right">Logs</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -854,9 +900,18 @@ const channelActionEntries = computed(() =>
                                 {{ leadStatusLabel(lead) }}
                             </div>
                         </td>
+                        <td class="py-2 text-right">
+                            <button
+                                type="button"
+                                class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                @click="openLeadLogs(lead)"
+                            >
+                                <ScrollText class="h-3 w-3" /> Logs
+                            </button>
+                        </td>
                     </tr>
                     <tr v-if="leads.data.length === 0">
-                        <td colspan="3" class="py-6 text-center text-muted-foreground">No leads yet.</td>
+                        <td colspan="4" class="py-6 text-center text-muted-foreground">No leads yet.</td>
                     </tr>
                 </tbody>
             </table>
@@ -864,6 +919,54 @@ const channelActionEntries = computed(() =>
         </div>
 
     </div>
+
+    <Dialog v-model:open="leadLogOpen">
+        <DialogContent class="flex max-h-[85vh] flex-col sm:max-w-lg">
+            <DialogHeader>
+                <DialogTitle class="flex items-center gap-2">
+                    <ScrollText class="h-4 w-4" />
+                    {{ leadLogLead?.full_name ?? 'Lead' }} — activity
+                </DialogTitle>
+                <DialogDescription>
+                    Step-by-step log for this lead only.
+                    <span v-if="leadLogLead?.progress?.current_node_label" class="block pt-1 text-foreground">
+                        Current step: {{ leadLogLead.progress.current_node_label }}
+                    </span>
+                    <span v-if="isRunning" class="text-green-600"> Updates live.</span>
+                </DialogDescription>
+            </DialogHeader>
+
+            <div v-if="leadLogLoading" class="py-10 text-center text-sm text-muted-foreground">
+                <Loader2 class="mx-auto mb-2 h-5 w-5 animate-spin" /> Loading logs…
+            </div>
+            <div v-else-if="leadLogEvents.length === 0" class="py-10 text-center text-sm text-muted-foreground">
+                No activity recorded for this lead yet.
+            </div>
+            <div v-else class="-mx-1 min-h-0 max-h-[50vh] flex-1 divide-y divide-border overflow-y-auto px-1">
+                <div
+                    v-for="event in leadLogEvents"
+                    :key="event.id"
+                    class="flex items-start gap-3 py-2.5 text-xs first:pt-0"
+                >
+                    <span
+                        class="mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium capitalize"
+                        :class="eventStatusColor(event.status)"
+                    >
+                        {{ event.status }}
+                    </span>
+                    <div class="min-w-0 flex-1">
+                        <p class="text-foreground">{{ event.message }}</p>
+                        <p v-if="event.node_label" class="mt-0.5 text-[10px] text-muted-foreground">
+                            Step: {{ event.node_label }}
+                        </p>
+                    </div>
+                    <span class="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
+                        {{ formatDateTime(event.executed_at) }}
+                    </span>
+                </div>
+            </div>
+        </DialogContent>
+    </Dialog>
 </template>
 
 <style scoped>
