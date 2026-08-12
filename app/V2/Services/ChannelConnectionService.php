@@ -110,6 +110,17 @@ class ChannelConnectionService
             'notify_url' => $base.(string) config('services.unipile.webhook_callback_path', '/unipile/callback'),
         ];
 
+        $existing = V2IntegrationAccount::query()
+            ->where('user_id', $user->id)
+            ->where('provider', $channel['integration_provider'])
+            ->latest('id')
+            ->first();
+
+        if ($unipileId = $existing?->getUnipileAccountId()) {
+            $context['type'] = 'reconnect';
+            $context['reconnect_account'] = $unipileId;
+        }
+
         return $this->providerManager->account(
             $this->providerManager->defaultProvider()
         )->createHostedAuthLink($context);
@@ -167,7 +178,15 @@ class ChannelConnectionService
         $providerType = strtoupper((string) ($payload['type'] ?? $payload['provider'] ?? ''));
         $email = $payload['email'] ?? $this->extractEmailFromAccountPayload($payload);
 
-        return V2IntegrationAccount::query()->updateOrCreate(
+        $existing = V2IntegrationAccount::query()
+            ->where('user_id', $userId)
+            ->where('provider', $channel['integration_provider'])
+            ->latest('id')
+            ->first();
+
+        $previousUnipileId = $existing?->getUnipileAccountId();
+
+        $account = V2IntegrationAccount::query()->updateOrCreate(
             [
                 'user_id' => $userId,
                 'provider' => $channel['integration_provider'],
@@ -188,6 +207,28 @@ class ChannelConnectionService
                 'last_synced_at' => now(),
             ]
         );
+
+        if ($previousUnipileId && $unipileId !== '' && $previousUnipileId !== $unipileId) {
+            $this->releaseRemoteUnipileAccount($previousUnipileId);
+        }
+
+        return $account;
+    }
+
+    public function releaseRemoteUnipileAccount(?string $unipileAccountId): void
+    {
+        $unipileAccountId = trim((string) $unipileAccountId);
+        if ($unipileAccountId === '') {
+            return;
+        }
+
+        try {
+            $this->providerManager->account(
+                $this->providerManager->defaultProvider()
+            )->disconnectAccount($unipileAccountId);
+        } catch (\Throwable) {
+            // Unipile account may already be gone — local row is still updated.
+        }
     }
 
     /**
@@ -221,7 +262,7 @@ class ChannelConnectionService
     public function disconnect(User $user, string $channelKey): void
     {
         $channel = OutreachChannelRegistry::channels()[$channelKey] ?? null;
-        if ($channel === null || $channelKey === 'linkedin') {
+        if ($channel === null) {
             throw new \InvalidArgumentException("Unknown channel: {$channelKey}");
         }
 
@@ -237,13 +278,7 @@ class ChannelConnectionService
         $unipileId = $account->getUnipileAccountId();
 
         if ($unipileId) {
-            try {
-                $this->providerManager->account(
-                    $this->providerManager->defaultProvider()
-                )->disconnectAccount($unipileId);
-            } catch (\Throwable) {
-                // Still mark disconnected locally.
-            }
+            $this->releaseRemoteUnipileAccount($unipileId);
         }
 
         $account->update([

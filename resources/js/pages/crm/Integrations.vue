@@ -155,30 +155,11 @@ function openLinkedInAdvanced() {
     });
 }
 
-function connectLinkedInFromGrid() {
-    openLinkedInAdvanced();
-}
-
-function disconnectLinkedInFromGrid() {
-    const accountId = linkedinChannel.value?.integration_account_id ?? props.accounts.find((a) => a.status === 'active')?.id;
-    if (accountId) {
-        disconnectUnipile(accountId);
-    }
-}
-
 function handleChannelConnect(ch: ChannelRow) {
-    if (ch.channel === 'linkedin') {
-        connectLinkedInFromGrid();
-        return;
-    }
     connectChannel(ch.channel);
 }
 
 function handleChannelDisconnect(ch: ChannelRow) {
-    if (ch.channel === 'linkedin') {
-        disconnectLinkedInFromGrid();
-        return;
-    }
     disconnectChannel(ch.channel, ch.label);
 }
 
@@ -405,7 +386,7 @@ function removeEsp(id: number, provider: string) {
                                 <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">Advanced</span>
                             </div>
                             <p class="text-xs text-muted-foreground">
-                                Cookie paste, secure login, and session details — use Connect above or open here.
+                                Cookie paste, extension sync, and session details — optional alternatives to secure login.
                             </p>
                         </div>
                     </div>
@@ -420,6 +401,7 @@ function removeEsp(id: number, provider: string) {
                         <p class="text-sm text-muted-foreground">
                             Open LinkedIn in your browser while using the extension — it can read the <code class="rounded bg-muted px-1">li_at</code> cookie automatically.
                             You can also paste the cookie manually from DevTools → Application → Cookies → www.linkedin.com.
+                            Use the <strong class="font-medium text-foreground">Connect</strong> button above for Unipile secure login (recommended).
                         </p>
 
                         <label class="grid gap-1.5 text-sm">
@@ -458,9 +440,9 @@ function removeEsp(id: number, provider: string) {
 
                         <div class="rounded-lg border border-dashed border-border px-4 py-3">
                             <p class="text-xs text-muted-foreground">
-                                Prefer signing in on LinkedIn's secure login page instead of pasting a cookie?
+                                Prefer the same secure login flow as other channels?
                             </p>
-                            <form method="POST" action="/integrations/unipile/hosted-auth" class="mt-2">
+                            <form method="POST" action="/integrations/channels/linkedin/connect" class="mt-2">
                                 <input type="hidden" name="_token" :value="csrfToken" />
                                 <Button
                                     type="submit"
@@ -469,7 +451,7 @@ function removeEsp(id: number, provider: string) {
                                     :disabled="!unipileConfigured"
                                 >
                                     <ExternalLink class="h-3 w-3" />
-                                    Connect via secure login
+                                    Connect via Unipile secure login
                                 </Button>
                             </form>
                         </div>

@@ -127,15 +127,23 @@ class LinkedInConnectionService
 
     ): array {
 
+        $context = $this->buildHostedAuthContext($user, $request, $successPath, $failPath);
+
+        $existing = $this->consolidateProviderAccount($user->id, 'linkedin');
+
+        if ($unipileId = $existing?->getUnipileAccountId()) {
+
+            $context['type'] = 'reconnect';
+
+            $context['reconnect_account'] = $unipileId;
+
+        }
+
         return $this->providerManager->account(
 
             $this->providerManager->defaultProvider()
 
-        )->createHostedAuthLink(
-
-            $this->buildHostedAuthContext($user, $request, $successPath, $failPath)
-
-        );
+        )->createHostedAuthLink($context);
 
     }
 
@@ -551,6 +559,8 @@ class LinkedInConnectionService
 
         $unipileAccountId = $existing?->getUnipileAccountId();
 
+        $previousUnipileId = $unipileAccountId;
+
         $result = null;
 
         $connectOptions = $this->cookieConnectOptions($country);
@@ -571,7 +581,19 @@ class LinkedInConnectionService
 
                 ], $connectOptions));
 
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+
+                Log::info('[Connect] Unipile reconnect unavailable — releasing old account before fresh cookie connect', [
+
+                    'user_id' => $user->id,
+
+                    'account_id' => $unipileAccountId,
+
+                    'error' => $e->getMessage(),
+
+                ]);
+
+                $this->releaseRemoteUnipileAccount($unipileAccountId);
 
                 $result = $provider->connectWithCookie($liAt, $userAgent, $connectOptions);
 
@@ -622,6 +644,12 @@ class LinkedInConnectionService
                 ['response' => $result]
 
             );
+
+        }
+
+        if ($previousUnipileId && $previousUnipileId !== $unipileAccountId) {
+
+            $this->releaseRemoteUnipileAccount($previousUnipileId);
 
         }
 
@@ -757,25 +785,51 @@ class LinkedInConnectionService
 
         if ($unipileId) {
 
-            try {
-
-                $this->providerManager->account(
-
-                    $this->providerManager->defaultProvider()
-
-                )->disconnectAccount($unipileId);
-
-            } catch (\Throwable) {
-
-                // Still mark disconnected locally
-
-            }
+            $this->releaseRemoteUnipileAccount($unipileId);
 
         }
 
 
 
         $account->update(['status' => 'disconnected']);
+
+    }
+
+
+
+    public function releaseRemoteUnipileAccount(?string $unipileAccountId): void
+
+    {
+
+        $unipileAccountId = trim((string) $unipileAccountId);
+
+        if ($unipileAccountId === '') {
+
+            return;
+
+        }
+
+        try {
+
+            $this->providerManager->account(
+
+                $this->providerManager->defaultProvider()
+
+            )->disconnectAccount($unipileAccountId);
+
+            Log::info('[Connect] Released remote Unipile account', ['account_id' => $unipileAccountId]);
+
+        } catch (\Throwable $e) {
+
+            Log::info('[Connect] Remote Unipile account release skipped', [
+
+                'account_id' => $unipileAccountId,
+
+                'error' => $e->getMessage(),
+
+            ]);
+
+        }
 
     }
 
