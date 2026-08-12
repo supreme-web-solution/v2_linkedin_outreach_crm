@@ -448,15 +448,18 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
         $provider = Arr::get($context, 'provider', 'LINKEDIN');
         $providers = $this->normalizeHostedProviders($provider);
-        $reconnectAccount = Arr::get($context, 'reconnect_account');
-        $type = (string) Arr::get($context, 'type', $reconnectAccount ? 'reconnect' : 'create');
-        if ($reconnectAccount) {
+        $reconnectAccount = trim((string) (Arr::get($context, 'reconnect_account') ?? ''));
+        $type = strtolower((string) Arr::get($context, 'type', 'create'));
+        if ($type === 'reconnect' && $reconnectAccount !== '') {
             $type = 'reconnect';
+        } else {
+            $type = 'create';
+            $reconnectAccount = '';
         }
 
         $payload = array_filter([
             'type'                  => $type,
-            'reconnect_account'     => $reconnectAccount,
+            'reconnect_account'     => $reconnectAccount !== '' ? $reconnectAccount : null,
             'providers'             => $providers,
             'api_url'               => $this->hostedApiUrl(),
             'expiresOn'             => now()->utc()->addHours(2)->format('Y-m-d\TH:i:s.v\Z'),

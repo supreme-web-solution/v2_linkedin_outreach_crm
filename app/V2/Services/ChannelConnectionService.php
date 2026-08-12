@@ -116,7 +116,7 @@ class ChannelConnectionService
             ->latest('id')
             ->first();
 
-        $context = $this->appendHostedAuthReconnect($context, $existing?->getUnipileAccountId());
+        $context = $this->appendHostedAuthReconnect($context, $existing, $channelKey);
 
         return $this->providerManager->account(
             $this->providerManager->defaultProvider()
@@ -234,10 +234,12 @@ class ChannelConnectionService
      * @param  array<string, mixed>  $context
      * @return array<string, mixed>
      */
-    private function appendHostedAuthReconnect(array $context, ?string $unipileAccountId): array
+    private function appendHostedAuthReconnect(array $context, ?V2IntegrationAccount $existing, string $channelKey): array
     {
-        $unipileAccountId = trim((string) $unipileAccountId);
+        $unipileAccountId = trim((string) ($existing?->getUnipileAccountId() ?? ''));
         if ($unipileAccountId === '') {
+            $context['type'] = 'create';
+
             return $context;
         }
 
@@ -247,9 +249,16 @@ class ChannelConnectionService
             )->getAccount($unipileAccountId);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::info('[Connect] Hosted auth using create flow — remote account missing', [
+                'channel' => $channelKey,
                 'account_id' => $unipileAccountId,
                 'error' => $e->getMessage(),
             ]);
+
+            if ($existing !== null) {
+                $this->clearStaleLocalUnipileAccount($existing, $unipileAccountId);
+            }
+
+            $context['type'] = 'create';
 
             return $context;
         }
@@ -258,6 +267,22 @@ class ChannelConnectionService
         $context['reconnect_account'] = $unipileAccountId;
 
         return $context;
+    }
+
+    private function clearStaleLocalUnipileAccount(V2IntegrationAccount $account, string $staleId): void
+    {
+        $meta = is_array($account->meta) ? $account->meta : [];
+        unset($meta['unipile_account_id']);
+
+        $account->update([
+            'status' => 'disconnected',
+            'meta' => array_merge($meta, [
+                'live_status' => 'disconnected',
+                'disconnect_reason' => 'Remote Unipile account no longer exists',
+                'cleared_stale_unipile_id' => $staleId,
+                'cleared_at' => now()->toIso8601String(),
+            ]),
+        ]);
     }
 
     /**
