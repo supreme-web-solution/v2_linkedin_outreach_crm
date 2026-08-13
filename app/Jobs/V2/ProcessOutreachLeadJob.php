@@ -53,6 +53,12 @@ class ProcessOutreachLeadJob implements ShouldQueue
     ): void {
         $campaign = V2OutreachCampaign::query()->find($this->outreachCampaignId);
         if (! $campaign || ! in_array($campaign->status, ['active', 'running'], true)) {
+            Log::info('[Outreach] Lead job skipped — campaign not active', [
+                'campaign_id' => $this->outreachCampaignId,
+                'lead_id' => $this->outreachLeadId,
+                'status' => $campaign?->status,
+            ]);
+
             return;
         }
 
@@ -294,7 +300,9 @@ class ProcessOutreachLeadJob implements ShouldQueue
         }
 
         if ($status === 'waiting') {
-            $progress->update(['next_run_at' => now()->addHours(6)]);
+            $runAt = now()->addHours(6);
+            $progress->update(['next_run_at' => $runAt]);
+            self::dispatch($campaign->id, $lead->id, $run?->id)->delay($runAt);
 
             return;
         }
