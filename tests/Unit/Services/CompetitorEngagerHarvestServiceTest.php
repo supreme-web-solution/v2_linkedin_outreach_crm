@@ -14,6 +14,16 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config([
+            'services.unipile_pacing.harvest_page_delay_min_ms' => 0,
+            'services.unipile_pacing.harvest_page_delay_max_ms' => 0,
+        ]);
+    }
+
     public function test_harvest_stores_reactors_and_commenters_from_company_posts(): void
     {
         config([
@@ -23,6 +33,10 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
             'services.competitor_followers.company_posts_limit' => 1,
             'services.competitor_followers.page_size' => 100,
             'services.competitor_followers.max_engagers_per_post' => 100,
+            'services.unipile_pacing.harvest_page_delay_min_ms' => 0,
+            'services.unipile_pacing.harvest_page_delay_max_ms' => 0,
+            'services.unipile_pacing.account_lock_seconds' => 1,
+            'services.unipile_pacing.account_lock_wait_seconds' => 1,
         ]);
 
         Http::fake([
@@ -192,5 +206,123 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
 
         $this->assertSame('1035', $company['id']);
         $this->assertSame('Microsoft', $company['name']);
+    }
+
+    public function test_detect_linkedin_source_parses_company_and_profile_urls(): void
+    {
+        $service = app(CompetitorEngagerHarvestService::class);
+
+        $this->assertSame(
+            ['type' => 'company', 'identifier' => 'microsoft'],
+            $service->detectLinkedInSource('https://www.linkedin.com/company/microsoft/')
+        );
+        $this->assertSame(
+            'satya-nadella',
+            $service->resolveProfileIdentifier('https://www.linkedin.com/in/satya-nadella/')
+        );
+        $this->assertSame('person', $service->detectLinkedInSource('https://www.linkedin.com/in/satya-nadella')['type']);
+    }
+
+    public function test_harvest_stores_reactors_from_person_posts(): void
+    {
+        config([
+            'services.unipile.base_url' => 'https://unipile.test/api/v1',
+            'services.unipile.api_key' => 'test-key',
+            'services.unipile.mock' => false,
+            'services.competitor_followers.company_posts_limit' => 1,
+            'services.competitor_followers.page_size' => 100,
+            'services.competitor_followers.max_engagers_per_post' => 100,
+            'services.unipile_pacing.harvest_page_delay_min_ms' => 0,
+            'services.unipile_pacing.harvest_page_delay_max_ms' => 0,
+        ]);
+
+        Http::fake(function ($request) {
+            $url = $request->url();
+
+            if (str_contains($url, '/reactions')) {
+                return Http::response([
+                    'items' => [[
+                        'author' => [
+                            'id' => 'ACoAAA111',
+                            'type' => 'INDIVIDUAL',
+                            'name' => 'Jane Doe',
+                            'headline' => 'VP Sales',
+                            'public_identifier' => 'jane-doe',
+                            'profile_url' => 'https://www.linkedin.com/in/jane-doe',
+                        ],
+                    ]],
+                ]);
+            }
+
+            if (str_contains($url, '/comments')) {
+                return Http::response(['items' => []]);
+            }
+
+            if (str_contains($url, '/posts')) {
+                return Http::response([
+                    'items' => [[
+                        'type' => 'POST',
+                        'social_id' => 'urn:li:activity:222',
+                        'id' => '222',
+                        'reaction_counter' => 4,
+                    ]],
+                ]);
+            }
+
+            if (str_contains($url, '/users/')) {
+                return Http::response([
+                    'id' => 'ACoAAA999',
+                    'provider_id' => 'ACoAAA999',
+                    'first_name' => 'Satya',
+                    'last_name' => 'Nadella',
+                    'public_identifier' => 'satya-nadella',
+                    'profile_url' => 'https://www.linkedin.com/in/satya-nadella',
+                ]);
+            }
+
+            return Http::response(['items' => []], 404);
+        });
+
+        $user = User::factory()->create();
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_account_id' => 'acc_test_123',
+            'status' => 'active',
+            'meta' => ['unipile_account_id' => 'acc_test_123'],
+        ]);
+
+        $audience = Audience::query()->create([
+            'audience_name' => 'Satya Nadella - Active Engagers',
+            'audience_id' => now()->timestamp.$user->id,
+            'audience_type' => 'LI',
+            'user_id' => $user->id,
+            'tag' => 'competitor_active_followers',
+            'source' => 'linkedin_company_followers',
+            'source_meta' => json_encode([
+                'company_url' => 'https://www.linkedin.com/in/satya-nadella',
+                'source_type' => 'person',
+            ]),
+        ]);
+
+        $result = app(CompetitorEngagerHarvestService::class)->harvest(
+            $audience,
+            $user->id,
+            'https://www.linkedin.com/in/satya-nadella'
+        );
+
+        $this->assertSame(1, $result['stored_count']);
+        $this->assertSame(1, $result['posts_scanned']);
+        $this->assertDatabaseHas('audience_lists', [
+            'audience_id' => $audience->audience_id,
+            'con_public_identifier' => 'jane-doe',
+            'con_first_name' => 'Jane',
+            'con_last_name' => 'Doe',
+        ]);
+
+        $audience->refresh();
+        $meta = json_decode((string) $audience->source_meta, true);
+        $this->assertSame('person', $meta['source_type'] ?? null);
+        $this->assertSame('Satya Nadella', $meta['person_name'] ?? null);
     }
 }

@@ -81,6 +81,7 @@ const props = defineProps<{
         audience_id: number;
         audience_name: string | null;
         company_url: string | null;
+        source_type: string | null;
         followers_count: number;
         fetch_status: string | null;
         fetch_progress: string | null;
@@ -575,7 +576,7 @@ function distanceLabel(d: string | null): string {
                 </div>
                 <p class="text-base font-semibold">Pulling followers…</p>
                 <p class="max-w-md text-sm text-muted-foreground">
-                    {{ harvestProgress || 'Scanning competitor posts for reactions and comments.' }}
+                    {{ harvestProgress || 'Scanning posts for reactions and comments.' }}
                 </p>
                 <p v-if="harvestCount > 0" class="text-xs font-medium text-sky-700">
                     {{ harvestCount.toLocaleString() }} found so far — they’ll appear here shortly.

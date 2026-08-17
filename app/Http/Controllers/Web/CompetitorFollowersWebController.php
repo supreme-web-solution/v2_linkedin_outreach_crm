@@ -61,6 +61,7 @@ class CompetitorFollowersWebController extends Controller
             $audience->fetch_status = $meta['fetch_status'] ?? null;
             $audience->fetch_progress = $meta['fetch_progress'] ?? null;
             $audience->company_url = $meta['company_url'] ?? null;
+            $audience->source_type = $meta['source_type'] ?? null;
             $audience->last_error = $meta['last_error'] ?? null;
             $audience->last_error_type = $meta['last_error_type'] ?? null;
 
@@ -81,7 +82,19 @@ class CompetitorFollowersWebController extends Controller
     public function fetch(Request $request)
     {
         $data = $request->validate([
-            'company_url' => ['required', 'url'],
+            'company_url' => [
+                'required',
+                'url',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    $path = (string) parse_url((string) $value, PHP_URL_PATH);
+                    if (
+                        ! preg_match('~/company/[^/?#]+~i', $path)
+                        && ! preg_match('~/in/[^/?#]+~i', $path)
+                    ) {
+                        $fail('Paste a LinkedIn company URL (linkedin.com/company/...) or profile URL (linkedin.com/in/...).');
+                    }
+                },
+            ],
         ]);
 
         $user = Auth::user();
@@ -90,13 +103,15 @@ class CompetitorFollowersWebController extends Controller
             return back()->with('error', 'Connect LinkedIn via Integrations before harvesting.');
         }
 
-        $companySlug = null;
+        $sourceType = 'company';
         $companyName = 'Competitor Followers';
         $parsedUrl = parse_url($data['company_url']);
         if (isset($parsedUrl['path'])) {
             if (preg_match('/\/company\/([^\/\?]+)/', $parsedUrl['path'], $matches)) {
-                $companySlug = $matches[1];
-                $companyName = ucfirst($companySlug).' - Active Engagers';
+                $companyName = ucfirst(rawurldecode($matches[1])).' - Active Engagers';
+            } elseif (preg_match('/\/in\/([^\/\?]+)/', $parsedUrl['path'], $matches)) {
+                $sourceType = 'person';
+                $companyName = $this->humanizeProfileSlug(rawurldecode($matches[1])).' - Active Engagers';
             } elseif (! empty($parsedUrl['host'])) {
                 $companyName = str_replace('www.', '', $parsedUrl['host']).' - Active Engagers';
             }
@@ -145,12 +160,14 @@ class CompetitorFollowersWebController extends Controller
                 'source' => 'linkedin_company_followers',
                 'source_meta' => json_encode([
                     'company_url' => $normalizedUrl,
+                    'source_type' => $sourceType,
                 ]),
             ]);
         }
 
         $meta = json_decode($audience->source_meta, true) ?? [];
         $meta['company_url'] = $normalizedUrl;
+        $meta['source_type'] = $sourceType;
         $meta['fetch_status'] = 'pending';
         $meta['fetch_started_at'] = now()->toIso8601String();
         $meta['fetch_progress'] = 'Queued and ready to go...';
@@ -238,6 +255,7 @@ class CompetitorFollowersWebController extends Controller
                 'audience_id' => $audience->audience_id,
                 'audience_name' => $audience->audience_name,
                 'company_url' => $meta['company_url'] ?? null,
+                'source_type' => $meta['source_type'] ?? null,
                 'followers_count' => $counts['all'],
                 'fetch_status' => $meta['fetch_status'] ?? null,
                 'fetch_progress' => $meta['fetch_progress'] ?? null,
@@ -655,6 +673,27 @@ class CompetitorFollowersWebController extends Controller
                 'message' => 'Failed to delete audience: '.$th->getMessage(),
             ], 500);
         }
+    }
+
+    private function humanizeProfileSlug(string $slug): string
+    {
+        $slug = trim($slug);
+        if ($slug === '') {
+            return 'Profile';
+        }
+
+        $slug = (string) preg_replace('/-[a-z0-9]{6,}$/i', '', $slug);
+        $parts = preg_split('/[-_]+/', $slug) ?: [];
+        $words = [];
+        foreach ($parts as $part) {
+            $part = trim($part);
+            if ($part === '' || ctype_digit($part)) {
+                continue;
+            }
+            $words[] = mb_convert_case($part, MB_CASE_TITLE, 'UTF-8');
+        }
+
+        return $words !== [] ? implode(' ', $words) : 'Profile';
     }
 
     private function checkAndResetDailyLimit(User $user): void

@@ -21,6 +21,7 @@ interface AudienceRow {
     fetch_status: string | null;
     fetch_progress: string | null;
     company_url: string | null;
+    source_type: string | null;
     last_error: string | null;
     last_error_type: string | null;
 }
@@ -137,7 +138,7 @@ onBeforeUnmount(() => {
     <div class="flex flex-col gap-6 p-4">
         <LinkedInPageHeading title="Competitor Active Followers" show-badge>
             <template #subtitle>
-                Pull people who like or comment on a competitor's LinkedIn posts into a targeted audience.
+                Pull people who like or comment on a competitor's LinkedIn company or personal posts into a targeted audience.
             </template>
         </LinkedInPageHeading>
 
@@ -161,16 +162,19 @@ onBeforeUnmount(() => {
         >
             <div class="flex-1">
                 <label class="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    LinkedIn company URL
+                    LinkedIn company or profile URL
                 </label>
                 <input
                     v-model="form.company_url"
                     type="url"
                     required
-                    placeholder="https://www.linkedin.com/company/microsoft/"
+                    placeholder="https://www.linkedin.com/company/microsoft/ or https://www.linkedin.com/in/satya-nadella/"
                     class="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                 />
                 <p v-if="form.errors.company_url" class="mt-1 text-xs text-red-500">{{ form.errors.company_url }}</p>
+                <p v-else class="mt-1 text-xs text-muted-foreground">
+                    Company pages and personal profiles both work. We pull people who like or comment on their posts.
+                </p>
             </div>
             <button
                 type="submit"
@@ -202,7 +206,7 @@ onBeforeUnmount(() => {
         >
             <Users2 class="h-10 w-10 text-muted-foreground/40" />
             <p class="font-medium">No competitor audiences yet</p>
-            <p class="text-sm text-muted-foreground">Paste a competitor's company URL above to build your first audience.</p>
+            <p class="text-sm text-muted-foreground">Paste a competitor's company or profile URL above to build your first audience.</p>
         </div>
 
         <!-- List -->

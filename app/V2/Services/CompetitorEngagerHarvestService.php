@@ -16,9 +16,9 @@ class CompetitorEngagerHarvestService
     }
 
     /**
-     * Resolve company + select posts, then return social IDs for chunked processing.
+     * Resolve company or person + select posts, then return social IDs for chunked processing.
      *
-     * @return array{post_social_ids: list<string>, company_id: string|null, company_name: string|null}
+     * @return array{post_social_ids: list<string>, company_id: string|null, company_name: string|null, source_type: string}
      */
     public function prepareHarvest(Audience $audience, int $userId, string $companyUrl): array
     {
@@ -31,22 +31,50 @@ class CompetitorEngagerHarvestService
         $provider = $this->providers->get('unipile', UnipileProvider::class);
         $context = ['account_id' => $accountId];
 
-        $company = $this->resolveCompany($provider, $companyUrl, $context);
+        $source = $this->detectLinkedInSource($companyUrl);
+        $isPerson = ($source['type'] ?? '') === 'person';
 
         $postsLimit = max(1, (int) config('services.competitor_followers.company_posts_limit', 15));
         $pageSize = max(1, min(100, (int) config('services.competitor_followers.page_size', 100)));
 
+        if ($isPerson) {
+            $entity = $this->resolvePerson($provider, $companyUrl, $context);
+        } else {
+            $entity = $this->resolveCompany($provider, $companyUrl, $context);
+        }
+
         $meta = json_decode((string) $audience->source_meta, true) ?? [];
-        $meta['company_id'] = $company['id'] ?? null;
-        $meta['company_name'] = $company['name'] ?? null;
+        $meta['source_type'] = $isPerson ? 'person' : 'company';
+        $meta['company_id'] = $entity['id'] ?? null;
+        $meta['company_name'] = $entity['name'] ?? null;
+        if ($isPerson) {
+            $meta['person_id'] = $entity['id'] ?? null;
+            $meta['person_name'] = $entity['name'] ?? null;
+        }
         $audience->source_meta = json_encode($meta);
         $audience->save();
 
-        $this->updateProgress($audience, 'processing', 'Loading recent company posts…');
+        if (! empty($entity['name']) && is_string($entity['name'])) {
+            $desiredName = $entity['name'].' - Active Engagers';
+            if ($audience->audience_name !== $desiredName) {
+                $audience->audience_name = $desiredName;
+                $audience->save();
+            }
+        }
 
-        $posts = $this->fetchCompanyPosts($provider, (string) $company['id'], $postsLimit, $pageSize, $context);
+        $this->updateProgress(
+            $audience,
+            'processing',
+            $isPerson ? 'Loading recent profile posts…' : 'Loading recent company posts…'
+        );
+
+        $posts = $isPerson
+            ? $this->fetchPersonPosts($provider, (string) $entity['id'], $postsLimit, $pageSize, $context)
+            : $this->fetchCompanyPosts($provider, (string) $entity['id'], $postsLimit, $pageSize, $context);
+
+        $label = $isPerson ? 'this profile' : 'this company';
         if ($posts === []) {
-            throw new \RuntimeException('No posts found for this company. Check the URL and LinkedIn connection.');
+            throw new \RuntimeException('No posts found for '.$label.'. Check the URL and LinkedIn connection.');
         }
 
         $postSocialIds = [];
@@ -58,7 +86,7 @@ class CompetitorEngagerHarvestService
         }
 
         if ($postSocialIds === []) {
-            throw new \RuntimeException('No harvestable posts found for this company.');
+            throw new \RuntimeException('No harvestable posts found for '.$label.'.');
         }
 
         $meta = json_decode((string) $audience->fresh()->source_meta, true) ?? [];
@@ -79,8 +107,9 @@ class CompetitorEngagerHarvestService
 
         return [
             'post_social_ids' => $postSocialIds,
-            'company_id' => isset($company['id']) ? (string) $company['id'] : null,
-            'company_name' => $company['name'] ?? null,
+            'company_id' => isset($entity['id']) ? (string) $entity['id'] : null,
+            'company_name' => $entity['name'] ?? null,
+            'source_type' => $isPerson ? 'person' : 'company',
         ];
     }
 
@@ -230,18 +259,39 @@ class CompetitorEngagerHarvestService
         ];
     }
 
-    public function resolveCompanyIdentifier(string $companyUrl): string
+    /**
+     * @return array{type: 'company'|'person'|'', identifier: string}
+     */
+    public function detectLinkedInSource(string $url): array
     {
-        $path = (string) parse_url(trim($companyUrl), PHP_URL_PATH);
+        $path = (string) parse_url(trim($url), PHP_URL_PATH);
         if ($path === '') {
-            return '';
+            return ['type' => '', 'identifier' => ''];
         }
 
         if (preg_match('~/company/([^/?#]+)~i', $path, $matches)) {
-            return rawurldecode($matches[1]);
+            return ['type' => 'company', 'identifier' => rawurldecode($matches[1])];
         }
 
-        return '';
+        if (preg_match('~/in/([^/?#]+)~i', $path, $matches)) {
+            return ['type' => 'person', 'identifier' => rawurldecode($matches[1])];
+        }
+
+        return ['type' => '', 'identifier' => ''];
+    }
+
+    public function resolveCompanyIdentifier(string $companyUrl): string
+    {
+        $source = $this->detectLinkedInSource($companyUrl);
+
+        return $source['type'] === 'company' ? $source['identifier'] : '';
+    }
+
+    public function resolveProfileIdentifier(string $profileUrl): string
+    {
+        $source = $this->detectLinkedInSource($profileUrl);
+
+        return $source['type'] === 'person' ? $source['identifier'] : '';
     }
 
     /**
@@ -307,6 +357,49 @@ class CompetitorEngagerHarvestService
     }
 
     /**
+     * @return array{id: string, name: string|null, profile_url: string|null, public_identifier: string|null}
+     */
+    public function resolvePerson(UnipileProvider $provider, string $profileUrl, array $context): array
+    {
+        $slug = $this->resolveProfileIdentifier($profileUrl);
+        if ($slug === '') {
+            throw new \InvalidArgumentException('Could not parse a LinkedIn profile slug from the URL.');
+        }
+
+        try {
+            $profile = $provider->getProfileByIdentifier($slug, $context);
+        } catch (\Throwable $exception) {
+            throw new \RuntimeException('Profile not found on LinkedIn for URL: '.$profileUrl, 0, $exception);
+        }
+
+        $id = trim((string) (
+            Arr::get($profile, 'provider_id')
+            ?? Arr::get($profile, 'id')
+            ?? ''
+        ));
+        $publicId = trim((string) (Arr::get($profile, 'public_identifier') ?? $slug));
+        $name = trim((string) (
+            Arr::get($profile, 'full_name')
+            ?? Arr::get($profile, 'name')
+            ?? trim(((string) Arr::get($profile, 'first_name', '')).' '.((string) Arr::get($profile, 'last_name', '')))
+        ));
+        if ($name === '') {
+            $name = $this->humanizePublicIdentifier($publicId !== '' ? $publicId : $slug);
+        }
+        if ($id === '') {
+            $id = $publicId !== '' ? $publicId : $slug;
+        }
+
+        return [
+            'id' => $id,
+            'name' => $name !== '' ? $name : null,
+            'profile_url' => Arr::get($profile, 'profile_url')
+                ?? 'https://www.linkedin.com/in/'.$slug,
+            'public_identifier' => $publicId !== '' ? $publicId : $slug,
+        ];
+    }
+
+    /**
      * @return list<array<string, mixed>>
      */
     private function fetchCompanyPosts(
@@ -349,6 +442,136 @@ class CompetitorEngagerHarvestService
             if (! is_string($cursor) || $cursor === '') {
                 break;
             }
+        }
+
+        return $this->selectHarvestablePosts($collected, $postsLimit);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function fetchPersonPosts(
+        UnipileProvider $provider,
+        string $personId,
+        int $postsLimit,
+        int $pageSize,
+        array $context
+    ): array {
+        $maxScan = max($postsLimit, (int) config('services.competitor_followers.max_posts_scan', 30));
+        $collected = $this->collectUserPosts($provider, $personId, $maxScan, $pageSize, $context);
+
+        if ($collected === []) {
+            $collected = $this->collectMemberSearchPosts($provider, $personId, $maxScan, $pageSize, $context);
+        }
+
+        return $this->selectHarvestablePosts($collected, $postsLimit);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function collectUserPosts(
+        UnipileProvider $provider,
+        string $personId,
+        int $maxScan,
+        int $pageSize,
+        array $context
+    ): array {
+        $collected = [];
+        $cursor = null;
+        $accountId = (string) ($context['account_id'] ?? '');
+
+        try {
+            while (count($collected) < $maxScan) {
+                $response = $provider->listUserPosts($personId, array_filter([
+                    'account_id' => $accountId !== '' ? $accountId : null,
+                    'limit' => min($pageSize, $maxScan - count($collected)),
+                    'cursor' => $cursor,
+                ]), $context);
+
+                $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
+                if (! is_array($items) || $items === []) {
+                    break;
+                }
+
+                foreach ($items as $item) {
+                    if (! is_array($item)) {
+                        continue;
+                    }
+                    $collected[] = $item;
+                    if (count($collected) >= $maxScan) {
+                        break 2;
+                    }
+                }
+
+                $cursor = Arr::get($response, 'cursor');
+                if (! is_string($cursor) || $cursor === '') {
+                    break;
+                }
+            }
+        } catch (\Throwable) {
+            return [];
+        }
+
+        return $collected;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function collectMemberSearchPosts(
+        UnipileProvider $provider,
+        string $personId,
+        int $maxScan,
+        int $pageSize,
+        array $context
+    ): array {
+        $collected = [];
+        $cursor = null;
+
+        try {
+            while (count($collected) < $maxScan) {
+                $response = $provider->searchPosts(array_filter([
+                    'from_member' => [$personId],
+                    'count' => min($pageSize, $maxScan - count($collected)),
+                    'cursor' => $cursor,
+                ]), $context);
+
+                $items = Arr::get($response, 'items', []);
+                if (! is_array($items) || $items === []) {
+                    break;
+                }
+
+                foreach ($items as $item) {
+                    if (! is_array($item)) {
+                        continue;
+                    }
+                    $collected[] = $item;
+                    if (count($collected) >= $maxScan) {
+                        break 2;
+                    }
+                }
+
+                $cursor = Arr::get($response, 'cursor');
+                if (! is_string($cursor) || $cursor === '') {
+                    break;
+                }
+            }
+        } catch (\Throwable) {
+            return [];
+        }
+
+        return $collected;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $collected
+     * @return list<array<string, mixed>>
+     */
+    private function selectHarvestablePosts(array $collected, int $postsLimit): array
+    {
+        if ($collected === []) {
+            return [];
         }
 
         usort($collected, function (array $a, array $b): int {
