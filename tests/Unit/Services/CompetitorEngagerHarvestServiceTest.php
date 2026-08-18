@@ -223,15 +223,14 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
                 'title' => 'Resource not found.',
                 'detail' => 'The requested resource were not found.Account not found.',
             ], 404),
-            'unipile.test/api/v1/linkedin/search*' => Http::response([
+            'unipile.test/api/v1/linkedin/search/parameters*' => Http::response([
                 'items' => [[
-                    'type' => 'PEOPLE',
                     'id' => 'ACoAAA888',
-                    'provider_id' => 'ACoAAA888',
-                    'name' => 'Eleazar Nzerem',
-                    'public_identifier' => 'eleazarnzerem',
-                    'profile_url' => 'https://www.linkedin.com/in/eleazarnzerem',
+                    'title' => 'Eleazar Nzerem',
                 ]],
+            ]),
+            'unipile.test/api/v1/linkedin/search*' => Http::response([
+                'items' => [],
             ]),
         ]);
 
@@ -247,6 +246,7 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
         $this->assertSame('ACoAAA888', $person['id']);
         $this->assertSame('Eleazar Nzerem', $person['name']);
         $this->assertSame('eleazarnzerem', $person['public_identifier']);
+        $this->assertSame('ACoAAA888', $person['search_parameter_id']);
     }
 
     public function test_detect_linkedin_source_parses_company_and_profile_urls(): void

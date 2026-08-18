@@ -1447,6 +1447,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'account_id' => $accountId,
             'linkedin_sections' => $context['linkedin_sections'] ?? null,
             'notify' => $context['notify'] ?? null,
+            '_quiet' => ! empty($context['_quiet']) ? true : null,
         ], fn ($value) => $value !== null && $value !== '');
 
         return $this->request('GET', '/users/'.rawurlencode($identifier), $query);

@@ -51,6 +51,7 @@ class CompetitorEngagerHarvestService
         if ($isPerson) {
             $meta['person_id'] = $entity['id'] ?? null;
             $meta['person_name'] = $entity['name'] ?? null;
+            $meta['search_parameter_id'] = $entity['search_parameter_id'] ?? null;
         }
         $audience->source_meta = json_encode($meta);
         $audience->save();
@@ -76,7 +77,8 @@ class CompetitorEngagerHarvestService
                 $postsLimit,
                 $pageSize,
                 $context,
-                isset($entity['public_identifier']) ? (string) $entity['public_identifier'] : null
+                isset($entity['public_identifier']) ? (string) $entity['public_identifier'] : null,
+                isset($entity['search_parameter_id']) ? (string) $entity['search_parameter_id'] : null
             )
             : $this->fetchCompanyPosts($provider, (string) $entity['id'], $postsLimit, $pageSize, $context);
 
@@ -365,7 +367,7 @@ class CompetitorEngagerHarvestService
     }
 
     /**
-     * @return array{id: string, name: string|null, profile_url: string|null, public_identifier: string|null}
+     * @return array{id: string, name: string|null, profile_url: string|null, public_identifier: string|null, search_parameter_id: string|null}
      */
     public function resolvePerson(UnipileProvider $provider, string $profileUrl, array $context): array
     {
@@ -375,9 +377,10 @@ class CompetitorEngagerHarvestService
         }
 
         $profile = null;
+        $searchParameterId = null;
 
         try {
-            $profile = $provider->getProfileByIdentifier($slug, $context);
+            $profile = $provider->getProfileByIdentifier($slug, array_merge($context, ['_quiet' => true]));
         } catch (\Throwable $exception) {
             $isMissing = $exception instanceof UnipileException && $exception->statusCode === 404;
             if (! $isMissing) {
@@ -390,25 +393,53 @@ class CompetitorEngagerHarvestService
         }
 
         if (! is_array($profile) || $profile === []) {
+            $parameter = $this->matchPeopleSearchParameter($provider, $slug, $context);
+            if ($parameter !== null) {
+                $searchParameterId = $parameter['id'];
+                try {
+                    $profile = $provider->getProfileByIdentifier(
+                        $parameter['id'],
+                        array_merge($context, ['_quiet' => true])
+                    );
+                } catch (\Throwable) {
+                    $profile = [
+                        'id' => $parameter['id'],
+                        'provider_id' => $parameter['id'],
+                        'name' => $parameter['label'],
+                        'public_identifier' => $slug,
+                        'profile_url' => 'https://www.linkedin.com/in/'.$slug,
+                    ];
+                }
+            }
+        }
+
+        if (! is_array($profile) || $profile === []) {
+            $profile = $this->searchPersonFromPeopleUrl($provider, $slug, $context);
+        }
+
+        if (! is_array($profile) || $profile === []) {
             $profile = $this->searchPersonBySlug($provider, $slug, $context);
         }
 
         if (! is_array($profile) || $profile === []) {
-            // Direct lookup 404s for some vanity slugs; still harvest posts by public id.
             return [
-                'id' => $slug,
+                'id' => $searchParameterId ?: $slug,
                 'name' => $this->humanizePublicIdentifier($slug) ?: $slug,
                 'profile_url' => 'https://www.linkedin.com/in/'.$slug,
                 'public_identifier' => $slug,
+                'search_parameter_id' => $searchParameterId,
             ];
         }
 
-        return $this->mapResolvedPerson($profile, $slug);
+        $mapped = $this->mapResolvedPerson($profile, $slug);
+        $mapped['search_parameter_id'] = $searchParameterId;
+
+        return $mapped;
     }
 
     /**
      * @param  array<string, mixed>  $profile
-     * @return array{id: string, name: string|null, profile_url: string|null, public_identifier: string|null}
+     * @return array{id: string, name: string|null, profile_url: string|null, public_identifier: string|null, search_parameter_id: string|null}
      */
     private function mapResolvedPerson(array $profile, string $slug): array
     {
@@ -436,7 +467,96 @@ class CompetitorEngagerHarvestService
             'profile_url' => Arr::get($profile, 'profile_url')
                 ?? 'https://www.linkedin.com/in/'.$slug,
             'public_identifier' => $publicId !== '' ? $publicId : $slug,
+            'search_parameter_id' => null,
         ];
+    }
+
+    /**
+     * LinkedIn classic search filters need typeahead IDs, not vanity slugs.
+     *
+     * @return array{id: string, label: string}|null
+     */
+    private function matchPeopleSearchParameter(UnipileProvider $provider, string $slug, array $context): ?array
+    {
+        $accountId = trim((string) ($context['account_id'] ?? ''));
+        if ($accountId === '') {
+            return null;
+        }
+
+        $queries = array_values(array_unique(array_filter([
+            $slug,
+            str_replace('-', ' ', $slug),
+            $this->humanizePublicIdentifier($slug),
+        ], fn ($value) => is_string($value) && trim($value) !== '')));
+
+        foreach ($queries as $query) {
+            $rows = $provider->listClassicSearchParameters($accountId, 'PEOPLE', $query, 10);
+            foreach ($rows as $row) {
+                if (! is_array($row) || empty($row['id'])) {
+                    continue;
+                }
+                if ($this->namesMatchSlug((string) ($row['label'] ?? ''), $slug)
+                    || strcasecmp((string) $row['id'], $slug) === 0) {
+                    return [
+                        'id' => (string) $row['id'],
+                        'label' => (string) ($row['label'] ?? $slug),
+                    ];
+                }
+            }
+
+            if (count($rows) === 1 && ! empty($rows[0]['id']) && strcasecmp($query, $slug) === 0) {
+                return [
+                    'id' => (string) $rows[0]['id'],
+                    'label' => (string) ($rows[0]['label'] ?? $slug),
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    private function namesMatchSlug(string $name, string $slug): bool
+    {
+        $compactName = strtolower((string) preg_replace('/[^a-z0-9]+/i', '', $name));
+        $compactSlug = strtolower((string) preg_replace('/[^a-z0-9]+/i', '', $slug));
+
+        return $compactName !== '' && $compactName === $compactSlug;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function searchPersonFromPeopleUrl(UnipileProvider $provider, string $slug, array $context): ?array
+    {
+        $accountId = trim((string) ($context['account_id'] ?? ''));
+        if ($accountId === '') {
+            return null;
+        }
+
+        $url = 'https://www.linkedin.com/search/results/people/?keywords='.rawurlencode($slug);
+
+        try {
+            $search = $provider->searchFromUrl($url, $accountId, 10);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $items = Arr::get($search, 'items', []);
+        if (! is_array($items)) {
+            return null;
+        }
+
+        foreach ($items as $item) {
+            if (is_array($item) && $this->personItemMatchesSlug($item, $slug)) {
+                return $item;
+            }
+        }
+
+        if (count($items) === 1 && is_array($items[0])) {
+            return $items[0];
+        }
+
+        return null;
     }
 
     /**
@@ -551,11 +671,12 @@ class CompetitorEngagerHarvestService
         int $postsLimit,
         int $pageSize,
         array $context,
-        ?string $publicId = null
+        ?string $publicId = null,
+        ?string $searchParameterId = null
     ): array {
         $maxScan = max($postsLimit, (int) config('services.competitor_followers.max_posts_scan', 30));
         $identifiers = array_values(array_unique(array_filter(
-            [$personId, $publicId],
+            [$searchParameterId, $personId, $publicId],
             fn ($value) => is_string($value) && trim($value) !== ''
         )));
 
@@ -569,6 +690,9 @@ class CompetitorEngagerHarvestService
 
         if ($collected === []) {
             foreach ($identifiers as $identifier) {
+                if ($this->isVanityProfileSlug($identifier)) {
+                    continue;
+                }
                 $collected = $this->collectMemberSearchPosts($provider, $identifier, $maxScan, $pageSize, $context);
                 if ($collected !== []) {
                     break;
@@ -576,7 +700,22 @@ class CompetitorEngagerHarvestService
             }
         }
 
+        if ($collected === []) {
+            $collected = $this->collectContentSearchPosts(
+                $provider,
+                $publicId ?: $personId,
+                $maxScan,
+                $context
+            );
+        }
+
         return $this->selectHarvestablePosts($collected, $postsLimit);
+    }
+
+    private function isVanityProfileSlug(string $identifier): bool
+    {
+        return (bool) preg_match('/^[a-z0-9][a-z0-9-]{1,100}$/', $identifier)
+            && ! preg_match('/^(ACo|ADo|ACw|AE)/i', $identifier);
     }
 
     /**
@@ -599,6 +738,7 @@ class CompetitorEngagerHarvestService
                     'account_id' => $accountId !== '' ? $accountId : null,
                     'limit' => min($pageSize, $maxScan - count($collected)),
                     'cursor' => $cursor,
+                    '_quiet' => true,
                 ]), $context);
 
                 $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
@@ -638,42 +778,97 @@ class CompetitorEngagerHarvestService
         int $pageSize,
         array $context
     ): array {
-        $collected = [];
-        $cursor = null;
+        $attempts = [
+            ['from_member' => [$personId]],
+            ['posted_by' => ['member' => [$personId]]],
+        ];
+
+        foreach ($attempts as $filters) {
+            $collected = [];
+            $cursor = null;
+
+            try {
+                while (count($collected) < $maxScan) {
+                    $response = $provider->searchPosts(array_filter(array_merge($filters, [
+                        'count' => min($pageSize, $maxScan - count($collected)),
+                        'cursor' => $cursor,
+                    ]), fn ($value) => $value !== null && $value !== '' && $value !== []), $context);
+
+                    $items = Arr::get($response, 'items', []);
+                    if (! is_array($items) || $items === []) {
+                        break;
+                    }
+
+                    foreach ($items as $item) {
+                        if (! is_array($item)) {
+                            continue;
+                        }
+                        $collected[] = $item;
+                        if (count($collected) >= $maxScan) {
+                            break 2;
+                        }
+                    }
+
+                    $cursor = Arr::get($response, 'cursor');
+                    if (! is_string($cursor) || $cursor === '') {
+                        break;
+                    }
+                }
+            } catch (\Throwable) {
+                $collected = [];
+            }
+
+            if ($collected !== []) {
+                return $collected;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function collectContentSearchPosts(
+        UnipileProvider $provider,
+        string $slug,
+        int $maxScan,
+        array $context
+    ): array {
+        $accountId = trim((string) ($context['account_id'] ?? ''));
+        $slug = trim($slug);
+        if ($accountId === '' || $slug === '') {
+            return [];
+        }
+
+        $url = 'https://www.linkedin.com/search/results/content/?keywords='.rawurlencode($slug);
 
         try {
-            while (count($collected) < $maxScan) {
-                $response = $provider->searchPosts(array_filter([
-                    'from_member' => [$personId],
-                    'count' => min($pageSize, $maxScan - count($collected)),
-                    'cursor' => $cursor,
-                ]), $context);
-
-                $items = Arr::get($response, 'items', []);
-                if (! is_array($items) || $items === []) {
-                    break;
-                }
-
-                foreach ($items as $item) {
-                    if (! is_array($item)) {
-                        continue;
-                    }
-                    $collected[] = $item;
-                    if (count($collected) >= $maxScan) {
-                        break 2;
-                    }
-                }
-
-                $cursor = Arr::get($response, 'cursor');
-                if (! is_string($cursor) || $cursor === '') {
-                    break;
-                }
-            }
+            $response = $provider->searchFromUrl($url, $accountId, $maxScan);
         } catch (\Throwable) {
             return [];
         }
 
-        return $collected;
+        $items = Arr::get($response, 'items', []);
+        if (! is_array($items)) {
+            return [];
+        }
+
+        $matched = [];
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $author = Arr::get($item, 'author', Arr::get($item, 'share_urn', []));
+            if (! is_array($author)) {
+                $author = [];
+            }
+            if ($this->personItemMatchesSlug($author, $slug) || $this->personItemMatchesSlug($item, $slug)) {
+                $matched[] = $item;
+            }
+        }
+
+        return $matched !== [] ? $matched : [];
     }
 
     /**
