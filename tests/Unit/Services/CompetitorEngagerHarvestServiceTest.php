@@ -208,6 +208,47 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
         $this->assertSame('Microsoft', $company['name']);
     }
 
+    public function test_resolve_person_falls_back_to_people_search_when_profile_lookup_404s(): void
+    {
+        config([
+            'services.unipile.base_url' => 'https://unipile.test/api/v1',
+            'services.unipile.api_key' => 'test-key',
+            'services.unipile.mock' => false,
+        ]);
+
+        Http::fake([
+            'unipile.test/api/v1/users/*' => Http::response([
+                'status' => 404,
+                'type' => 'errors/resource_not_found',
+                'title' => 'Resource not found.',
+                'detail' => 'The requested resource were not found.Account not found.',
+            ], 404),
+            'unipile.test/api/v1/linkedin/search*' => Http::response([
+                'items' => [[
+                    'type' => 'PEOPLE',
+                    'id' => 'ACoAAA888',
+                    'provider_id' => 'ACoAAA888',
+                    'name' => 'Eleazar Nzerem',
+                    'public_identifier' => 'eleazarnzerem',
+                    'profile_url' => 'https://www.linkedin.com/in/eleazarnzerem',
+                ]],
+            ]),
+        ]);
+
+        $provider = app(\App\V2\Integrations\Unipile\UnipileProvider::class);
+        $service = app(CompetitorEngagerHarvestService::class);
+
+        $person = $service->resolvePerson(
+            $provider,
+            'https://www.linkedin.com/in/eleazarnzerem',
+            ['account_id' => 'acc-test']
+        );
+
+        $this->assertSame('ACoAAA888', $person['id']);
+        $this->assertSame('Eleazar Nzerem', $person['name']);
+        $this->assertSame('eleazarnzerem', $person['public_identifier']);
+    }
+
     public function test_detect_linkedin_source_parses_company_and_profile_urls(): void
     {
         $service = app(CompetitorEngagerHarvestService::class);

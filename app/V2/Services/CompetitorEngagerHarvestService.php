@@ -6,6 +6,7 @@ use App\Models\Audience;
 use App\Models\AudienceList;
 use App\Models\V2IntegrationAccount;
 use App\V2\Integrations\ProviderManager;
+use App\V2\Integrations\Unipile\UnipileException;
 use App\V2\Integrations\Unipile\UnipileProvider;
 use Illuminate\Support\Arr;
 
@@ -69,7 +70,14 @@ class CompetitorEngagerHarvestService
         );
 
         $posts = $isPerson
-            ? $this->fetchPersonPosts($provider, (string) $entity['id'], $postsLimit, $pageSize, $context)
+            ? $this->fetchPersonPosts(
+                $provider,
+                (string) $entity['id'],
+                $postsLimit,
+                $pageSize,
+                $context,
+                isset($entity['public_identifier']) ? (string) $entity['public_identifier'] : null
+            )
             : $this->fetchCompanyPosts($provider, (string) $entity['id'], $postsLimit, $pageSize, $context);
 
         $label = $isPerson ? 'this profile' : 'this company';
@@ -366,12 +374,44 @@ class CompetitorEngagerHarvestService
             throw new \InvalidArgumentException('Could not parse a LinkedIn profile slug from the URL.');
         }
 
+        $profile = null;
+
         try {
             $profile = $provider->getProfileByIdentifier($slug, $context);
         } catch (\Throwable $exception) {
-            throw new \RuntimeException('Profile not found on LinkedIn for URL: '.$profileUrl, 0, $exception);
+            $isMissing = $exception instanceof UnipileException && $exception->statusCode === 404;
+            if (! $isMissing) {
+                throw new \RuntimeException(
+                    'Could not load this LinkedIn profile: '.$exception->getMessage(),
+                    0,
+                    $exception
+                );
+            }
         }
 
+        if (! is_array($profile) || $profile === []) {
+            $profile = $this->searchPersonBySlug($provider, $slug, $context);
+        }
+
+        if (! is_array($profile) || $profile === []) {
+            // Direct lookup 404s for some vanity slugs; still harvest posts by public id.
+            return [
+                'id' => $slug,
+                'name' => $this->humanizePublicIdentifier($slug) ?: $slug,
+                'profile_url' => 'https://www.linkedin.com/in/'.$slug,
+                'public_identifier' => $slug,
+            ];
+        }
+
+        return $this->mapResolvedPerson($profile, $slug);
+    }
+
+    /**
+     * @param  array<string, mixed>  $profile
+     * @return array{id: string, name: string|null, profile_url: string|null, public_identifier: string|null}
+     */
+    private function mapResolvedPerson(array $profile, string $slug): array
+    {
         $id = trim((string) (
             Arr::get($profile, 'provider_id')
             ?? Arr::get($profile, 'id')
@@ -397,6 +437,61 @@ class CompetitorEngagerHarvestService
                 ?? 'https://www.linkedin.com/in/'.$slug,
             'public_identifier' => $publicId !== '' ? $publicId : $slug,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function searchPersonBySlug(UnipileProvider $provider, string $slug, array $context): ?array
+    {
+        $keywords = array_values(array_unique(array_filter([
+            $slug,
+            str_replace('-', ' ', $slug),
+            $this->humanizePublicIdentifier($slug),
+        ], fn ($value) => is_string($value) && trim($value) !== '')));
+
+        foreach ($keywords as $keyword) {
+            try {
+                $search = $provider->searchPeople([
+                    'keywords' => $keyword,
+                    'limit' => 10,
+                ], $context);
+            } catch (\Throwable) {
+                continue;
+            }
+
+            $items = Arr::get($search, 'items', []);
+            if (! is_array($items)) {
+                continue;
+            }
+
+            foreach ($items as $item) {
+                if (is_array($item) && $this->personItemMatchesSlug($item, $slug)) {
+                    return $item;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function personItemMatchesSlug(array $item, string $slug): bool
+    {
+        $slug = strtolower($slug);
+        $publicId = strtolower(trim((string) (Arr::get($item, 'public_identifier') ?? '')));
+        if ($publicId !== '' && $publicId === $slug) {
+            return true;
+        }
+
+        $profileUrl = strtolower(rtrim((string) (Arr::get($item, 'profile_url') ?? ''), '/'));
+        if ($profileUrl !== '' && preg_match('~/in/'.preg_quote($slug, '~').'$~', $profileUrl)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -455,13 +550,30 @@ class CompetitorEngagerHarvestService
         string $personId,
         int $postsLimit,
         int $pageSize,
-        array $context
+        array $context,
+        ?string $publicId = null
     ): array {
         $maxScan = max($postsLimit, (int) config('services.competitor_followers.max_posts_scan', 30));
-        $collected = $this->collectUserPosts($provider, $personId, $maxScan, $pageSize, $context);
+        $identifiers = array_values(array_unique(array_filter(
+            [$personId, $publicId],
+            fn ($value) => is_string($value) && trim($value) !== ''
+        )));
+
+        $collected = [];
+        foreach ($identifiers as $identifier) {
+            $collected = $this->collectUserPosts($provider, $identifier, $maxScan, $pageSize, $context);
+            if ($collected !== []) {
+                break;
+            }
+        }
 
         if ($collected === []) {
-            $collected = $this->collectMemberSearchPosts($provider, $personId, $maxScan, $pageSize, $context);
+            foreach ($identifiers as $identifier) {
+                $collected = $this->collectMemberSearchPosts($provider, $identifier, $maxScan, $pageSize, $context);
+                if ($collected !== []) {
+                    break;
+                }
+            }
         }
 
         return $this->selectHarvestablePosts($collected, $postsLimit);
