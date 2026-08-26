@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\V2Conversation;
 use App\Models\V2Message;
 use App\V2\Contracts\Providers\MessagingProviderInterface;
+use App\V2\Contracts\Providers\ProfileProviderInterface;
 use App\V2\Integrations\ProviderManager;
 use App\V2\Integrations\Unipile\UnipileException;
 use App\V2\Services\OutreachPersistenceService;
@@ -51,7 +52,7 @@ class ProcessOutboundOutreachJobTest extends TestCase
             ],
         ]);
 
-        $messaging = new class implements MessagingProviderInterface
+        $messaging = new class implements MessagingProviderInterface, ProfileProviderInterface
         {
             public int $startChatCalls = 0;
 
@@ -82,6 +83,21 @@ class ProcessOutboundOutreachJobTest extends TestCase
             }
 
             public function markChatReadState(string $chatId, bool $isRead, array $context = []): array
+            {
+                return [];
+            }
+
+            public function getProfileByIdentifier(string $identifier, array $context = []): array
+            {
+                return [];
+            }
+
+            public function listRelations(array $filters = [], array $context = []): array
+            {
+                return [];
+            }
+
+            public function listFollowers(array $filters = [], array $context = []): array
             {
                 return [];
             }
