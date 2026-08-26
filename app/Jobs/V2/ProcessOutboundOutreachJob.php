@@ -7,6 +7,7 @@ use App\Models\V2Conversation;
 use App\Models\V2Message;
 use App\V2\Campaign\CampaignLinkedInGuard;
 use App\V2\Integrations\ProviderManager;
+use App\V2\Integrations\Unipile\UnipileException;
 use App\V2\Services\CallOrchestrationService;
 use App\V2\Services\OutreachPersistenceService;
 use App\V2\Services\OutreachUserErrorMapper;
@@ -62,6 +63,12 @@ class ProcessOutboundOutreachJob implements ShouldQueue
         try {
             $this->executeOutreach($providerManager, $persistence, $message);
         } catch (Throwable $exception) {
+            if ($this->action === 'message'
+                && OutreachUserErrorMapper::isStaleProviderChatError($exception)
+                && $this->attemptStaleChatRecovery($providerManager, $persistence, $message, $exception)) {
+                return;
+            }
+
             if ($linkedInGuard->isDisconnected($exception)) {
                 $linkedInGuard->handleDisconnect(
                     $this->userId,
@@ -104,14 +111,7 @@ class ProcessOutboundOutreachJob implements ShouldQueue
         $result = match ($this->action) {
             'invite' => $providerManager->invitation($providerKey)->sendInvitation($payload, $context),
             'start_chat' => $providerManager->messaging($providerKey)->startChat($payload, $context),
-            'message' => $providerManager->messaging($providerKey)->sendMessage(
-                (string) ($this->payload['chat_id'] ?? ''),
-                array_filter([
-                    'text' => (string) ($this->payload['text'] ?? ''),
-                    'account_id' => $payload['account_id'] ?? null,
-                ]),
-                $context
-            ),
+            'message' => $this->sendMessageOrThrow($providerManager, $providerKey, $payload, $context),
             default => ['error' => 'Unsupported action'],
         };
 
@@ -190,6 +190,214 @@ class ProcessOutboundOutreachJob implements ShouldQueue
         )->delay($resumeAt);
 
         return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    private function sendMessageOrThrow(
+        ProviderManager $providerManager,
+        string $providerKey,
+        array $payload,
+        array $context
+    ): array {
+        return $providerManager->messaging($providerKey)->sendMessage(
+            (string) ($this->payload['chat_id'] ?? ''),
+            array_filter([
+                'text' => (string) ($this->payload['text'] ?? ''),
+                'account_id' => $payload['account_id'] ?? null,
+            ]),
+            $context
+        );
+    }
+
+    private function attemptStaleChatRecovery(
+        ProviderManager $providerManager,
+        OutreachPersistenceService $persistence,
+        V2Message $message,
+        Throwable $originalException
+    ): bool {
+        $meta = is_array($message->meta) ? $message->meta : [];
+        if (!empty($meta['chat_recovery_attempted'])) {
+            return false;
+        }
+
+        $conversation = V2Conversation::query()->find($this->conversationId);
+        if (!$conversation) {
+            return false;
+        }
+
+        $staleChatId = trim((string) (
+            $this->payload['chat_id']
+            ?? $conversation->provider_chat_id
+            ?? ''
+        ));
+
+        if ($staleChatId !== '') {
+            $persistence->invalidateProviderChatId(
+                $conversation,
+                $staleChatId,
+                'stale_provider_chat_on_send'
+            );
+            $conversation = $conversation->fresh() ?? $conversation;
+        }
+
+        $attendeeIds = $persistence->resolveAttendeeIdsForConversation(
+            $conversation,
+            $this->userId,
+            $this->organizationId
+        );
+
+        if ($attendeeIds === []) {
+            Log::warning('[Outreach] Stale chat recovery skipped — no attendee ids', [
+                'conversation_id' => $this->conversationId,
+                'message_id' => $this->messageId,
+                'stale_chat_id' => $staleChatId !== '' ? $staleChatId : null,
+            ]);
+
+            return false;
+        }
+
+        $text = trim((string) ($this->payload['text'] ?? $message->body ?? ''));
+        if ($text === '') {
+            return false;
+        }
+
+        $this->releaseReservedQuota($message, UnipileDailyActionLimiter::ACTION_MESSAGES);
+
+        if (!$this->reserveRecoveryStartChatQuota($message, $attendeeIds, $text)) {
+            return true;
+        }
+
+        $payload = $this->payload;
+        if (!empty($payload['_unipile_account_id']) && empty($payload['account_id'])) {
+            $payload['account_id'] = $payload['_unipile_account_id'];
+        }
+
+        $context = array_filter([
+            'owner_id' => (string) $this->userId,
+            'organization_id' => $this->organizationId,
+            'account_id' => $payload['account_id'] ?? null,
+        ]);
+
+        $startPayload = [
+            'attendee_ids' => $attendeeIds,
+            'text' => $text,
+        ] + array_filter([
+            'account_id' => $payload['account_id'] ?? null,
+        ]);
+
+        try {
+            $result = $providerManager
+                ->messaging($providerManager->defaultProvider())
+                ->startChat($startPayload, $context);
+        } catch (Throwable $recoveryException) {
+            if ($recoveryException instanceof UnipileException
+                && OutreachUserErrorMapper::isStaleProviderChatError($recoveryException)) {
+                return false;
+            }
+
+            throw $recoveryException;
+        }
+
+        $meta['chat_recovery_attempted'] = true;
+        $meta['recovered_from_chat_id'] = $staleChatId !== '' ? $staleChatId : null;
+        $meta['action'] = 'start_chat';
+        $meta['attendee_ids'] = $attendeeIds;
+        $message->forceFill(['meta' => $meta])->save();
+
+        if ($attendeeIds !== []) {
+            $conversationMeta = is_array($conversation->meta) ? $conversation->meta : [];
+            $conversationMeta['attendee_ids'] = $attendeeIds;
+            $conversation->forceFill(['meta' => $conversationMeta])->save();
+        }
+
+        Log::info('[Outreach] Recovered stale provider chat via start_chat', [
+            'conversation_id' => $this->conversationId,
+            'message_id' => $this->messageId,
+            'stale_chat_id' => $staleChatId !== '' ? $staleChatId : null,
+            'attendee_ids' => $attendeeIds,
+        ]);
+
+        $persistence->markMessageResult($message, $result, 'sent');
+        $this->afterStartChat($message, $result);
+
+        $persistence->createProviderAuditEvent(
+            $this->userId,
+            'outbound.start_chat.sent',
+            'outbound_start_chat_recovery_'.$this->messageId.'_'.time(),
+            [
+                'conversation_id' => $this->conversationId,
+                'message_id' => $this->messageId,
+                'recovered_from_chat_id' => $staleChatId !== '' ? $staleChatId : null,
+                'original_error' => $originalException->getMessage(),
+                'result' => $result,
+            ]
+        );
+
+        return true;
+    }
+
+    private function releaseReservedQuota(V2Message $message, string $action): void
+    {
+        $meta = is_array($message->meta) ? $message->meta : [];
+        if (empty($meta['quota_consumed_at'])) {
+            return;
+        }
+
+        app(UnipileDailyActionLimiter::class)->release($this->userId, $action);
+        unset($meta['quota_consumed_at']);
+        $message->forceFill(['meta' => $meta])->save();
+    }
+
+    /**
+     * @param  array<int, string>  $attendeeIds
+     */
+    private function reserveRecoveryStartChatQuota(V2Message $message, array $attendeeIds, string $text): bool
+    {
+        $limiter = app(UnipileDailyActionLimiter::class);
+
+        if (!$limiter->tryConsume($this->userId, UnipileDailyActionLimiter::ACTION_NEW_CHATS)) {
+            $resumeAt = $limiter->resumeAt();
+            $meta = is_array($message->meta) ? $message->meta : [];
+            $meta['status'] = 'deferred';
+            $meta['deferred_until'] = $resumeAt->toIso8601String();
+            $meta['deferred_reason'] = 'daily_'.UnipileDailyActionLimiter::ACTION_NEW_CHATS.'_limit';
+            $meta['chat_recovery_attempted'] = true;
+            $message->forceFill(['meta' => $meta])->save();
+
+            $payload = $this->payload;
+            unset($payload['chat_id']);
+
+            self::dispatch(
+                'start_chat',
+                $this->userId,
+                $this->organizationId,
+                $this->conversationId,
+                $this->messageId,
+                $payload + [
+                    'attendee_ids' => $attendeeIds,
+                    'text' => $text,
+                ]
+            )->delay($resumeAt);
+
+            Log::info('[Outreach] Stale chat recovery deferred — new chat quota reached', [
+                'user_id' => $this->userId,
+                'message_id' => $this->messageId,
+                'resume_at' => $resumeAt->toIso8601String(),
+            ]);
+
+            return false;
+        }
+
+        $meta = is_array($message->meta) ? $message->meta : [];
+        $meta['quota_consumed_at'] = now()->toIso8601String();
+        unset($meta['deferred_until']);
+        $message->forceFill(['meta' => $meta])->save();
+
+        return true;
     }
 
     private function markMessageDisconnected(V2Message $message, string $reason): void

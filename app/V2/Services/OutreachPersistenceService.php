@@ -302,6 +302,70 @@ class OutreachPersistenceService
         return $message;
     }
 
+    public function invalidateProviderChatId(
+        V2Conversation $conversation,
+        string $invalidChatId,
+        string $reason = 'provider_chat_missing'
+    ): void {
+        $invalidChatId = trim($invalidChatId);
+        if ($invalidChatId === '') {
+            return;
+        }
+
+        $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $meta['invalid_provider_chat_id'] = $invalidChatId;
+        $meta['invalid_provider_chat_id_reason'] = $reason;
+
+        $conversation->forceFill([
+            'provider_chat_id' => null,
+            'meta' => $meta,
+        ])->save();
+    }
+
+    /**
+     * Resolve LinkedIn attendee ids for starting a fresh chat on an existing thread.
+     *
+     * @return array<int, string>
+     */
+    public function resolveAttendeeIdsForConversation(
+        V2Conversation $conversation,
+        int $userId,
+        int $organizationId
+    ): array {
+        $attendeeIds = array_values(array_filter(
+            Arr::get($conversation->meta ?? [], 'attendee_ids', []),
+            fn ($id) => trim((string) $id) !== ''
+        ));
+
+        if ($attendeeIds !== []) {
+            $resolved = $this->resolveRecipientId($userId, $organizationId, (string) $attendeeIds[0]);
+            $providerId = trim((string) ($resolved['provider_id'] ?? ''));
+            if ($providerId !== '') {
+                return [$providerId];
+            }
+
+            return array_map('strval', $attendeeIds);
+        }
+
+        $lead = $conversation->relationLoaded('lead')
+            ? $conversation->lead
+            : $conversation->lead()->first();
+
+        $recipientId = trim((string) ($lead?->provider_profile_id ?? ''));
+        if ($recipientId === '') {
+            $recipientId = trim((string) ($lead?->public_identifier ?? ''));
+        }
+
+        if ($recipientId === '') {
+            return [];
+        }
+
+        $resolved = $this->resolveRecipientId($userId, $organizationId, $recipientId);
+        $providerId = trim((string) ($resolved['provider_id'] ?? ''));
+
+        return $providerId !== '' ? [$providerId] : [$recipientId];
+    }
+
     public function createOutboundMessage(
         int $conversationId,
         ?string $body,

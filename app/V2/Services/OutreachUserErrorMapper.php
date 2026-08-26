@@ -54,6 +54,33 @@ class OutreachUserErrorMapper
         return !self::map($exception)['retryable'];
     }
 
+    /**
+     * Unipile returns 404 for both missing accounts and missing chats — only the
+     * latter should trigger a start_chat recovery attempt.
+     */
+    public static function isStaleProviderChatError(Throwable $exception): bool
+    {
+        if (!$exception instanceof UnipileException || $exception->statusCode !== 404) {
+            return false;
+        }
+
+        $response = is_array($exception->context['response'] ?? null)
+            ? $exception->context['response']
+            : [];
+
+        $haystack = strtolower(
+            $exception->getMessage()
+            .' '.(string) ($response['detail'] ?? '')
+            .' '.(string) ($response['title'] ?? '')
+        );
+
+        if (str_contains($haystack, 'account not found')) {
+            return false;
+        }
+
+        return str_contains($haystack, 'chat not found');
+    }
+
     public static function userMessageForCall(?array $meta): ?string
     {
         if (!is_array($meta)) {
