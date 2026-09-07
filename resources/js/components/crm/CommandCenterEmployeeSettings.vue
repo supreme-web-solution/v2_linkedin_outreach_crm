@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { Check, ChevronDown, Loader2, Settings2 } from '@lucide/vue';
-import { computed, nextTick, ref, watch } from 'vue';
-import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { ChevronDown, Loader2 } from '@lucide/vue';
+import { computed, ref, watch } from 'vue';
 
-export type EmployeeSettings = {
+type Settings = {
     enabled: boolean;
     kill_switch: boolean;
     autonomy_level: number;
@@ -15,52 +13,83 @@ export type EmployeeSettings = {
 };
 
 const props = defineProps<{
-    settings: EmployeeSettings;
+    settings: Settings;
+    isPlatformAdmin?: boolean;
 }>();
 
 const emit = defineEmits<{
-    updated: [settings: EmployeeSettings];
+    updated: [settings: Settings];
 }>();
 
-const open = ref(false);
-const form = ref<EmployeeSettings>({ ...props.settings, enabled: props.settings.enabled !== false });
+function normalizeSettings(settings: Settings): Settings {
+    return {
+        ...settings,
+        enabled: Boolean(settings.enabled),
+        kill_switch: Boolean(settings.kill_switch),
+        autonomy_level: Number(settings.autonomy_level),
+    };
+}
+
+const local = ref(normalizeSettings(props.settings));
 const saving = ref(false);
-const savingEnabled = ref(false);
-const saved = ref(false);
-const error = ref<string | null>(null);
-let skipEnabledPersist = false;
-
-const alexActive = computed(() => form.value.enabled !== false && !props.settings.kill_switch);
-
-const nameDirty = computed(() => form.value.employee_name !== props.settings.employee_name);
+const open = ref(false);
+const feedback = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch(
     () => props.settings,
     (next) => {
-        skipEnabledPersist = true;
-        form.value = { ...next, enabled: next.enabled !== false };
-        void nextTick(() => {
-            skipEnabledPersist = false;
-        });
+        local.value = normalizeSettings(next);
     },
     { deep: true },
 );
 
-watch(
-    () => form.value.enabled,
-    async (enabled) => {
-        if (!enabled) {
-            open.value = false;
-        }
-        if (skipEnabledPersist) {
-            return;
-        }
-        if (enabled === (props.settings.enabled !== false)) {
-            return;
-        }
-        await persistSettings({ enabled }, true);
+const autonomyOptions = computed(() => {
+    const options = [
+        {
+            value: 1,
+            label: 'Copilot',
+            description: 'Alex recommends only — you run everything in the app.',
+        },
+        {
+            value: 2,
+            label: 'Assisted',
+            description: 'Alex stages plans; you Launch or say "go ahead".',
+        },
+        {
+            value: 3,
+            label: 'Autopilot',
+            description: 'Alex auto-searches LinkedIn, stages plans, and launches campaigns without "go ahead".',
+        },
+    ];
+
+    if (props.isPlatformAdmin) {
+        options.push({
+            value: 4,
+            label: 'Autonomous',
+            description: 'Admin only — full plan-and-execute: discover, launch, and optimize with minimal gates.',
+        });
+    }
+
+    return options;
+});
+
+const autonomyLabel = computed(() => {
+    const map: Record<number, string> = {
+        1: 'Copilot',
+        2: 'Assisted',
+        3: 'Autopilot',
+        4: 'Autonomous',
+    };
+    return map[local.value.autonomy_level] ?? 'Assisted';
+});
+
+const enabledModel = computed({
+    get: () => local.value.enabled,
+    set: (value: boolean) => {
+        void onToggleEnabled(value);
     },
-);
+});
 
 function xsrf(): string {
     return decodeURIComponent(
@@ -68,17 +97,18 @@ function xsrf(): string {
     );
 }
 
-async function persistSettings(payload: Partial<EmployeeSettings>, auto = false) {
-    if (props.settings.kill_switch) return;
-
-    if (auto) {
-        savingEnabled.value = true;
-    } else {
-        saving.value = true;
+function showFeedback(type: 'success' | 'error', message: string) {
+    feedback.value = { type, message };
+    if (feedbackTimer) {
+        clearTimeout(feedbackTimer);
     }
-    saved.value = false;
-    error.value = null;
+    feedbackTimer = setTimeout(() => {
+        feedback.value = null;
+    }, 2500);
+}
 
+async function save(patch: Partial<Settings>, successMessage: string) {
+    saving.value = true;
     try {
         const res = await fetch('/ai-employee/settings', {
             method: 'POST',
@@ -87,157 +117,141 @@ async function persistSettings(payload: Partial<EmployeeSettings>, auto = false)
                 Accept: 'application/json',
                 'X-XSRF-TOKEN': xsrf(),
             },
-            body: JSON.stringify({
-                enabled: payload.enabled ?? form.value.enabled,
-                employee_name: (payload.employee_name ?? form.value.employee_name).trim(),
-            }),
+            credentials: 'same-origin',
+            body: JSON.stringify(patch),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message ?? 'Could not save settings');
-
-        form.value = { ...data.settings, enabled: data.settings.enabled !== false };
-        emit('updated', form.value);
-
-        if (!auto) {
-            saved.value = true;
-            window.setTimeout(() => {
-                saved.value = false;
-            }, 2000);
+        if (!res.ok) {
+            throw new Error(data.message ?? 'Failed to save settings');
         }
+        local.value = normalizeSettings({ ...local.value, ...data.settings });
+        emit('updated', local.value);
+        showFeedback('success', successMessage);
     } catch (e) {
-        error.value = e instanceof Error ? e.message : 'Could not save settings';
-        form.value.enabled = props.settings.enabled !== false;
+        const message = e instanceof Error ? e.message : 'Failed to save settings';
+        showFeedback('error', message);
+        throw e;
     } finally {
         saving.value = false;
-        savingEnabled.value = false;
     }
 }
 
-async function saveName() {
-    if (!nameDirty.value || saving.value || !alexActive.value) return;
+async function onToggleEnabled(enabled: boolean) {
+    const previous = local.value.enabled;
+    local.value.enabled = enabled;
+    try {
+        await save({ enabled }, enabled ? 'Alex enabled' : 'Alex paused');
+    } catch {
+        local.value.enabled = previous;
+    }
+}
 
-    await persistSettings({
-        employee_name: form.value.employee_name,
-    });
+async function onNameBlur() {
+    const name = local.value.employee_name.trim();
+    if (name && name !== props.settings.employee_name) {
+        try {
+            await save({ employee_name: name }, 'Display name saved');
+        } catch {
+            local.value.employee_name = props.settings.employee_name;
+        }
+    }
+}
+
+async function onAutonomyChange(level: number) {
+    if (level === local.value.autonomy_level) {
+        return;
+    }
+    const previous = local.value.autonomy_level;
+    local.value.autonomy_level = level;
+    const label = autonomyOptions.value.find((o) => o.value === level)?.label ?? 'Mode';
+    try {
+        await save({ autonomy_level: level }, `${label} mode saved`);
+    } catch {
+        local.value.autonomy_level = previous;
+    }
 }
 </script>
 
 <template>
-    <div class="shrink-0 overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
-        <div class="border-b px-4 py-3">
-            <div class="flex items-center gap-2 text-sm font-medium">
-                <Settings2 class="size-4 shrink-0" />
-                Employee settings
-            </div>
-
-            <div
-                class="mt-3 flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+    <Collapsible v-model:open="open" class="rounded-lg border bg-card">
+        <CollapsibleTrigger
+            class="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium hover:bg-muted/50"
+        >
+            <span class="flex items-center gap-2">
+                Alex settings
+                <Loader2 v-if="saving" class="size-3.5 animate-spin text-muted-foreground" />
+            </span>
+            <span class="flex items-center gap-2 text-xs font-normal text-muted-foreground">
+                {{ autonomyLabel }}
+                <ChevronDown class="size-4 shrink-0 transition-transform" :class="open ? 'rotate-180' : ''" />
+            </span>
+        </CollapsibleTrigger>
+        <CollapsibleContent class="space-y-4 border-t px-4 py-4">
+            <p
+                v-if="feedback"
+                class="rounded-md px-3 py-2 text-xs"
                 :class="
-                    alexActive
-                        ? 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/40 dark:bg-emerald-950/20'
-                        : 'border-amber-200 bg-amber-50/80 dark:border-amber-900/40 dark:bg-amber-950/20'
+                    feedback.type === 'success'
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-destructive/10 text-destructive'
                 "
             >
-                <div class="min-w-0 flex-1">
-                    <div class="flex flex-wrap items-center gap-2">
-                        <Label for="ai-enabled" class="text-xs font-semibold">
-                            Alex status
-                        </Label>
-                        <span
-                            class="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
-                            :class="
-                                alexActive
-                                    ? 'bg-emerald-600 text-white'
-                                    : 'bg-amber-600 text-white'
-                            "
-                        >
-                            {{ alexActive ? 'On' : 'Paused' }}
-                        </span>
-                    </div>
-                    <p class="text-muted-foreground mt-1 text-[11px] leading-snug">
-                        <template v-if="alexActive">
-                            Alex plans and stages work for your approval — Review & Launch before anything sends.
-                        </template>
-                        <template v-else>
-                            Alex is paused — chat is disabled until you turn this back on.
-                        </template>
-                    </p>
-                </div>
-                <div class="flex shrink-0 flex-col items-end gap-1">
-                    <Loader2 v-if="savingEnabled" class="size-4 animate-spin text-muted-foreground" />
-                    <Switch
-                        id="ai-enabled"
-                        v-model="form.enabled"
-                        :disabled="settings.kill_switch || savingEnabled"
-                        class="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-muted"
-                    />
-                    <span class="text-[10px] font-medium text-muted-foreground">
-                        {{ form.enabled ? 'Running' : 'Paused' }}
-                    </span>
-                </div>
-            </div>
+                {{ feedback.message }}
+            </p>
 
-            <div
-                v-if="settings.kill_switch"
-                class="mt-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100"
-            >
-                AI is paused by an admin kill switch. Contact support to re-enable.
-            </div>
-        </div>
-
-        <Collapsible v-model:open="open">
-            <CollapsibleTrigger
-                class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition"
-                :class="alexActive ? 'hover:bg-muted/30' : 'cursor-not-allowed opacity-50'"
-                :disabled="!alexActive"
-            >
-                <div class="min-w-0">
-                    <div class="flex flex-wrap items-center gap-2 text-sm font-medium">
-                        <span>Display name</span>
-                        <span
-                            v-if="nameDirty"
-                            class="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-200"
-                        >
-                            Unsaved
-                        </span>
-                    </div>
-                    <p class="text-muted-foreground mt-0.5 text-xs leading-snug">
-                        {{ form.employee_name || 'Alex' }}
-                    </p>
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <Label for="alex-enabled">Enable Alex</Label>
+                    <p class="text-xs text-muted-foreground">Turn off to pause Command Center replies.</p>
                 </div>
-                <ChevronDown
-                    class="size-4 shrink-0 text-muted-foreground transition-transform duration-200"
-                    :class="open ? 'rotate-180' : ''"
+                <Switch
+                    id="alex-enabled"
+                    v-model="enabledModel"
+                    :disabled="saving || local.kill_switch"
                 />
-            </CollapsibleTrigger>
+            </div>
 
-            <CollapsibleContent>
-                <div class="border-t px-4 py-4">
-                    <div class="space-y-1.5">
-                        <Label for="employee-name" class="text-xs font-medium">Name shown in chat</Label>
-                        <Input
-                            id="employee-name"
-                            v-model="form.employee_name"
-                            maxlength="40"
-                            class="h-9 text-sm"
-                            :disabled="!alexActive"
-                        />
-                    </div>
+            <div class="space-y-2">
+                <Label for="alex-name">Display name</Label>
+                <input
+                    id="alex-name"
+                    v-model="local.employee_name"
+                    type="text"
+                    maxlength="40"
+                    class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                    :disabled="saving"
+                    @blur="onNameBlur"
+                />
+            </div>
 
-                    <p v-if="error" class="mt-3 text-xs text-destructive">{{ error }}</p>
-
-                    <Button
-                        class="mt-4 w-full"
-                        size="sm"
-                        :disabled="!nameDirty || saving || !alexActive"
-                        @click="saveName"
+            <div class="space-y-2">
+                <Label>Autonomy mode</Label>
+                <p class="text-xs text-muted-foreground">
+                    Controls how much Alex can do without your explicit approval. Changes save automatically.
+                </p>
+                <div class="space-y-2">
+                    <button
+                        v-for="opt in autonomyOptions"
+                        :key="opt.value"
+                        type="button"
+                        class="w-full rounded-md border px-3 py-2 text-left text-sm transition-colors"
+                        :class="
+                            local.autonomy_level === opt.value
+                                ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                                : 'border-border hover:bg-muted/50'
+                        "
+                        :disabled="saving"
+                        @click="onAutonomyChange(opt.value)"
                     >
-                        <Loader2 v-if="saving" class="mr-1 size-3.5 animate-spin" />
-                        <Check v-else-if="saved" class="mr-1 size-3.5" />
-                        {{ saving ? 'Saving…' : saved ? 'Saved' : 'Save name' }}
-                    </Button>
+                        <span class="font-medium">{{ opt.label }}</span>
+                        <span class="mt-0.5 block text-xs text-muted-foreground">{{ opt.description }}</span>
+                    </button>
                 </div>
-            </CollapsibleContent>
-        </Collapsible>
-    </div>
+            </div>
+
+            <p v-if="local.kill_switch" class="text-xs text-destructive">
+                Alex is paused by an admin kill switch. Contact support to restore access.
+            </p>
+        </CollapsibleContent>
+    </Collapsible>
 </template>

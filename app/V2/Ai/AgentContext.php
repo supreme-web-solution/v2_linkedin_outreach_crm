@@ -6,6 +6,7 @@ use App\Models\AiConversation;
 use App\Models\AiEmployeeSetting;
 use App\Models\User;
 use App\V2\Ai\Enums\AiAutonomyLevel;
+use App\V2\Ai\Services\AiEmployeeSettingsService;
 
 final class AgentContext
 {
@@ -17,13 +18,22 @@ final class AgentContext
         public readonly string $channel = 'web',
     ) {}
 
+    public function activeSettings(): AiEmployeeSetting
+    {
+        return app(AiEmployeeSettingsService::class)->for($this->user, $this->organizationId);
+    }
+
     public function employeeName(): string
     {
-        return $this->settings->employee_name ?: (string) config('socifusion_ai.employee_name', 'Alex');
+        $settings = $this->activeSettings();
+
+        return $settings->employee_name ?: (string) config('socifusion_ai.employee_name', 'Alex');
     }
 
     public function autonomy(): AiAutonomyLevel
     {
-        return AiAutonomyLevel::tryFrom((int) $this->settings->autonomy_level) ?? AiAutonomyLevel::Assisted;
+        $settings = $this->activeSettings();
+
+        return AiAutonomyLevel::tryFrom((int) $settings->autonomy_level) ?? AiAutonomyLevel::Assisted;
     }
 }

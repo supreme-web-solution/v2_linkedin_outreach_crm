@@ -14,6 +14,7 @@ use App\V2\Ai\Services\WhatsAppCommandLinkPresenter;
 use App\V2\Ai\Services\CommandCenterService;
 use App\V2\Ai\Services\ExecuteSalesPlanCommandCenterService;
 use App\V2\Ai\Services\InboxCommandCenterService;
+use App\V2\Services\EntitlementService;
 use App\V2\Outreach\OutreachChannelGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -48,9 +49,9 @@ class AiEmployeeWebController extends Controller
 
         return Inertia::render('crm/AiEmployee/Index', [
             'settings' => [
-                'enabled' => $settings->enabled,
-                'kill_switch' => $settings->kill_switch,
-                'autonomy_level' => $settings->autonomy_level,
+                'enabled' => (bool) $settings->enabled,
+                'kill_switch' => (bool) $settings->kill_switch,
+                'autonomy_level' => (int) $settings->autonomy_level,
                 'employee_name' => $settings->employee_name,
             ],
             'whatsapp' => [
@@ -87,8 +88,8 @@ class AiEmployeeWebController extends Controller
             'has_older_messages' => $historyWindow['has_older'],
             'pending_approvals_count' => count($pending),
             'settings' => [
-                'enabled' => $settings->enabled,
-                'kill_switch' => $settings->kill_switch,
+                'enabled' => (bool) $settings->enabled,
+                'kill_switch' => (bool) $settings->kill_switch,
                 'employee_name' => $settings->employee_name,
             ],
         ]);
@@ -355,6 +356,44 @@ class AiEmployeeWebController extends Controller
             'pending_approvals' => $commandCenter->serializeApprovals(
                 $commandCenter->pendingApprovals($user, $orgId)
             ),
+        ]);
+    }
+
+    public function updateSettings(
+        Request $request,
+        AiEmployeeSettingsService $settingsService,
+        EntitlementService $entitlements,
+    ): JsonResponse {
+        $user = auth()->user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        abort_unless($orgId > 0, 403);
+
+        $data = $request->validate([
+            'enabled' => ['sometimes', 'boolean'],
+            'employee_name' => ['sometimes', 'string', 'max:40'],
+            'autonomy_level' => ['sometimes', 'integer', 'in:1,2,3,4'],
+        ]);
+
+        try {
+            $updated = $settingsService->updateForUser(
+                $user,
+                $orgId,
+                $data,
+                allowAutonomous: $entitlements->isPlatformAdmin($user),
+            );
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'settings' => [
+                'enabled' => (bool) $updated->enabled,
+                'kill_switch' => (bool) $updated->kill_switch,
+                'autonomy_level' => (int) $updated->autonomy_level,
+                'autonomy_label' => app(\App\V2\Ai\Services\AutonomyContextService::class)
+                    ->label((int) $updated->autonomy_level),
+                'employee_name' => $updated->employee_name,
+            ],
         ]);
     }
 

@@ -8,6 +8,7 @@ use App\Models\AiConversation;
 use App\Models\AiMessage;
 use App\Models\User;
 use App\V2\Ai\AgentContext;
+use App\V2\Ai\Enums\AiAutonomyLevel;
 use Throwable;
 
 class AgentOrchestrator
@@ -15,6 +16,7 @@ class AgentOrchestrator
     public function __construct(
         private readonly AiEmployeeSettingsService $settingsService,
         private readonly CommandCenterService $commandCenter,
+        private readonly AutonomyContextService $autonomyContext,
     ) {}
 
     /**
@@ -117,6 +119,10 @@ class AgentOrchestrator
             $promptMessage = (string) $control['rewrite'];
         }
 
+        $settings = $this->settingsService->for($user, $organizationId);
+        $modeChangeNote = $this->autonomyContext->syncConversationMode($conversation, $settings);
+        $promptMessage = $this->autonomyContext->promptPrefix($settings, $modeChangeNote).$promptMessage;
+
         AiMessage::query()->create([
             'conversation_id' => $conversation->id,
             'role' => 'user',
@@ -140,6 +146,13 @@ class AgentOrchestrator
             $reply = trim((string) $response);
             $latestApproval = $this->commandCenter->pendingApprovals($user, $organizationId)->first();
 
+            $latestApproval = $this->maybeAutoLaunchOutreachPlan(
+                $user,
+                $organizationId,
+                $reply,
+                $latestApproval,
+            );
+
             // Prefer structured plan card on WhatsApp when a pending approval was just created
             if ($channel === 'whatsapp' && $latestApproval && str_contains(mb_strtolower($reply), 'plan')) {
                 // keep model reply; card also available in pending_approvals for client
@@ -153,8 +166,8 @@ class AgentOrchestrator
             $reply = 'Done.';
         }
 
-        // If tools staged an approval but the model reply is thin, append WA-friendly card
-        if ($latestApproval && $channel === 'whatsapp' && ! str_contains($reply, 'LAUNCH '.$latestApproval->id)) {
+        // Always attach plan card on WhatsApp when a pending approval exists
+        if ($latestApproval && $channel === 'whatsapp' && $latestApproval->status === 'pending') {
             $card = $this->commandCenter->formatPlanCard(
                 $latestApproval->payload ?? [],
                 $latestApproval->id,
@@ -175,7 +188,44 @@ class AgentOrchestrator
             ],
         ]);
 
-        return $this->payload($user, $organizationId, $conversation->id, $reply, $latestApproval);
+        return $this->payload($user, $organizationId, $conversation->id, $reply, $latestApproval, $settings);
+    }
+
+    private function maybeAutoLaunchOutreachPlan(
+        User $user,
+        int $organizationId,
+        string &$reply,
+        ?AiActionApproval $latestApproval,
+    ): ?AiActionApproval {
+        if (! $latestApproval || $latestApproval->status !== 'pending') {
+            return $latestApproval;
+        }
+
+        $settings = $this->settingsService->for($user, $organizationId);
+        $autonomy = AiAutonomyLevel::tryFrom((int) $settings->autonomy_level) ?? AiAutonomyLevel::Assisted;
+        if ($autonomy->value < AiAutonomyLevel::Autopilot->value) {
+            return $latestApproval;
+        }
+
+        if (! $this->commandCenter->isAutoLaunchApproval($latestApproval)) {
+            return $latestApproval;
+        }
+
+        $this->commandCenter->attachAutoAudience($user, $organizationId, $latestApproval);
+        $launch = $this->commandCenter->handleControlCommand(
+            $user,
+            $organizationId,
+            'LAUNCH '.$latestApproval->id,
+        );
+
+        if (! ($launch['handled'] ?? false) || ($launch['decision'] ?? '') !== 'approve') {
+            return $latestApproval->fresh();
+        }
+
+        $reply = trim($reply."\n\n".(string) ($launch['reply'] ?? ''));
+        $approved = $launch['approval'] ?? null;
+
+        return $approved instanceof AiActionApproval ? $approved : $latestApproval->fresh();
     }
 
     /**
@@ -193,7 +243,9 @@ class AgentOrchestrator
         int $conversationId,
         string $reply,
         ?AiActionApproval $latest = null,
+        ?\App\Models\AiEmployeeSetting $settings = null,
     ): array {
+        $settings ??= $this->settingsService->for($user, $organizationId);
         $pending = $this->commandCenter->pendingApprovals($user, $organizationId);
         $serialized = $this->commandCenter->serializeApprovals($pending);
 
@@ -201,6 +253,8 @@ class AgentOrchestrator
             'conversation_id' => $conversationId,
             'reply' => $reply,
             'blocked' => false,
+            'autonomy_level' => (int) $settings->autonomy_level,
+            'autonomy_label' => $this->autonomyContext->label((int) $settings->autonomy_level),
             'pending_approvals' => $serialized,
             'latest_approval' => $latest && $latest->status === 'pending'
                 ? ($serialized[0] ?? [

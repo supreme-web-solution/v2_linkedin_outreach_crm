@@ -31,6 +31,14 @@ class PublishV2ContentPostJob implements ShouldQueue
             return;
         }
 
+        if ($post->status === 'scheduled' && $post->scheduled_at && $post->scheduled_at->isFuture()) {
+            return;
+        }
+
+        if (! in_array($post->status, ['scheduled', 'ready_to_publish', 'draft'], true)) {
+            return;
+        }
+
         $account = V2IntegrationAccount::query()
             ->where('user_id', $post->user_id)
             ->where('provider', 'linkedin')

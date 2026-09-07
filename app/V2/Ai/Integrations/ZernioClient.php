@@ -82,7 +82,8 @@ class ZernioClient
      *     from: string,
      *     conversation_id: ?string,
      *     account_id: ?string,
-     *     is_inbound_message: bool
+     *     is_inbound_message: bool,
+     *     media: ?array{type:string,url:string,mime:?string}
      * }
      */
     public function parseWebhookEvent(array $payload): array
@@ -100,6 +101,7 @@ class ZernioClient
                 'conversation_id' => null,
                 'account_id' => null,
                 'is_inbound_message' => true,
+                'media' => $this->extractMedia(is_array($payload['message'] ?? null) ? $payload['message'] : $payload),
             ];
         }
 
@@ -127,7 +129,76 @@ class ZernioClient
             'conversation_id' => isset($conversation['id']) ? (string) $conversation['id'] : null,
             'account_id' => isset($account['id']) ? (string) $account['id'] : null,
             'is_inbound_message' => $event === 'message.received',
+            'media' => $this->extractMedia($message),
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $message
+     * @return array{type:string,url:string,mime:?string}|null
+     */
+    private function extractMedia(array $message): ?array
+    {
+        $candidates = [];
+
+        foreach ((array) ($message['attachments'] ?? []) as $attachment) {
+            if (! is_array($attachment)) {
+                continue;
+            }
+            $candidates[] = $attachment;
+        }
+
+        if (isset($message['media']) && is_array($message['media'])) {
+            $candidates[] = $message['media'];
+        }
+
+        foreach ($candidates as $attachment) {
+            $type = Str::lower(trim((string) (
+                $attachment['type']
+                ?? $attachment['mediaType']
+                ?? $attachment['kind']
+                ?? 'image'
+            )));
+
+            if ($type !== '' && ! str_contains($type, 'image') && ! in_array($type, ['photo', 'picture', 'media', 'file'], true)) {
+                continue;
+            }
+
+            $url = trim((string) (
+                $attachment['url']
+                ?? $attachment['mediaUrl']
+                ?? $attachment['link']
+                ?? $attachment['secureUrl']
+                ?? data_get($attachment, 'payload.url')
+                ?? ''
+            ));
+
+            if ($url === '') {
+                continue;
+            }
+
+            return [
+                'type' => 'image',
+                'url' => $url,
+                'mime' => isset($attachment['mimeType']) ? (string) $attachment['mimeType'] : null,
+            ];
+        }
+
+        foreach ([
+            data_get($message, 'image.url'),
+            data_get($message, 'imageUrl'),
+            data_get($message, 'mediaUrl'),
+        ] as $url) {
+            if (is_string($url) && trim($url) !== '') {
+                return [
+                    'type' => 'image',
+                    'url' => trim($url),
+                    'mime' => null,
+                ];
+            }
+        }
+
+        return null;
     }
 
     /**

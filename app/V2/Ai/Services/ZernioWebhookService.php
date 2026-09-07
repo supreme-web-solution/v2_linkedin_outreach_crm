@@ -73,7 +73,8 @@ class ZernioWebhookService
      *     from: string,
      *     conversation_id: ?string,
      *     account_id: ?string,
-     *     is_inbound_message: bool
+     *     is_inbound_message: bool,
+     *     media: ?array{type:string,url:string,mime:?string}
      * }  $parsed
      * @return array{status:int, body:array<string,mixed>}
      */
@@ -81,16 +82,34 @@ class ZernioWebhookService
     {
         $from = $parsed['from'];
         $text = $parsed['text'];
+        $media = $parsed['media'] ?? null;
 
-        if ($from === '' || $text === '') {
+        if ($from === '') {
+            Log::warning('[Zernio] inbound message ignored', [
+                'reason' => 'empty_from',
+                'message_id' => $parsed['message_id'],
+            ]);
+
+            return $this->ok(['ignored' => true, 'reason' => 'empty_from']);
+        }
+
+        if ($text === '' && $media === null) {
             Log::warning('[Zernio] inbound message ignored', [
                 'reason' => 'empty_from_or_text',
                 'from' => $from,
-                'text_preview' => Str::limit($text, 120),
                 'message_id' => $parsed['message_id'],
             ]);
 
             return $this->ok(['ignored' => true, 'reason' => 'empty_from_or_text']);
+        }
+
+        if ($text === '' && $media !== null) {
+            Log::info('[Zernio] inbound image ignored (caption required)', [
+                'from' => $from,
+                'message_id' => $parsed['message_id'],
+            ]);
+
+            return $this->ok(['ignored' => true, 'reason' => 'image_only']);
         }
 
         $link = $this->identities->findValidCode($text);
@@ -139,6 +158,15 @@ class ZernioWebhookService
         $identity = $identity->fresh();
 
         $user = User::query()->findOrFail($identity->user_id);
+        $conversation = app(CommandCenterService::class)->conversation(
+            $user,
+            (int) $identity->organization_id,
+            $identity->id,
+        );
+
+        if ($media !== null) {
+            app(WhatsAppMediaIngestService::class)->storeForConversation($conversation, $user, $media);
+        }
 
         if ((bool) config('socifusion_ai.zernio.queue_inbound', true)) {
             try {

@@ -70,6 +70,28 @@ class CommandCenterControlCommandTest extends TestCase
         $this->assertStringNotContainsString("couldn't find", (string) ($result['reply'] ?? ''));
     }
 
+    public function test_go_ahead_launches_newest_pending_plan(): void
+    {
+        [$user, $org, $approval] = $this->pendingIcpApproval('Dev shops using AI tools');
+
+        $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'go ahead');
+
+        $this->assertTrue($result['handled'] ?? false);
+        $this->assertSame('approve', $result['decision'] ?? null);
+        $this->assertSame('approved', $approval->fresh()->status);
+    }
+
+    public function test_go_ahead_rewrites_to_discover_when_outreach_plan_lacks_audience(): void
+    {
+        [$user, $org, $approval] = $this->pendingStrategyApproval('Laravel developers');
+
+        $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'go ahead');
+
+        $this->assertFalse($result['handled'] ?? true);
+        $this->assertStringContainsString('discover_prospects', (string) ($result['rewrite'] ?? ''));
+        $this->assertSame('pending', $approval->fresh()->status);
+    }
+
     public function test_launch_blocks_when_linkedin_not_connected_for_campaign_plan(): void
     {
         [$user, $org, $approval] = $this->pendingStrategyApproval('US dev agencies');

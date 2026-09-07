@@ -24,6 +24,10 @@ use App\Ai\Tools\PauseOutreachCampaignTool;
 use App\Ai\Tools\PostCallCrmUpdateTool;
 use App\Ai\Tools\PrepareCompetitorHarvestTool;
 use App\Ai\Tools\PrepareEnrichmentTool;
+use App\Ai\Tools\ListContentPostsTool;
+use App\Ai\Tools\PrepareCallManagerLaunchTool;
+use App\Ai\Tools\PrepareLinkedInPostTool;
+use App\Ai\Tools\RescheduleContentPostsTool;
 use App\Ai\Tools\ProposeStrategyTool;
 use App\Ai\Tools\QualifyLeadTool;
 use App\Ai\Tools\SetNextBestActionTool;
@@ -54,9 +58,9 @@ class SociFusionAgent implements Agent, Conversational, HasTools
 
         $extra = match ($autonomy) {
             AiAutonomyLevel::Copilot => 'Autonomy: Copilot. Recommend only; do not claim actions were executed.',
-            AiAutonomyLevel::Assisted => 'Autonomy: Assisted. Stage plans with tools; wait for Launch/Approve before claiming execution.',
-            AiAutonomyLevel::Autopilot => 'Autonomy: Autopilot. You may auto-run allowlisted execute tools only.',
-            AiAutonomyLevel::Autonomous => 'Autonomy: Autonomous within org rules. Still prefer confirmation for high-impact sends.',
+            AiAutonomyLevel::Assisted => 'Autonomy: Assisted. Stage plans with tools; user can say go ahead or LAUNCH to approve pending plans before claiming execution.',
+            AiAutonomyLevel::Autopilot => 'Autonomy: Autopilot. Auto-search LinkedIn for audiences, stage plans, and auto-LAUNCH outreach when a list is attached. Auto-run allowlisted execute tools without asking.',
+            AiAutonomyLevel::Autonomous => 'Autonomy: Autonomous. Plan and execute end-to-end: discover audience via LinkedIn search, stage campaigns, auto-LAUNCH, and run allowlisted actions. Only pause for missing integrations — never ask for competitor URLs first.',
         };
 
         $surface = $this->context->channel === 'whatsapp'
@@ -72,20 +76,26 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\nChannels: {$channels}"
             ."\nOrganization ID: {$this->context->organizationId}."
             ."\nTool guide (follow this order for outreach goals):"
-            ."\n1. build_icp or clarify ICP when needed"
-            ."\n2. discover_prospects or find_prospects — locate a real lead list before staging a campaign"
-            ."\n3. propose_strategy / draft_campaign_plan — include list_hash + list_src from discovery"
-            ."\n4. Launch only when the plan shows an audience list; never create empty campaigns"
-            ."\n- Sales goal / 'get me meetings' → discover_prospects first, then propose_strategy or draft_campaign_plan"
-            ."\n- 'Find my ideal customers' / ICP → build_icp"
-            ."\n- Unified discovery (lists + competitor audiences) → discover_prospects"
-            ."\n- Find existing lists only → find_prospects (pass list_hash + list_src into draft_campaign_plan)"
-            ."\n- Competitor audiences → analyze_competitor_audience; harvest new → prepare_competitor_harvest"
+            ."\n1. build_icp only when ICP is truly unclear"
+            ."\n2. discover_prospects — checks saved lists, then AUTO-SEARCHES LinkedIn via the connected account (no manual profile URLs needed)"
+            ."\n3. propose_strategy / draft_campaign_plan — include list_hash + list_src from discovery (auto-attached when possible)"
+            ."\n4. Launch rules by mode:"
+            ."\n   • Copilot — no staging, no Review & Launch"
+            ."\n   • Assisted — stage plan; user clicks Review & Launch (web) or sends LAUNCH {id} (WhatsApp)"
+            ."\n   • Autopilot / Autonomous — stage + auto-launch when audience exists; if LinkedIn disconnected, still stage the plan so Review & Launch shows what's blocked"
+            ."\n- Sales goal / 'book N meetings' → ALWAYS call propose_strategy (even without audience yet). Never reply with prose-only when a plan card is expected."
+            ."\n- 'Find my ideal customers' / ICP → build_icp, then discover_prospects"
+            ."\n- Unified discovery → discover_prospects (auto LinkedIn search fallback)"
+            ."\n- Find existing lists only → find_prospects"
+            ."\n- Competitor harvest is OPTIONAL fallback only when LinkedIn search returns nothing"
             ."\n- Performance → get_campaign_stats; snapshot → get_sales_brief; weekly → get_weekly_sales_brief; optimize → optimize_campaign (Launch auto-applies wait-time fixes when drop-off detected)"
             ."\n- Qualify a lead → qualify_lead; after a call → post_call_crm_update"
             ."\n- Upcoming call prep → get_meeting_brief"
             ."\n- Who needs attention → get_attention_queue (returns inbox_brief counts); classify → classify_reply; draft reply → draft_reply; meeting-ready → book_meeting"
             ."\n- Personalized outreach copy → draft_personalized_message (evidence-grounded)"
+            ."\n- LinkedIn content → list_content_posts to see drafts/schedules; prepare_linkedin_post to create (pass schedule_at, generate_image:true, or use WhatsApp image+caption); reschedule_content_posts to bulk-move schedules (Autopilot+ applies immediately)"
+            ."\n- WhatsApp image + caption → user attached an image; call prepare_linkedin_post using their caption (image is stored automatically). Image-only messages are ignored."
+            ."\n- Call Manager outreach → prepare_call_manager_launch (loads a list into /calls; LAUNCH queues LinkedIn chats)"
             ."\n- Sequence timing → adjust_follow_up with campaign_id"
             ."\n- CRM next step → set_next_best_action on a lead or conversation"
             ."\n- Enrich a list → prepare_enrichment (list_hash + list_src)"
@@ -120,6 +130,10 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             new AnalyzeCompetitorAudienceTool($this->context),
             new PrepareCompetitorHarvestTool($this->context),
             new PrepareEnrichmentTool($this->context),
+            new PrepareLinkedInPostTool($this->context),
+            new ListContentPostsTool($this->context),
+            new RescheduleContentPostsTool($this->context),
+            new PrepareCallManagerLaunchTool($this->context),
             new ProposeStrategyTool($this->context),
             new BuildIcpTool($this->context),
             new DraftCampaignPlanTool($this->context),

@@ -29,8 +29,9 @@ abstract class GatedTool implements Tool
         $started = hrtime(true);
         $settingsService = app(AiEmployeeSettingsService::class);
         $logger = app(AiActionLogService::class);
+        $settings = $this->context->activeSettings();
 
-        if (! $settingsService->mayRun($this->context->settings, $this->permission(), $this->toolName())) {
+        if (! $settingsService->mayRun($settings, $this->permission(), $this->toolName())) {
             $logger->log(
                 $this->context->user,
                 $this->context->organizationId,

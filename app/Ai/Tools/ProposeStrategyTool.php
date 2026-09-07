@@ -26,7 +26,7 @@ class ProposeStrategyTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Turn a user sales goal into a structured SociFusion Command Center plan awaiting Review & Launch.';
+        return 'Turn a user sales goal into a structured SociFusion Command Center plan awaiting Review & Launch. Call this even when audience is missing — the card will show what is blocked.';
     }
 
     public function schema(JsonSchema $schema): array

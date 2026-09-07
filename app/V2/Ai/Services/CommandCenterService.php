@@ -30,8 +30,11 @@ class CommandCenterService
         private readonly ReplySendFromPlanService $replySend,
         private readonly BookMeetingFromPlanService $bookMeeting,
         private readonly ExecuteSalesPlanFromPlanService $executeSalesPlan,
+        private readonly ContentPostCommandCenterService $contentPosts,
+        private readonly CallManagerCommandCenterService $callManager,
         private readonly OutreachChannelGuard $guard,
         private readonly ProspectAudienceResolverService $audienceResolver,
+        private readonly LinkedInAudienceBuilderService $linkedInAudience,
     ) {}
 
     /**
@@ -190,6 +193,65 @@ class CommandCenterService
         if (! empty($plan['booking_url'])) {
             $lines[] = '• Booking link: '.$plan['booking_url'];
         }
+        if (($plan['type'] ?? '') === 'linkedin_post') {
+            $lines[] = '• Channel: LinkedIn (Content module)';
+            if (! empty($plan['post_preview'])) {
+                $lines[] = '';
+                $lines[] = 'Preview:';
+                $lines[] = '"'.Str::limit((string) $plan['post_preview'], 400, '…').'"';
+            }
+            if (! empty($plan['content_url'])) {
+                $lines[] = '• Edit in Content: '.$plan['content_url'];
+            }
+            if (($plan['linkedin_connected'] ?? true) === false) {
+                $lines[] = '• Connect LinkedIn in Integrations before Launch can publish';
+            }
+            if (! empty($plan['scheduled_label'])) {
+                $lines[] = '• Schedule: '.$plan['scheduled_label'];
+            }
+            if (! empty($plan['has_image'])) {
+                $lines[] = '• Image: AI-generated (saved in Content)';
+            }
+            if (! empty($plan['image_error'])) {
+                $lines[] = '• Image note: '.$plan['image_error'];
+            }
+            if (($plan['status'] ?? '') === 'scheduled') {
+                $lines[] = '• Status: scheduled automatically';
+            }
+        }
+        if (($plan['type'] ?? '') === 'content_reschedule') {
+            $lines[] = '• Module: Content';
+            if (! empty($plan['from_day'])) {
+                $lines[] = '• From: posts scheduled on '.$plan['from_day'];
+            }
+            if (! empty($plan['to_schedule_at'])) {
+                $lines[] = '• To: '.$plan['to_schedule_at'];
+            }
+            if (! empty($plan['post_ids']) && is_array($plan['post_ids'])) {
+                $lines[] = '• Posts: '.count($plan['post_ids']);
+            }
+            if (! empty($plan['content_url'])) {
+                $lines[] = '• View in Content: '.$plan['content_url'];
+            }
+        }
+        if (($plan['type'] ?? '') === 'call_manager_launch') {
+            $lines[] = '• Module: Call Manager';
+            if (! empty($plan['prospect_count'])) {
+                $lines[] = '• Prospects to queue: '.$plan['prospect_count'];
+            }
+            if (! empty($plan['audience'])) {
+                $lines[] = '• Audience: '.$plan['audience'];
+            }
+            if (! empty($plan['opening_message'])) {
+                $lines[] = '• Opening: "'.Str::limit((string) $plan['opening_message'], 200, '…').'"';
+            }
+            if (! empty($plan['calls_url'])) {
+                $lines[] = '• View in Call Manager: '.$plan['calls_url'];
+            }
+            if (($plan['linkedin_connected'] ?? true) === false) {
+                $lines[] = '• Connect LinkedIn in Integrations before Launch can start chats';
+            }
+        }
         if (! empty($plan['next_action'])) {
             $lines[] = '• Next action: '.$plan['next_action'];
         }
@@ -337,6 +399,11 @@ class CommandCenterService
             if ($verb === 'LAUNCH' && $this->isOutreachPlanTool($approval)) {
                 $audience = $this->audienceResolver->resolve($user, $approval->payload ?? [], strict: true);
                 if ($audience === null) {
+                    $attached = $this->attachAutoAudience($user, $organizationId, $approval);
+                    $audience = $attached ?? $this->audienceResolver->resolve($user, $approval->payload ?? [], strict: true);
+                }
+
+                if ($audience === null) {
                     return [
                         'handled' => true,
                         'reply' => $this->missingAudienceLaunchReply($approval),
@@ -439,6 +506,7 @@ class CommandCenterService
                     ."• attention — hot leads\n"
                     ."• meeting brief — prep for next call\n"
                     ."• LAUNCH {id} / REJECT {id} / REVIEW {id}\n"
+                    ."• go ahead / yes — launch the newest pending plan\n"
                     ."• ACTIVATE {campaign_id} — start outreach\n"
                     ."• PAUSE {campaign_id} or pause all",
             ];
@@ -456,7 +524,44 @@ class CommandCenterService
             return ['handled' => false, 'rewrite' => 'Analyze and optimize outreach campaign '.(int) $m[1].' using optimize_campaign.'];
         }
 
+        if ($this->isFuzzyLaunchConfirmation($trimmed)) {
+            $pending = $this->pendingApprovals($user, $organizationId);
+            if ($pending->isNotEmpty()) {
+                $newest = $pending->first();
+
+                if ($this->isOutreachPlanTool($newest)
+                    && $this->audienceResolver->resolve($user, $newest->payload ?? [], strict: true) === null) {
+                    $attached = $this->attachAutoAudience($user, $organizationId, $newest);
+                    if ($attached !== null) {
+                        return $this->handleControlCommand($user, $organizationId, 'LAUNCH '.$newest->id);
+                    }
+
+                    $goal = (string) ($newest->payload['goal'] ?? 'their goal');
+
+                    return [
+                        'handled' => false,
+                        'rewrite' => "The user approved plan #{$newest->id} ({$goal}) but no prospect list is attached yet. "
+                            .'Run discover_prospects for this goal (Alex auto-searches LinkedIn when connected), '
+                            ."attach list_hash + list_src to the plan, then tell them to send LAUNCH {$newest->id}.",
+                    ];
+                }
+
+                return $this->handleControlCommand($user, $organizationId, 'LAUNCH '.$newest->id);
+            }
+        }
+
         return null;
+    }
+
+    private function isFuzzyLaunchConfirmation(string $text): bool
+    {
+        $lower = Str::lower(trim($text));
+
+        if (preg_match('/\b(go ahead|proceed|let\'?s go|start it|run it|do it now|sounds good|yes please|make it happen|ship it)\b/', $lower)) {
+            return true;
+        }
+
+        return in_array($lower, ['yes', 'yep', 'yeah', 'ok', 'okay', 'sure', 'do it'], true);
     }
 
     public function launchAcknowledged(AiActionApproval $approval, User $user): string
@@ -512,7 +617,70 @@ class CommandCenterService
             return $this->launchSalesManagerExecute($approval, $user);
         }
 
+        if ($tool === 'prepare_linkedin_post' || $type === 'linkedin_post') {
+            return $this->launchLinkedInPost($approval, $user);
+        }
+
+        if ($tool === 'prepare_call_manager_launch' || $type === 'call_manager_launch') {
+            return $this->launchCallManager($approval, $user);
+        }
+
+        if ($tool === 'reschedule_content_posts' || $type === 'content_reschedule') {
+            return $this->launchContentReschedule($approval, $user);
+        }
+
         return $this->launchCampaignPlan($approval, $user);
+    }
+
+    private function launchLinkedInPost(AiActionApproval $approval, User $user): string
+    {
+        try {
+            $result = $this->contentPosts->publishFromApproval($approval->fresh() ?? $approval, $user);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return "Approved #{$approval->id}, but LinkedIn publish failed: ".$e->getMessage();
+        }
+
+        return implode("\n", [
+            "Launched plan #{$approval->id}.",
+            $result['message'],
+            'View in Content: '.$result['content_url'],
+        ]);
+    }
+
+    private function launchCallManager(AiActionApproval $approval, User $user): string
+    {
+        try {
+            $result = $this->callManager->launchFromApproval($approval->fresh() ?? $approval, $user);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return "Approved #{$approval->id}, but Call Manager launch failed: ".$e->getMessage();
+        }
+
+        return implode("\n", [
+            "Launched plan #{$approval->id}.",
+            $result['message'],
+            'View in Call Manager: '.$result['calls_url'],
+        ]);
+    }
+
+    private function launchContentReschedule(AiActionApproval $approval, User $user): string
+    {
+        try {
+            $result = $this->contentPosts->executeRescheduleFromApproval($approval->fresh() ?? $approval);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return "Approved #{$approval->id}, but reschedule failed: ".$e->getMessage();
+        }
+
+        return implode("\n", [
+            "Launched plan #{$approval->id}.",
+            $result['message'],
+            'View in Content: '.url('/content'),
+        ]);
     }
 
     private function launchDraftReply(AiActionApproval $approval, User $user): string
@@ -800,6 +968,81 @@ class CommandCenterService
         return in_array($type, ['strategy', 'campaign'], true);
     }
 
+    public function isOutreachPlanApproval(AiActionApproval $approval): bool
+    {
+        return $this->isOutreachPlanTool($approval);
+    }
+
+    public function isLinkedInPostApproval(AiActionApproval $approval): bool
+    {
+        if ($approval->tool === 'prepare_linkedin_post') {
+            return true;
+        }
+
+        return ($approval->payload['type'] ?? '') === 'linkedin_post';
+    }
+
+    public function isCallManagerLaunchApproval(AiActionApproval $approval): bool
+    {
+        if ($approval->tool === 'prepare_call_manager_launch') {
+            return true;
+        }
+
+        return ($approval->payload['type'] ?? '') === 'call_manager_launch';
+    }
+
+    public function hasFutureScheduledLinkedInPost(AiActionApproval $approval): bool
+    {
+        if (! $this->isLinkedInPostApproval($approval)) {
+            return false;
+        }
+
+        $scheduled = $this->contentPosts->resolveScheduledFor($approval->payload ?? []);
+
+        return $scheduled !== null && $scheduled->isFuture();
+    }
+
+    public function isAutoLaunchApproval(AiActionApproval $approval): bool
+    {
+        return $this->isOutreachPlanApproval($approval)
+            || $this->isLinkedInPostApproval($approval)
+            || $this->isCallManagerLaunchApproval($approval)
+            || $this->isContentRescheduleApproval($approval);
+    }
+
+    public function isContentRescheduleApproval(AiActionApproval $approval): bool
+    {
+        if ($approval->tool === 'reschedule_content_posts') {
+            return true;
+        }
+
+        return ($approval->payload['type'] ?? '') === 'content_reschedule';
+    }
+
+    /**
+     * Auto-search LinkedIn and attach audience to a pending outreach plan.
+     *
+     * @return array{list_hash:string,list_src:string,list_name:string,total_leads:int}|null
+     */
+    public function attachAutoAudience(User $user, int $organizationId, AiActionApproval $approval): ?array
+    {
+        $built = $this->linkedInAudience->tryBuildFromPlan($user, $organizationId, $approval->payload ?? []);
+        if ($built === null) {
+            return null;
+        }
+
+        $approval->update([
+            'payload' => PlanLeadList::merge(
+                $approval->payload ?? [],
+                $built['list_hash'],
+                $built['list_src'],
+                $built['list_name'],
+            ),
+        ]);
+
+        return $built;
+    }
+
     private function missingAudienceLaunchReply(AiActionApproval $approval): string
     {
         $steps = $this->audienceResolver->nextSteps($approval->payload ?? []);
@@ -895,6 +1138,18 @@ class CommandCenterService
             $mentioned = array_values(array_unique(array_merge(['linkedin'], $mentioned)));
         }
 
+        if ($this->isLinkedInPostApproval($approval) || $this->isCallManagerLaunchApproval($approval)) {
+            $mentioned = ['linkedin'];
+        }
+
+        if ($this->hasFutureScheduledLinkedInPost($approval)) {
+            return null;
+        }
+
+        if ($this->isContentRescheduleApproval($approval)) {
+            return null;
+        }
+
         $missing = [];
         foreach ($mentioned as $channelKey) {
             if (! OutreachChannelRegistry::isEnabled($channelKey)) {
@@ -927,13 +1182,15 @@ class CommandCenterService
             'draft_reply',
             'prepare_competitor_harvest',
             'draft_campaign_plan',
+            'prepare_linkedin_post',
+            'prepare_call_manager_launch',
         ], true)) {
             return true;
         }
 
         $type = (string) ($approval->payload['type'] ?? '');
 
-        if (in_array($type, ['draft_reply', 'competitor_harvest', 'campaign'], true)) {
+        if (in_array($type, ['draft_reply', 'competitor_harvest', 'campaign', 'linkedin_post', 'call_manager_launch'], true)) {
             return true;
         }
 

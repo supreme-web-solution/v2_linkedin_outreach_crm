@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Head } from '@inertiajs/vue3';
+import { Head, usePage } from '@inertiajs/vue3';
 import AlexAvatar from '@/components/crm/AlexAvatar.vue';
+import CommandCenterEmployeeSettings from '@/components/crm/CommandCenterEmployeeSettings.vue';
 import { Check, Inbox, Link2, Loader2, MessageCircle, RefreshCw, Rocket, Send, X } from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
@@ -132,6 +133,39 @@ const loadingOlder = ref(false);
 const preserveScrollOnPrepend = ref(false);
 let linkPollTimer: ReturnType<typeof setInterval> | null = null;
 
+const page = usePage();
+const employeeSettings = ref({
+    ...props.settings,
+    enabled: Boolean(props.settings.enabled),
+    kill_switch: Boolean(props.settings.kill_switch),
+});
+const isPlatformAdmin = computed(() => Boolean(page.props.isPlatformAdmin));
+
+function autonomyLabelFor(level: number) {
+    const map: Record<number, string> = {
+        1: 'Copilot',
+        2: 'Assisted',
+        3: 'Autopilot',
+        4: 'Autonomous',
+    };
+    return map[level] ?? 'Assisted';
+}
+
+function onEmployeeSettingsUpdated(next: typeof props.settings) {
+    const previousLevel = employeeSettings.value.autonomy_level;
+    employeeSettings.value = next;
+
+    if (previousLevel !== next.autonomy_level) {
+        chat.value.push({
+            role: 'assistant',
+            content: `Mode updated to **${autonomyLabelFor(next.autonomy_level)}**. My next reply follows ${autonomyLabelFor(next.autonomy_level)} rules — same chat thread, new behavior.`,
+            channel: 'web',
+            created_at: new Date().toISOString(),
+        });
+        void scrollBottom();
+    }
+}
+
 const autonomyLabel = computed(() => {
     const map: Record<number, string> = {
         1: 'Copilot',
@@ -139,7 +173,7 @@ const autonomyLabel = computed(() => {
         3: 'Autopilot',
         4: 'Autonomous',
     };
-    return map[props.settings.autonomy_level] ?? 'Assisted';
+    return map[employeeSettings.value.autonomy_level] ?? 'Assisted';
 });
 
 const suggestions = [
@@ -379,6 +413,9 @@ async function send(textOverride?: string) {
         if (!res.ok) throw new Error(data.message ?? 'Request failed');
 
         conversationId.value = data.conversation_id ?? conversationId.value;
+        if (typeof data.autonomy_level === 'number') {
+            employeeSettings.value.autonomy_level = data.autonomy_level;
+        }
         chat.value.push({
             role: 'assistant',
             content: data.reply || '…',
@@ -615,8 +652,8 @@ async function disconnectWhatsApp() {
         <div class="flex h-[min(520px,52vh)] shrink-0 flex-col gap-4 lg:h-auto lg:min-h-0 lg:flex-1">
             <div class="shrink-0">
                 <h1 class="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-                    <AlexAvatar size="md" :alt="settings.employee_name" online />
-                    {{ settings.employee_name }}
+                    <AlexAvatar size="md" :alt="employeeSettings.employee_name" online />
+                    {{ employeeSettings.employee_name }}
                     <span class="text-muted-foreground font-normal">— Command Center</span>
                 </h1>
                 <p class="text-muted-foreground mt-1 text-sm">
@@ -712,7 +749,7 @@ async function disconnectWhatsApp() {
 
                     <ChatTypingIndicator
                         v-if="sending"
-                        :name="settings.employee_name"
+                        :name="employeeSettings.employee_name"
                     />
                 </div>
                 <form class="flex shrink-0 gap-2 border-t p-3" @submit.prevent="send()">
@@ -720,7 +757,7 @@ async function disconnectWhatsApp() {
                         v-model="draft"
                         placeholder="What do you want to accomplish?"
                         class="flex-1"
-                        :disabled="sending || !settings.enabled || settings.kill_switch"
+                        :disabled="sending || !employeeSettings.enabled || employeeSettings.kill_switch"
                     />
                     <Button type="submit" :disabled="sending || !draft.trim()">
                         <Loader2 v-if="sending" class="size-4 animate-spin" />
@@ -731,6 +768,12 @@ async function disconnectWhatsApp() {
         </div>
 
         <aside class="flex min-h-[18rem] flex-1 flex-col gap-3 overflow-y-auto lg:w-80 lg:min-h-0 lg:flex-none">
+            <CommandCenterEmployeeSettings
+                :settings="employeeSettings"
+                :is-platform-admin="isPlatformAdmin"
+                @updated="onEmployeeSettingsUpdated"
+            />
+
             <div class="shrink-0 overflow-visible rounded-xl border bg-white p-4 shadow-sm dark:bg-card">
                 <div class="flex items-start justify-between gap-2">
                     <div class="flex items-center gap-2 text-sm font-medium">
@@ -896,8 +939,9 @@ async function disconnectWhatsApp() {
                 <div class="shrink-0 border-b px-4 py-3 text-sm font-medium">Review & Launch</div>
                 <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
                     <p v-if="!pending.length" class="text-muted-foreground text-xs">
-                        No pending plans. Ask for a goal and Alex will stage a plan here (and on WhatsApp as LAUNCH
-                        id).
+                        No pending plans. In <strong>Assisted</strong> mode Alex stages plans here with Launch buttons.
+                        <strong>Copilot</strong> never stages. <strong>Autopilot+</strong> auto-launches when audience exists.
+                        Connect LinkedIn first or plans stay blocked.
                     </p>
                     <div v-for="a in pending" :key="a.id" class="space-y-2 rounded-lg border bg-zinc-50 p-3 text-sm dark:bg-muted/40">
                         <div class="text-muted-foreground text-[10px] uppercase tracking-wide">

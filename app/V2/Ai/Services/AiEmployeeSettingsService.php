@@ -84,4 +84,78 @@ class AiEmployeeSettingsService
         // Autonomous: allowlisted tools auto; others still need approval elsewhere
         return in_array($toolName, $allowlist, true);
     }
+
+    /**
+     * @param  array{enabled?:bool, employee_name?:string, autonomy_level?:int}  $data
+     */
+    public function updateForUser(
+        User $user,
+        int $organizationId,
+        array $data,
+        bool $allowAutonomous = false,
+    ): AiEmployeeSetting {
+        $current = $this->for($user, $organizationId);
+
+        $row = AiEmployeeSetting::query()->firstOrNew([
+            'organization_id' => $organizationId,
+            'user_id' => $user->id,
+        ]);
+
+        if (! $row->exists) {
+            $row->fill([
+                'enabled' => $current->enabled,
+                'kill_switch' => false,
+                'autonomy_level' => $current->autonomy_level,
+                'employee_name' => $current->employee_name,
+                'allowed_execute_tools' => $current->allowed_execute_tools,
+            ]);
+        }
+
+        if (array_key_exists('enabled', $data)) {
+            $row->enabled = (bool) $data['enabled'];
+        }
+
+        if (array_key_exists('employee_name', $data)) {
+            $name = trim((string) $data['employee_name']);
+            if ($name !== '') {
+                $row->employee_name = $name;
+            }
+        }
+
+        if (array_key_exists('autonomy_level', $data)) {
+            $level = (int) $data['autonomy_level'];
+            if (! in_array($level, [
+                AiAutonomyLevel::Copilot->value,
+                AiAutonomyLevel::Assisted->value,
+                AiAutonomyLevel::Autopilot->value,
+                AiAutonomyLevel::Autonomous->value,
+            ], true)) {
+                throw new \InvalidArgumentException('Invalid autonomy level.');
+            }
+
+            if ($level === AiAutonomyLevel::Autonomous->value && ! $allowAutonomous) {
+                throw new \InvalidArgumentException('Autonomous mode is admin-only.');
+            }
+
+            $row->autonomy_level = $level;
+        }
+
+        $row->save();
+
+        return $row->fresh();
+    }
+
+    public function enableUnlessUserOptedOut(User $user, int $organizationId): AiEmployeeSetting
+    {
+        $userRow = AiEmployeeSetting::query()
+            ->where('organization_id', $organizationId)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if ($userRow && ! $userRow->enabled) {
+            return $userRow;
+        }
+
+        return $this->updateForUser($user, $organizationId, ['enabled' => true]);
+    }
 }

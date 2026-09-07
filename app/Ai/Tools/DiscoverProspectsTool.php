@@ -22,7 +22,7 @@ class DiscoverProspectsTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Unified prospect discovery: search existing lead lists + competitor harvest audiences, recommend best audience and next step before staging a campaign.';
+        return 'Unified prospect discovery: search existing lead lists + competitor harvest audiences, auto-search LinkedIn when no list matches, then recommend best audience before staging a campaign.';
     }
 
     public function schema(JsonSchema $schema): array

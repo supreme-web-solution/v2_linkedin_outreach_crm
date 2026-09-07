@@ -25,6 +25,7 @@ class ProspectAudienceResolverService
 {
     public function __construct(
         private readonly LeadListService $leadLists,
+        private readonly LinkedInAudienceBuilderService $linkedInAudience,
     ) {}
 
     /**
@@ -69,6 +70,25 @@ class ProspectAudienceResolverService
         $match = $this->resolve($user, $plan, strict: true);
 
         if ($match === null) {
+            $orgId = (int) ($user->current_organization_id ?? 0);
+            $built = $orgId > 0
+                ? $this->linkedInAudience->tryBuildFromPlan($user, $orgId, $plan)
+                : null;
+
+            if ($built !== null) {
+                $plan = PlanLeadList::merge(
+                    $plan,
+                    $built['list_hash'],
+                    $built['list_src'],
+                    $built['list_name'],
+                );
+                $plan['audience_status'] = 'attached';
+                $plan['audience_leads'] = $built['total_leads'];
+                $plan['audience_note'] = $built['list_name'].' ('.$built['total_leads'].' leads, auto-sourced from LinkedIn)';
+
+                return $plan;
+            }
+
             $plan['audience_status'] = 'missing';
             $plan['audience_next_steps'] = $this->nextSteps($plan);
 
@@ -97,10 +117,10 @@ class ProspectAudienceResolverService
         $goal = trim((string) ($plan['goal'] ?? $plan['audience'] ?? $plan['icp_notes'] ?? 'your ICP'));
 
         return [
-            "Say: find prospects for {$goal}",
-            'Or: analyze my competitor audience, then harvest',
-            'Or: import / build a lead list in SociFusion → Leads',
-            'Then ask me to draft the campaign again — Launch only runs when a list is attached.',
+            'Alex will auto-search LinkedIn for '.$goal.' when your account is connected',
+            'Or import / build a lead list in SociFusion → Leads',
+            'Or share a competitor LinkedIn company URL to harvest engagers',
+            'Launch runs once a list is attached — Autopilot auto-launches when ready.',
         ];
     }
 

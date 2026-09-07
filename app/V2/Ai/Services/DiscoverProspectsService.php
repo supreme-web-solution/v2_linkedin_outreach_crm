@@ -14,6 +14,7 @@ class DiscoverProspectsService
     public function __construct(
         private readonly LeadListService $leadLists,
         private readonly ProspectAudienceResolverService $audienceResolver,
+        private readonly LinkedInAudienceBuilderService $linkedInAudience,
     ) {}
 
     /**
@@ -48,21 +49,46 @@ class DiscoverProspectsService
         }
 
         $resolved = $this->audienceResolver->resolve($user, $planProbe, strict: true);
+        $autoSourced = null;
+
+        if ($resolved === null) {
+            $autoSourced = $this->linkedInAudience->tryBuildFromPlan($user, (int) ($user->current_organization_id ?? 0), $planProbe);
+            if ($autoSourced) {
+                $planProbe = PlanLeadList::merge(
+                    $planProbe,
+                    $autoSourced['list_hash'],
+                    $autoSourced['list_src'],
+                    $autoSourced['list_name'],
+                );
+                $resolved = $autoSourced;
+                $merged = $merged->prepend(array_merge($autoSourced, [
+                    'origin' => 'linkedin_search',
+                    'note' => 'Auto-sourced from LinkedIn search',
+                ]));
+            }
+        }
+
         $totalLeads = (int) $merged->sum(fn (array $row) => (int) ($row['total_leads'] ?? 0));
 
         $nextSteps = [];
         if ($resolved === null && $merged->isEmpty()) {
             $nextSteps = [
-                'No lists yet — choose one path:',
-                '• prepare_competitor_harvest with a competitor LinkedIn company URL',
-                '• Import leads in SociFusion → Leads',
-                '• Build a Sales Navigator / audience list, then ask again',
+                'Connect LinkedIn in SociFusion → Integrations, then ask again — Alex will auto-search for matching profiles.',
+                'Or import / build a lead list in SociFusion → Leads',
+                'Or share a competitor LinkedIn company URL to harvest engagers',
             ];
         } elseif ($resolved === null) {
             $nextSteps = [
                 'Lists exist but none strongly match "'.$query.'".',
-                '• Pick the closest list from results and pass list_hash + list_src into your campaign plan',
-                '• Or run prepare_competitor_harvest for fresher competitor engagers',
+                'Alex will retry LinkedIn search on Launch — connect LinkedIn if not linked yet.',
+                'Or pick the closest list from results and pass list_hash + list_src into your campaign plan',
+            ];
+        } elseif ($autoSourced !== null) {
+            $nextSteps = [
+                'Auto-built audience: '.$resolved['list_name'].' ('.$resolved['total_leads'].' profiles from LinkedIn).',
+                '• propose_strategy or draft_campaign_plan with this list attached',
+                '• prepare_enrichment if emails/phones are missing',
+                '• Launch when ready — Autopilot will auto-launch when a list is attached',
             ];
         } else {
             $nextSteps = [
@@ -80,10 +106,11 @@ class DiscoverProspectsService
             'best_match' => $resolved,
             'total_leads_in_matches' => $totalLeads,
             'ready_for_campaign' => $resolved !== null,
+            'auto_sourced' => $autoSourced !== null,
             'next_steps' => $nextSteps,
             'limits' => [
-                'note' => 'SociFusion discovers from your saved lists and competitor harvests — not live LinkedIn search from scratch.',
-                'competitor_harvest' => 'Use prepare_competitor_harvest for net-new engagers from a competitor post/profile.',
+                'note' => 'Alex checks saved lists first, then auto-searches LinkedIn via your connected account when no list matches.',
+                'competitor_harvest' => 'Optional: prepare_competitor_harvest for engagers from a competitor post/profile.',
             ],
         ];
     }
