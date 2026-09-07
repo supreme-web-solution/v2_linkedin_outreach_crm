@@ -1,6 +1,6 @@
 <?php
 
-use App\V2\Services\CallOrchestrationService;
+use App\Jobs\V2\ProcessNurtureDueLeadsJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -37,3 +37,10 @@ Schedule::command('queue:monitor-depth')
     ->runInBackground();
 
 Schedule::command('horizon:snapshot')->everyFiveMinutes();
+
+Artisan::command('nurture:flag-due', function () {
+    ProcessNurtureDueLeadsJob::dispatchSync();
+    $this->info('Nurture due flags updated.');
+})->purpose('Mark nurture leads whose follow-up date has passed');
+
+Schedule::command('nurture:flag-due')->dailyAt('08:00')->withoutOverlapping();

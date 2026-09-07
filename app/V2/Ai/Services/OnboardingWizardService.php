@@ -22,48 +22,71 @@ class OnboardingWizardService
             'prompt' => 'Book 20 meetings with US SaaS founders this month',
             'required_channels' => ['linkedin', 'email'],
             'optional_channels' => ['google_calendar', 'outlook_calendar'],
+            'featured' => true,
         ],
-        'find_prospects' => [
-            'label' => 'Find ideal prospects',
-            'prompt' => 'Find my ideal customers and build a prospect list',
+        'build_linkedin_audience' => [
+            'label' => 'Build LinkedIn audience',
+            'prompt' => 'Build a LinkedIn audience of ~100 ideal prospects via search, then prepare outreach',
             'required_channels' => ['linkedin'],
             'optional_channels' => ['email'],
+            'featured' => true,
         ],
-        'competitor_audience' => [
-            'label' => "Reach competitors' audience",
-            'prompt' => 'Find people engaging with my competitors and start outreach',
-            'required_channels' => ['linkedin'],
-            'optional_channels' => ['email'],
+        'reactivate_old_leads' => [
+            'label' => 'Reactivate old leads',
+            'prompt' => "Who's due for nurture follow-up? Help me reactivate cold and past leads",
+            'required_channels' => ['linkedin', 'email'],
+            'optional_channels' => ['whatsapp'],
+            'featured' => true,
         ],
         'follow_up' => [
             'label' => 'Follow up with replies',
             'prompt' => 'Who needs my attention? Draft replies for hot leads',
             'required_channels' => ['linkedin', 'email'],
             'optional_channels' => ['whatsapp', 'instagram', 'telegram'],
-        ],
-        'whatsapp_outreach' => [
-            'label' => 'WhatsApp outreach campaign',
-            'prompt' => 'Run a WhatsApp outreach campaign',
-            'required_channels' => ['whatsapp'],
-            'optional_channels' => ['linkedin', 'email'],
-        ],
-        'instagram_outreach' => [
-            'label' => 'Instagram outreach',
-            'prompt' => 'Run Instagram DM outreach',
-            'required_channels' => ['instagram'],
-            'optional_channels' => ['linkedin', 'email'],
+            'featured' => true,
         ],
         'multichannel_outreach' => [
             'label' => 'Multichannel outreach',
             'prompt' => 'Launch multichannel outreach',
             'required_channels' => ['linkedin', 'email'],
             'optional_channels' => ['whatsapp', 'instagram', 'telegram'],
+            'featured' => true,
         ],
-        'agency' => [
-            'label' => 'Run outreach for clients',
-            'prompt' => 'Help me launch multichannel outreach for my agency clients',
-            'required_channels' => ['linkedin', 'email'],
-            'optional_channels' => ['whatsapp', 'instagram', 'telegram'],
+        // Available via free-text / chat — not shown as quick picks (keeps the wizard simple).
+        'find_prospects' => [
+            'label' => 'Find ideal prospects',
+            'prompt' => 'Find my ideal customers and build a prospect list',
+            'required_channels' => ['linkedin'],
+            'optional_channels' => ['email'],
+            'featured' => false,
+        ],
+        'competitor_audience' => [
+            'label' => "Reach competitors' audience",
+            'prompt' => 'Find people engaging with my competitors and start outreach',
+            'required_channels' => ['linkedin'],
+            'optional_channels' => ['email'],
+            'featured' => false,
+        ],
+        'whatsapp_outreach' => [
+            'label' => 'WhatsApp outreach campaign',
+            'prompt' => 'Run a WhatsApp outreach campaign',
+            'required_channels' => ['whatsapp'],
+            'optional_channels' => ['linkedin', 'email'],
+            'featured' => false,
+        ],
+        'instagram_outreach' => [
+            'label' => 'Instagram outreach',
+            'prompt' => 'Run Instagram DM outreach',
+            'required_channels' => ['instagram'],
+            'optional_channels' => ['linkedin', 'email'],
+            'featured' => false,
+        ],
+        'telegram_outreach' => [
+            'label' => 'Telegram outreach',
+            'prompt' => 'Run Telegram outreach',
+            'required_channels' => ['telegram'],
+            'optional_channels' => ['linkedin', 'email'],
+            'featured' => false,
         ],
     ];
 
@@ -106,11 +129,13 @@ class OnboardingWizardService
             'starter_prompt' => $meta['custom_goal'] ?? ($goal['prompt'] ?? null),
             'employee_name' => $settings->employee_name,
             'goal_options' => collect(self::GOALS)
+                ->filter(fn ($g) => (bool) ($g['featured'] ?? false))
                 ->sortBy(fn ($g, $key) => match ($key) {
-                    'whatsapp_outreach' => 0,
-                    'book_meetings' => 1,
-                    'find_prospects' => 2,
-                    'multichannel_outreach' => 3,
+                    'book_meetings' => 0,
+                    'build_linkedin_audience' => 1,
+                    'reactivate_old_leads' => 2,
+                    'follow_up' => 3,
+                    'multichannel_outreach' => 4,
                     default => 10,
                 })
                 ->map(fn ($g, $key) => [
@@ -124,6 +149,8 @@ class OnboardingWizardService
             'show_whatsapp_command' => $goalKey !== '' && $outreachReady && ! $skipWaCommand,
             'ready' => $goal ? $this->isReady($user, $organizationId, $goalKey, $goal, $meta) : false,
             'can_open_command_center' => $outreachReady,
+            'workspace_configured' => (bool) ($meta['workspace_configured_at'] ?? false),
+            'autonomy_level' => (int) $settings->autonomy_level,
         ];
     }
 
@@ -188,7 +215,7 @@ class OnboardingWizardService
 
             return [
                 'role' => 'assistant',
-                'content' => "Hey — I'm **{$name}**.\n\nWhat do you want SociFusion to do for you? Say it in your own words, e.g. *run a WhatsApp campaign*, *book meetings*, or *find prospects*.\n\nOr tap a quick pick below.",
+                'content' => "Hey — I'm **{$name}**.\n\nWhat do you want SociFusion to do? Pick one below, or type your own (e.g. *WhatsApp campaign*, *competitors' audience*).",
             ];
         }
 
@@ -285,18 +312,20 @@ class OnboardingWizardService
         ?string $customGoal = null,
         array $overrides = [],
     ): array {
-        $settings = $this->settingsService->for($user, $organizationId);
         $patch = [
             'goal' => $goalKey,
             'custom_goal' => $customGoal ? trim($customGoal) : null,
             'step' => 'connect',
             'started_at' => now()->toIso8601String(),
+            'workspace_configured_at' => now()->toIso8601String(),
         ];
 
         if ($overrides !== []) {
             $patch['channel_overrides'] = $overrides;
         }
 
+        $this->settingsService->configureWorkspaceForGoal($user, $organizationId, $goalKey);
+        $settings = $this->settingsService->for($user, $organizationId);
         $this->saveMeta($settings, $patch);
 
         return $this->status($user, $organizationId);
@@ -326,14 +355,14 @@ class OnboardingWizardService
 
         $wantsMeeting = str_contains($hay, 'meeting') || str_contains($hay, 'book a call') || str_contains($hay, 'demo');
         $wantsCompetitor = str_contains($hay, 'competitor');
+        $wantsReactivate = str_contains($hay, 'reactivat') || str_contains($hay, 'cold lead') || str_contains($hay, 'old lead') || str_contains($hay, 'nurture');
         $wantsFollowUp = str_contains($hay, 'follow up') || str_contains($hay, 'inbox') || str_contains($hay, 'repl');
+        $wantsAudience = str_contains($hay, 'linkedin audience') || str_contains($hay, 'build audience') || str_contains($hay, 'grow audience');
         $wantsFind = str_contains($hay, 'find') || str_contains($hay, 'prospect') || str_contains($hay, 'lead list');
         $wantsCampaign = str_contains($hay, 'campaign') || str_contains($hay, 'outreach');
         $wantsRun = str_contains($hay, 'run') && ($wantsCampaign || count($mentioned) > 0);
 
         if ($has('whatsapp') && ($wantsCampaign || $wantsRun || $wantsFind || ! $wantsMeeting)) {
-            $goal = self::GOALS['whatsapp_outreach'];
-
             return [
                 'key' => 'whatsapp_outreach',
                 'reply' => $this->goalAckReply('WhatsApp outreach campaign', '**WhatsApp** for sending to prospects'.($has('linkedin') || $has('email') ? ' (LinkedIn/Email optional backup)' : '')),
@@ -348,15 +377,9 @@ class OnboardingWizardService
         }
 
         if ($has('telegram')) {
-            $overrides = [
-                'required_channels' => array_values(array_unique(array_merge(['telegram'], $has('linkedin') ? ['linkedin'] : []))),
-                'optional_channels' => ['email', 'whatsapp'],
-            ];
-
             return [
-                'key' => 'multichannel_outreach',
-                'reply' => $this->goalAckReply('Telegram outreach', '**Telegram** plus any backup channels you connect'),
-                'overrides' => $overrides,
+                'key' => 'telegram_outreach',
+                'reply' => $this->goalAckReply('Telegram outreach', '**Telegram** for messaging'.($has('linkedin') ? ', LinkedIn optional backup' : '')),
             ];
         }
 
@@ -364,6 +387,13 @@ class OnboardingWizardService
             return [
                 'key' => 'competitor_audience',
                 'reply' => $this->goalAckReply("competitors' audience", '**LinkedIn** to harvest and reach engagers'),
+            ];
+        }
+
+        if ($wantsReactivate) {
+            return [
+                'key' => 'reactivate_old_leads',
+                'reply' => $this->goalAckReply('reactivating old leads', '**LinkedIn + Email** — nurture queue + follow-ups'),
             ];
         }
 
@@ -381,17 +411,24 @@ class OnboardingWizardService
             ];
         }
 
+        if ($wantsAudience || ($wantsFind && $has('linkedin'))) {
+            return [
+                'key' => 'build_linkedin_audience',
+                'reply' => $this->goalAckReply('building a LinkedIn audience', '**LinkedIn** to search and grow a list'),
+            ];
+        }
+
         if ($wantsFind) {
             return [
-                'key' => 'find_prospects',
+                'key' => 'build_linkedin_audience',
                 'reply' => $this->goalAckReply('finding prospects', '**LinkedIn** to start — Email optional'),
             ];
         }
 
-        if ($wantsCampaign || $wantsRun || str_contains($hay, 'agency') || str_contains($hay, 'client')) {
+        if ($wantsCampaign || $wantsRun) {
             return [
                 'key' => 'multichannel_outreach',
-                'reply' => $this->goalAckReply('outreach campaign', '**LinkedIn + Email** first — add WhatsApp/Instagram if you want'),
+                'reply' => $this->goalAckReply('outreach campaign', '**LinkedIn + Email** by default — say Instagram, Telegram, or WhatsApp to lead with that channel'),
             ];
         }
 

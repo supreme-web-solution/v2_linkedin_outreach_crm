@@ -18,7 +18,7 @@ return [
         'email' => env('CHANNEL_EMAIL_ENABLED', true),
         'whatsapp' => env('CHANNEL_WHATSAPP_ENABLED', true),
         'instagram' => env('CHANNEL_INSTAGRAM_ENABLED', true),
-        'telegram' => env('CHANNEL_TELEGRAM_ENABLED', false),
+        'telegram' => env('CHANNEL_TELEGRAM_ENABLED', true),
         'twitter' => env('CHANNEL_TWITTER_ENABLED', false),
         'google_calendar' => env('CHANNEL_GOOGLE_CALENDAR_ENABLED', true),
         'outlook_calendar' => env('CHANNEL_OUTLOOK_CALENDAR_ENABLED', true),

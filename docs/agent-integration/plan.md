@@ -52,7 +52,7 @@ Never: Agent → SQL. Always: Agent → Tool → Service → Model.
 3. **Phase 2** — Zernio production ← **code done**; you add live `ZERNIO_*` keys when ready  
 4. **Phase 3** — AI Sales Execution ← done  
 5. **Phase 5** — Autonomous Employee ← **core tools done** (optimizer + auto wait adjust, meeting brief, qualify, post-call CRM, weekly brief, book_meeting, discover_prospects, inbox_brief)
-6. **Later** — Telegram control, voice, full Autonomous defaults  
+6. **Later** — Telegram control, Slack control, voice notes, full Autonomous default
 
 ## Vision checklist (Command Center)
 
@@ -61,10 +61,26 @@ Never: Agent → SQL. Always: Agent → Tool → Service → Model.
 | Full AI Inbox brief (“AI handled N, M need you”) | Done — `get_attention_queue` + sidebar `inbox_brief` |
 | Auto book meetings from chat | Done — `book_meeting` tool + Launch sends calendar link |
 | Telegram control | Deferred — outreach Telegram via Unipile only |
+| Slack / other control surfaces | Deferred |
+| Voice notes to Alex | Deferred |
+| Default autonomy | Done — **Autopilot (3)** default + onboarding; Autonomous remains opt-in (admin) |
+| Action history / undo UI | Done — sidebar shows **latest 5**; full paginated list at `/ai-employee/activity` |
+| Web/widget chat queue | Done — `ProcessWebAiChatJob` + poll; navigation no longer waits on LLM |
 | Optimizer auto-adjusts on Launch | Done — `shorten_waits` when funnel drop-off detected |
 | Net-new discovery without lists | Partial — `discover_prospects` merges lists + competitor harvest |
 | **Let AI Execute** (multi-step sales manager) | Done — `let_ai_execute` tool + Dashboard “Stage plan” + one Launch |
 | Goal-based onboarding wizard | Done — Alex modal on Dashboard (`/onboarding/*`) |
+| Integration readiness before Launch | Done — `check_integrations` + Launch blocked until channels connected (web + WhatsApp) |
+| Campaign inbox AI (auto-reply + context) | Done — `configure_campaign_inbox_ai` → Review & Launch |
+| Nurture due follow-ups | Done — `get_nurture_due_queue`, daily `nurture:flag-due`, Alex starter in Command Center |
+| CSV import via Alex | Done — `import_leads_csv` stages import → Launch attaches `list_hash` |
+| Plan funnel on Review & Launch | Done — Audience → Source → Contacts → Channels → Sequence → Goal |
+| Create Campaign primary UX → Alex | Additive — Ask Alex added beside existing Create / New outreach / builder CTAs |
+| Full Sales Manager execute batch | Done — follow-up, nurture, pause, scale 20%, activate drafts, channel-mix shift |
+| First-touch personalization on Launch | Done — AI campaigns flag personalize; job after sync; send path uses draft |
+| Net-new discover with target_count | Done — LinkedIn auto-search respects target (~100/run) |
+| build_icp depth (website/customers/competitors) | Done — full loop + “find prospects” CTA after Launch |
+| Next best action on outreach leads | Done — strip on Outreach Detail lead rows |
 
 ## WhatsApp (two layers — do not mix)
 

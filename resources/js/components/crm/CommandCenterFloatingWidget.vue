@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ExternalLink, GripVertical, X } from '@lucide/vue';
+import { ExternalLink, GripVertical, Loader2, X } from '@lucide/vue';
 import AlexAvatar from '@/components/crm/AlexAvatar.vue';
 import { Link, usePage } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
@@ -151,6 +151,14 @@ if (open.value && showWidget.value) {
                     class="absolute inset-0 flex items-center justify-center bg-black/45 text-white"
                 >
                     <X class="size-6" />
+                </span>
+
+                <span
+                    v-if="(chat.awaitingReply || chat.sending) && !open"
+                    class="absolute -left-0.5 -top-0.5 z-10 flex size-5 items-center justify-center rounded-full bg-sky-500 text-white ring-2 ring-background"
+                    title="Alex is thinking…"
+                >
+                    <Loader2 class="size-3 animate-spin" />
                 </span>
 
                 <span

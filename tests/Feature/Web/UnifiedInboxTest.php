@@ -57,7 +57,47 @@ class UnifiedInboxTest extends TestCase
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
             ->component('crm/inbox/Index')
-            ->has('platforms', 6)
+            ->has('platforms')
+            ->has('inbox_brief')
+            ->has('nurture_brief')
+            ->where('tab', 'active')
+        );
+    }
+
+    public function test_inbox_nurture_tab_renders_queue(): void
+    {
+        $user = $this->userWithOrg();
+
+        $campaign = V2OutreachCampaign::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'name' => 'Nurture Tab Test',
+            'status' => 'running',
+            'node_model' => [],
+        ]);
+
+        $lead = V2OutreachLead::query()->create([
+            'outreach_campaign_id' => $campaign->id,
+            'full_name' => 'Sarah Tab',
+            'status' => 'running',
+            'meta' => [
+                'qualification' => [
+                    'stage' => 'nurture',
+                    'notes' => 'Maybe later',
+                    'nurture_follow_up_at' => now()->addDays(30)->toIso8601String(),
+                    'nurture_follow_up_days' => 30,
+                ],
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->get(route('inbox', ['tab' => 'nurture']));
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('crm/inbox/Index')
+            ->where('tab', 'nurture')
+            ->has('nurture_queue.items', 1)
+            ->where('nurture_queue.items.0.outreach_lead_id', $lead->id)
         );
     }
 

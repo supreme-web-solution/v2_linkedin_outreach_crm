@@ -2,6 +2,7 @@
 
 namespace App\Jobs\V2;
 
+use App\Jobs\V2\PersonalizeCampaignFirstTouchJob;
 use App\Models\V2OutreachCampaign;
 use App\V2\Outreach\OutreachActivityLogger;
 use App\V2\Outreach\OutreachLeadSyncService;
@@ -77,7 +78,12 @@ class SyncOutreachLeadsAndRunJob implements ShouldQueue
                 "Lead sync finished — {$added} new lead(s). Starting run…",
             );
 
-            $result = $dispatcher->dispatch($campaign->fresh(), $this->organizationId);
+            $fresh = $campaign->fresh();
+            if ($fresh && ! empty(($fresh->meta['ai_personalize_first_touch'] ?? false))) {
+                PersonalizeCampaignFirstTouchJob::dispatch($fresh->id, 40);
+            }
+
+            $result = $dispatcher->dispatch($fresh, $this->organizationId);
 
             if ($result['blocked'] ?? false) {
                 $sync->markSyncFailed($campaign->fresh(), 'Required channels are not connected.');

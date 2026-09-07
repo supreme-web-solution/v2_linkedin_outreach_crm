@@ -16,13 +16,13 @@ class AiEmployeeSettingsUpdateTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_defaults_to_assisted_for_new_org(): void
+    public function test_defaults_to_autopilot_for_new_org(): void
     {
         [$user, $org] = $this->userWithOrg();
 
         $settings = app(AiEmployeeSettingsService::class)->for($user, $org->id);
 
-        $this->assertSame(AiAutonomyLevel::Assisted->value, (int) $settings->autonomy_level);
+        $this->assertSame(AiAutonomyLevel::Autopilot->value, (int) $settings->autonomy_level);
     }
 
     public function test_user_can_save_autopilot_level(): void

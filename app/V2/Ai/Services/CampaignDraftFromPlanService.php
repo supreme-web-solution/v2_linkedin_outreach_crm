@@ -7,7 +7,6 @@ use App\Models\User;
 use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachList;
 use App\V2\Ai\Support\PlanLeadList;
-use App\V2\Ai\Services\AiChannelPolicyService;
 use Illuminate\Support\Str;
 
 class CampaignDraftFromPlanService
@@ -74,6 +73,7 @@ class CampaignDraftFromPlanService
                 'ai_approval_id' => $approval->id,
                 'ai_plan' => $payload,
                 'created_via' => 'command_center',
+                'ai_personalize_first_touch' => true,
             ],
         ]);
 
@@ -126,16 +126,24 @@ class CampaignDraftFromPlanService
             return 'instagram_only';
         }
 
+        if ($has('telegram') && $has('linkedin')) {
+            return 'linkedin_telegram';
+        }
+
+        if ($has('telegram') && ! $has('linkedin')) {
+            return 'telegram_only';
+        }
+
+        if ($has('whatsapp') && $has('linkedin') && ! $has('email')) {
+            return 'linkedin_whatsapp';
+        }
+
         if ($has('whatsapp') && ($has('email') || $has('linkedin'))) {
             return 'multichannel';
         }
 
         if ($has('whatsapp') && ! $has('email') && ! $has('linkedin')) {
             return 'whatsapp_only';
-        }
-
-        if ($has('telegram') && ($has('linkedin') || $has('email'))) {
-            return 'multichannel';
         }
 
         if ($has('email') && ! $has('linkedin')) {

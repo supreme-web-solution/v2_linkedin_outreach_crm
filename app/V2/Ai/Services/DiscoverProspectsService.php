@@ -22,11 +22,12 @@ class DiscoverProspectsService
      *
      * @return array<string, mixed>
      */
-    public function discover(User $user, string $query, ?string $competitors = null, int $limit = 10): array
+    public function discover(User $user, string $query, ?string $competitors = null, int $limit = 10, ?int $targetCount = null): array
     {
         $limit = max(1, min(20, $limit));
         $query = trim($query);
         $competitorNames = array_values(array_filter(array_map('trim', explode(',', (string) $competitors))));
+        $targetCount = $targetCount !== null ? max(25, min(500, $targetCount)) : null;
 
         $lists = $this->matchLeadLists($user, $query, $limit);
         $competitorAudiences = $this->competitorAudiences($user, $competitorNames, $limit);
@@ -37,6 +38,7 @@ class DiscoverProspectsService
             'goal' => $query,
             'icp_notes' => $query,
             'audience' => $query,
+            'target_count' => $targetCount ?? 100,
         ];
 
         if ($best) {
@@ -51,7 +53,12 @@ class DiscoverProspectsService
         $resolved = $this->audienceResolver->resolve($user, $planProbe, strict: true);
         $autoSourced = null;
 
-        if ($resolved === null) {
+        // Prefer net-new LinkedIn search when user asked for a large fresh audience
+        // or when no strong list match exists.
+        $shouldAutoSearch = $resolved === null
+            || ($targetCount !== null && $targetCount >= 50 && (int) ($resolved['total_leads'] ?? 0) < (int) ($targetCount * 0.4));
+
+        if ($shouldAutoSearch) {
             $autoSourced = $this->linkedInAudience->tryBuildFromPlan($user, (int) ($user->current_organization_id ?? 0), $planProbe);
             if ($autoSourced) {
                 $planProbe = PlanLeadList::merge(
@@ -63,7 +70,7 @@ class DiscoverProspectsService
                 $resolved = $autoSourced;
                 $merged = $merged->prepend(array_merge($autoSourced, [
                     'origin' => 'linkedin_search',
-                    'note' => 'Auto-sourced from LinkedIn search',
+                    'note' => 'Auto-sourced from LinkedIn search'.($targetCount ? " (target ~{$targetCount})" : ''),
                 ]));
             }
         }
@@ -84,12 +91,18 @@ class DiscoverProspectsService
                 'Or pick the closest list from results and pass list_hash + list_src into your campaign plan',
             ];
         } elseif ($autoSourced !== null) {
+            $found = (int) ($resolved['total_leads'] ?? 0);
             $nextSteps = [
-                'Auto-built audience: '.$resolved['list_name'].' ('.$resolved['total_leads'].' profiles from LinkedIn).',
+                'Auto-built audience: '.$resolved['list_name']." ({$found} profiles from LinkedIn).",
+            ];
+            if ($targetCount !== null && $found < $targetCount) {
+                $nextSteps[] = "Found {$found} of ~{$targetCount} requested — LinkedIn search caps around 100 per run. Launch this list, then ask to discover again to grow it.";
+            }
+            $nextSteps = array_merge($nextSteps, [
                 '• propose_strategy or draft_campaign_plan with this list attached',
                 '• prepare_enrichment if emails/phones are missing',
                 '• Launch when ready — Autopilot will auto-launch when a list is attached',
-            ];
+            ]);
         } else {
             $nextSteps = [
                 'Best audience: '.$resolved['list_name'].' ('.$resolved['total_leads'].' leads).',
@@ -107,9 +120,11 @@ class DiscoverProspectsService
             'total_leads_in_matches' => $totalLeads,
             'ready_for_campaign' => $resolved !== null,
             'auto_sourced' => $autoSourced !== null,
+            'target_count' => $targetCount,
             'next_steps' => $nextSteps,
             'limits' => [
-                'note' => 'Alex checks saved lists first, then auto-searches LinkedIn via your connected account when no list matches.',
+                'note' => 'Alex checks saved lists first, then auto-searches LinkedIn via your connected account when no list matches (or when you ask for a large fresh audience).',
+                'linkedin_search_cap' => 'Each LinkedIn auto-search returns up to ~100 profiles. Repeat discover_prospects to grow toward larger targets.',
                 'competitor_harvest' => 'Optional: prepare_competitor_harvest for engagers from a competitor post/profile.',
             ],
         ];

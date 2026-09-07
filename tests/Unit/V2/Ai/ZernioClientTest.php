@@ -44,13 +44,28 @@ class ZernioClientTest extends TestCase
         $this->assertSame('LAUNCH 3', $parsed['text']);
     }
 
-    public function test_approval_buttons_include_plan_id_in_title(): void
+    public function test_approval_buttons_use_action_labels_without_plan_id(): void
     {
-        $buttons = app(ZernioClient::class)->approvalButtons(3);
+        $buttons = app(ZernioClient::class)->approvalButtons(3, 'prepare_linkedin_post', [
+            'type' => 'linkedin_post',
+        ]);
 
-        $this->assertSame('Launch #3', $buttons[0]['title']);
+        $this->assertSame('Publish', $buttons[0]['title']);
         $this->assertSame('LAUNCH_3', $buttons[0]['payload']);
-        $this->assertSame('Reject #3', $buttons[1]['title']);
+        $this->assertSame('Preview', $buttons[1]['title']);
+        $this->assertSame('REVIEW_3', $buttons[1]['payload']);
+        $this->assertSame('Discard', $buttons[2]['title']);
+        $this->assertSame('REJECT_3', $buttons[2]['payload']);
+    }
+
+    public function test_default_approval_buttons_are_launch_and_reject(): void
+    {
+        $buttons = app(ZernioClient::class)->approvalButtons(9);
+
+        $this->assertSame('Launch', $buttons[0]['title']);
+        $this->assertSame('LAUNCH_9', $buttons[0]['payload']);
+        $this->assertSame('Reject', $buttons[1]['title']);
+        $this->assertSame('REJECT_9', $buttons[1]['payload']);
     }
 
     public function test_chunks_whatsapp_replies_at_zernio_limit(): void

@@ -40,10 +40,17 @@ class LinkedInAudienceBuilderService
             return null;
         }
 
+        $targetCount = isset($plan['target_count']) ? (int) $plan['target_count'] : null;
         $filters = IcpSearchFilterParser::fromGoal(
             $query,
             isset($plan['geography']) ? (string) $plan['geography'] : null,
+            $targetCount !== null ? max(25, min(100, $targetCount)) : null,
         );
+
+        if ($targetCount !== null) {
+            $filters['limit'] = max(25, min(100, $targetCount));
+            $filters['audience_name'] = Str::limit($query.' ('.$targetCount.')', 80, '');
+        }
 
         return $this->searchAndPersist($user, $organizationId, $filters);
     }

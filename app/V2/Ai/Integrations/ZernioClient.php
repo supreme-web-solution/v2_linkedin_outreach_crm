@@ -417,22 +417,38 @@ class ZernioClient
     }
 
     /**
+     * Button titles are short action words; the approval id lives only in the payload.
+     *
+     * @param  array<string, mixed>|null  $payload
      * @return list<array{type:string,title:string,payload:string}>
      */
-    public function approvalButtons(int $approvalId): array
+    public function approvalButtons(int $approvalId, ?string $tool = null, ?array $payload = null): array
     {
-        return [
+        $labels = \App\V2\Ai\Support\ApprovalActionLabels::for($tool, $payload);
+
+        $buttons = [
             [
                 'type' => 'postback',
-                'title' => "Launch #{$approvalId}",
+                'title' => mb_substr($labels['approve'], 0, 20),
                 'payload' => 'LAUNCH_'.$approvalId,
             ],
-            [
-                'type' => 'postback',
-                'title' => "Reject #{$approvalId}",
-                'payload' => 'REJECT_'.$approvalId,
-            ],
         ];
+
+        if ($labels['show_preview']) {
+            $buttons[] = [
+                'type' => 'postback',
+                'title' => mb_substr($labels['preview'], 0, 20),
+                'payload' => 'REVIEW_'.$approvalId,
+            ];
+        }
+
+        $buttons[] = [
+            'type' => 'postback',
+            'title' => mb_substr($labels['reject'], 0, 20),
+            'payload' => 'REJECT_'.$approvalId,
+        ];
+
+        return $buttons;
     }
 
     public function sendText(string $to, string $body): bool

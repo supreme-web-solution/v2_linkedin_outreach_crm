@@ -289,6 +289,47 @@ class ContentPostCommandCenterService
         ];
     }
 
+    /**
+     * Cancel a draft/scheduled LinkedIn post created by Alex (Activity undo).
+     *
+     * @return array{ok:bool, message:string, post_id?:int}
+     */
+    public function cancelFromAlex(User $user, int $organizationId, int $postId): array
+    {
+        $post = V2ContentPost::query()
+            ->whereKey($postId)
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        if ($post === null) {
+            return ['ok' => false, 'message' => 'Content post not found.'];
+        }
+
+        if (! in_array($post->status, ['draft', 'scheduled', 'failed', 'ready_to_publish'], true)) {
+            return [
+                'ok' => false,
+                'message' => 'Post is already '.$post->status.' and cannot be cancelled.',
+            ];
+        }
+
+        $meta = is_array($post->meta) ? $post->meta : [];
+        $meta['cancelled_by'] = 'alex_activity_undo';
+        $meta['cancelled_at'] = now()->toIso8601String();
+
+        $post->update([
+            'status' => 'cancelled',
+            'scheduled_at' => null,
+            'meta' => $meta,
+        ]);
+
+        return [
+            'ok' => true,
+            'message' => 'Cancelled LinkedIn post #'.$post->id.'.',
+            'post_id' => $post->id,
+        ];
+    }
+
     private function composeContent(string $content, string $hashtags): string
     {
         $text = trim($content);

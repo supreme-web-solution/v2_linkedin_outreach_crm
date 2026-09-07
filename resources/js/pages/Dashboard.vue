@@ -3,6 +3,7 @@ import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import {
     ArrowRight,
     BarChart3,
+    Bot,
     LayoutGrid,
     Loader2,
     Megaphone,
@@ -125,6 +126,7 @@ const statCards = [
 const quickActions = [
     { href: '/leads', label: 'View Leads', icon: Users2 },
     { href: '/outreach/create', label: 'New outreach', icon: Upload },
+    { href: '/ai-employee', label: 'Ask Alex', icon: Bot },
     { href: '/campaigns', label: 'Campaigns', icon: Megaphone },
     { href: '/conversations', label: 'Conversations', icon: MessageSquare },
     { href: '/analytics', label: 'Analytics', icon: BarChart3 },

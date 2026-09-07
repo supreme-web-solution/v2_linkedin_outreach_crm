@@ -7,6 +7,7 @@ use App\Models\AiChannelIdentity;
 use App\V2\Ai\Integrations\ZernioClient;
 use App\V2\Ai\Services\ActionApprovalService;
 use App\V2\Ai\Services\AgentOrchestrator;
+use App\V2\Ai\Services\AiActionHistoryService;
 use App\V2\Ai\Services\AiChannelPolicyService;
 use App\V2\Ai\Services\AiEmployeeSettingsService;
 use App\V2\Ai\Services\ChannelIdentityService;
@@ -30,6 +31,7 @@ class AiEmployeeWebController extends Controller
         ZernioClient $zernio,
         OutreachChannelGuard $channelGuard,
         AiChannelPolicyService $channelPolicy,
+        AiActionHistoryService $actionHistory,
     ): Response {
         $user = auth()->user();
         $orgId = (int) ($user->current_organization_id ?? 0);
@@ -65,6 +67,7 @@ class AiEmployeeWebController extends Controller
             'has_older_messages' => $historyWindow['has_older'],
             'pending_approvals' => $commandCenter->serializeApprovals($pending),
             'attention_queue' => $inboxCommandCenter->attention($user, $orgId, 8),
+            'action_history' => $actionHistory->recent($user, $orgId, 5),
             'integrations' => $this->integrationReadiness($channelGuard, $channelPolicy, $user->id),
         ]);
     }
@@ -86,6 +89,7 @@ class AiEmployeeWebController extends Controller
             'conversation_id' => $conversation->id,
             'messages' => $commandCenter->serializeMessages($historyWindow['messages']),
             'has_older_messages' => $historyWindow['has_older'],
+            'pending_approvals' => $commandCenter->serializeApprovals($pending),
             'pending_approvals_count' => count($pending),
             'settings' => [
                 'enabled' => (bool) $settings->enabled,
@@ -104,6 +108,59 @@ class AiEmployeeWebController extends Controller
         return response()->json(
             $inboxCommandCenter->attention($user, $orgId, (int) request()->query('limit', 10))
         );
+    }
+
+    public function nurture(InboxCommandCenterService $inboxCommandCenter): JsonResponse
+    {
+        $user = auth()->user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        abort_unless($orgId > 0, 403);
+
+        return response()->json(
+            $inboxCommandCenter->nurtureQueue($user, (int) request()->query('limit', 8))
+        );
+    }
+
+    public function actionHistory(AiActionHistoryService $actionHistory): JsonResponse
+    {
+        $user = auth()->user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        abort_unless($orgId > 0, 403);
+
+        return response()->json([
+            'items' => $actionHistory->recent($user, $orgId, (int) request()->query('limit', 5)),
+        ]);
+    }
+
+    public function activityPage(
+        AiActionHistoryService $actionHistory,
+        AiEmployeeSettingsService $settingsService,
+    ): Response {
+        $user = auth()->user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        abort_unless($orgId > 0, 403);
+
+        $settings = $settingsService->for($user, $orgId);
+
+        return Inertia::render('crm/AiEmployee/Activity', [
+            'actions' => $actionHistory->paginate(
+                $user,
+                $orgId,
+                (int) request()->query('per_page', 20),
+            ),
+            'employee_name' => $settings->employee_name,
+        ]);
+    }
+
+    public function undoAction(int $id, AiActionHistoryService $actionHistory): JsonResponse
+    {
+        $user = auth()->user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        abort_unless($orgId > 0, 403);
+
+        $result = $actionHistory->undo($user, $orgId, $id);
+
+        return response()->json($result, ($result['ok'] ?? false) ? 200 : 422);
     }
 
     public function draftInboxReply(
@@ -203,15 +260,16 @@ class AiEmployeeWebController extends Controller
             'conversation_id' => ['nullable', 'integer'],
         ]);
 
-        $result = $orchestrator->handle(
+        $result = $orchestrator->handleWeb(
             user: $user,
             organizationId: $orgId,
             message: $data['message'],
-            channel: 'web',
             conversationId: $data['conversation_id'] ?? null,
         );
 
-        return response()->json($result);
+        $status = ($result['status'] ?? 'done') === 'queued' ? 202 : 200;
+
+        return response()->json($result, $status);
     }
 
     public function messages(Request $request, CommandCenterService $commandCenter): JsonResponse
@@ -223,10 +281,27 @@ class AiEmployeeWebController extends Controller
         $data = $request->validate([
             'conversation_id' => ['required', 'integer'],
             'before_id' => ['nullable', 'integer', 'min:1'],
+            'after_id' => ['nullable', 'integer', 'min:0'],
         ]);
 
         $conversation = $commandCenter->conversation($user, $orgId);
         abort_unless((int) $conversation->id === (int) $data['conversation_id'], 404);
+
+        if (array_key_exists('after_id', $data) && $data['after_id'] !== null) {
+            $rows = $commandCenter->messagesAfter(
+                $conversation,
+                (int) $data['after_id'],
+                (int) $request->query('limit', 50),
+            );
+
+            $pending = $commandCenter->pendingApprovals($user, $orgId);
+
+            return response()->json([
+                'messages' => $commandCenter->serializeMessages($rows),
+                'pending_approvals' => $commandCenter->serializeApprovals($pending),
+                'pending_approvals_count' => $pending->count(),
+            ]);
+        }
 
         $beforeId = isset($data['before_id']) ? (int) $data['before_id'] : null;
         $window = $commandCenter->historyWindow($conversation, $beforeId);
@@ -336,6 +411,28 @@ class AiEmployeeWebController extends Controller
             $approvals->reject($approval, $user);
             $message = "Rejected plan #{$approval->id}.";
         } else {
+            $integrationBlock = $commandCenter->launchIntegrationBlockMessage($approval, $user);
+            if ($integrationBlock !== null) {
+                $conversation = $commandCenter->conversation($user, $orgId);
+                \App\Models\AiMessage::query()->create([
+                    'conversation_id' => $conversation->id,
+                    'role' => 'assistant',
+                    'content' => $integrationBlock,
+                    'meta' => ['channel' => 'web', 'control' => 'blocked_launch'],
+                ]);
+
+                return response()->json([
+                    'approval_id' => $approval->id,
+                    'status' => $approval->status,
+                    'payload' => $approval->payload,
+                    'reply' => $integrationBlock,
+                    'blocked' => true,
+                    'pending_approvals' => $commandCenter->serializeApprovals(
+                        $commandCenter->pendingApprovals($user, $orgId)
+                    ),
+                ]);
+            }
+
             $approvals->approve($approval, $user);
             $message = $commandCenter->launchAcknowledged($approval->fresh(), $user);
         }

@@ -82,12 +82,14 @@ class OutreachCampaignCommandService
                 ];
             }
 
+            $previous = (string) $campaign->status;
             $campaign->update(['status' => 'paused']);
 
             return [
                 'ok' => true,
                 'message' => "Paused campaign #{$campaignId}: {$campaign->name}.",
                 'paused' => [$campaign->id],
+                'previous_statuses' => [$campaign->id => $previous],
             ];
         }
 
@@ -98,9 +100,17 @@ class OutreachCampaignCommandService
             ->get();
 
         if ($active->isEmpty()) {
-            return ['ok' => true, 'message' => 'No active outreach campaigns to pause.', 'paused' => []];
+            return [
+                'ok' => true,
+                'message' => 'No active outreach campaigns to pause.',
+                'paused' => [],
+                'previous_statuses' => [],
+            ];
         }
 
+        $previousStatuses = $active->mapWithKeys(
+            fn (V2OutreachCampaign $c) => [$c->id => (string) $c->status]
+        )->all();
         $ids = $active->pluck('id')->all();
         V2OutreachCampaign::query()->whereIn('id', $ids)->update(['status' => 'paused']);
 
@@ -108,6 +118,57 @@ class OutreachCampaignCommandService
             'ok' => true,
             'message' => 'Paused '.count($ids).' active outreach campaign(s).',
             'paused' => $ids,
+            'previous_statuses' => $previousStatuses,
+        ];
+    }
+
+    /**
+     * Resume paused campaigns (used by Alex action undo).
+     *
+     * @param  list<int>  $campaignIds
+     * @param  array<int|string, string>  $previousStatuses
+     * @return array{ok:bool, message:string, resumed: list<int>}
+     */
+    public function resumePaused(User $user, int $organizationId, array $campaignIds, array $previousStatuses = []): array
+    {
+        $ids = array_values(array_unique(array_filter(
+            array_map('intval', $campaignIds),
+            fn (int $id) => $id > 0,
+        )));
+
+        if ($ids === []) {
+            return ['ok' => false, 'message' => 'No campaigns to resume.', 'resumed' => []];
+        }
+
+        $campaigns = V2OutreachCampaign::query()
+            ->where('organization_id', $organizationId)
+            ->where('user_id', $user->id)
+            ->whereIn('id', $ids)
+            ->get();
+
+        $resumed = [];
+        foreach ($campaigns as $campaign) {
+            if ($campaign->status !== 'paused') {
+                continue;
+            }
+
+            $restore = (string) ($previousStatuses[$campaign->id] ?? $previousStatuses[(string) $campaign->id] ?? 'active');
+            if (! in_array($restore, ['active', 'running', 'preparing'], true)) {
+                $restore = 'active';
+            }
+
+            $campaign->update(['status' => $restore]);
+            $resumed[] = $campaign->id;
+        }
+
+        if ($resumed === []) {
+            return ['ok' => false, 'message' => 'No paused campaigns were resumed.', 'resumed' => []];
+        }
+
+        return [
+            'ok' => true,
+            'message' => 'Resumed '.count($resumed).' campaign(s).',
+            'resumed' => $resumed,
         ];
     }
 

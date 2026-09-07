@@ -55,6 +55,8 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
 
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $message = $this->resolver->messageText($node, $firstName);
+        $message = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
+            ->resolveMessageText($lead, $message);
 
         try {
             $providerKey = $this->providerManager->defaultProvider();

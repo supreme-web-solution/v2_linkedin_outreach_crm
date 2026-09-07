@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Loader2, Send } from '@lucide/vue';
+import { computed } from 'vue';
+import { Loader2, Rocket, Send, X } from '@lucide/vue';
 import ChatTypingIndicator from '@/components/crm/ChatTypingIndicator.vue';
 import CommandCenterChannelLabel from '@/components/crm/CommandCenterChannelLabel.vue';
 import { Button } from '@/components/ui/button';
@@ -18,11 +19,18 @@ const {
     draft,
     settings,
     sending,
+    awaitingReply,
+    decidingApprovalId,
+    pendingApprovals,
     bootstrapping,
     hasOlderMessages,
     loadingOlder,
     scrollEl,
     send,
+    decideApproval,
+    approvalApproveLabel,
+    approvalRejectLabel,
+    approvalSummary,
     loadOlderMessages,
     onChatScroll,
     formatMessageHtml,
@@ -30,6 +38,10 @@ const {
     formatChatMessageTime,
     showChatDateDivider,
 } = props.chat;
+
+const chatBusy = computed(() => sending.value || awaitingReply.value || decidingApprovalId.value !== null);
+
+const actionableApprovals = computed(() => (pendingApprovals.value ?? []).slice(0, 3));
 </script>
 
 <template>
@@ -111,11 +123,51 @@ const {
                 </template>
 
                 <ChatTypingIndicator
-                    v-if="sending"
+                    v-if="chatBusy"
                     :name="settings.employee_name"
                     :show-label="!compact"
                 />
             </template>
+        </div>
+
+        <div
+            v-if="actionableApprovals.length"
+            class="shrink-0 space-y-2 border-t bg-amber-50/70 px-3 py-2.5 dark:bg-amber-950/30"
+        >
+            <div
+                v-for="approval in actionableApprovals"
+                :key="approval.id"
+                class="space-y-1.5"
+            >
+                <p class="text-[11px] font-medium text-amber-950 dark:text-amber-100">
+                    {{ approvalSummary(approval) }}
+                </p>
+                <div class="flex gap-2">
+                    <Button
+                        size="sm"
+                        class="h-8 flex-1 text-xs"
+                        :disabled="chatBusy"
+                        @click="decideApproval(approval.id, 'approve')"
+                    >
+                        <Loader2
+                            v-if="decidingApprovalId === approval.id"
+                            class="mr-1 size-3.5 animate-spin"
+                        />
+                        <Rocket v-else class="mr-1 size-3.5" />
+                        {{ approvalApproveLabel(approval) }}
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        class="h-8 text-xs"
+                        :disabled="chatBusy"
+                        @click="decideApproval(approval.id, 'reject')"
+                    >
+                        <X class="size-3.5" />
+                        <span class="ml-1">{{ approvalRejectLabel(approval) }}</span>
+                    </Button>
+                </div>
+            </div>
         </div>
 
         <form class="flex shrink-0 gap-2 border-t p-3" @submit.prevent="send()">
@@ -123,10 +175,10 @@ const {
                 v-model="draft"
                 placeholder="Message Alex…"
                 class="flex-1"
-                :disabled="sending || bootstrapping || !settings.enabled || settings.kill_switch"
+                :disabled="chatBusy || bootstrapping || !settings.enabled || settings.kill_switch"
             />
-            <Button type="submit" size="icon" :disabled="sending || bootstrapping || !draft.trim()">
-                <Loader2 v-if="sending" class="size-4 animate-spin" />
+            <Button type="submit" size="icon" :disabled="chatBusy || bootstrapping || !draft.trim()">
+                <Loader2 v-if="chatBusy" class="size-4 animate-spin" />
                 <Send v-else class="size-4" />
             </Button>
         </form>

@@ -185,6 +185,37 @@ class V2OutreachCampaign extends Model
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
                 ],
             ],
+            'telegram_only' => [
+                'label' => 'Telegram Sequence',
+                'description' => 'Direct Telegram outreach. Import phone or @handles via CSV, then Prepare contacts before launch.',
+                'icon' => 'send',
+                'color' => 'sky',
+                'node_model' => [
+                    ['key' => 1, 'type' => 'action', 'channel' => 'telegram', 'action' => 'send_message', 'label' => 'Telegram Intro', 'config' => ['message' => 'Hi {{firstName}}, quick note for you.']],
+                    ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
+                    ['key' => 3, 'type' => 'action', 'channel' => 'telegram', 'action' => 'send_message', 'label' => 'Telegram Follow-up', 'config' => ['message' => 'Hi {{firstName}}, bumping this in case you missed it.']],
+                    ['key' => 99, 'type' => 'end', 'label' => 'End'],
+                ],
+            ],
+            'linkedin_telegram' => [
+                'label' => 'LinkedIn → Telegram',
+                'description' => 'LinkedIn invite first, Telegram follow-up. Fetch phone or Telegram handle before launch.',
+                'icon' => 'send',
+                'color' => 'sky',
+                'node_model' => [
+                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
+                    ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
+                    ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
+                        'accepted' => [
+                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'LinkedIn Message', 'config' => ['message' => 'Thanks {{firstName}} — quick question for you.']],
+                        ],
+                        'not_accepted' => [
+                            ['key' => 5, 'type' => 'action', 'channel' => 'telegram', 'action' => 'send_message', 'label' => 'Telegram Message', 'config' => ['message' => 'Hi {{firstName}}, I reached out on LinkedIn — happy to chat here if easier.']],
+                        ],
+                    ]],
+                    ['key' => 99, 'type' => 'end', 'label' => 'End'],
+                ],
+            ],
             'custom' => [
                 'label' => 'Custom Sequence',
                 'description' => 'Build your own multichannel outreach from scratch — add only the channels you need.',

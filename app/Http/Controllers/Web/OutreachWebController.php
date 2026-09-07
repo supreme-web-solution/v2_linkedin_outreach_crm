@@ -206,6 +206,14 @@ class OutreachWebController extends Controller
                 'email' => $lead->email,
                 'status' => $lead->status,
                 'profile_url' => $lead->profile_url,
+                'next_best_action' => is_array($lead->meta['next_best_action'] ?? null)
+                    ? [
+                        'action' => $lead->meta['next_best_action']['action'] ?? null,
+                        'reason' => $lead->meta['next_best_action']['reason'] ?? null,
+                        'follow_up_at' => $lead->meta['next_best_action']['follow_up_at'] ?? null,
+                        'set_at' => $lead->meta['next_best_action']['set_at'] ?? null,
+                    ]
+                    : null,
                 'progress' => $progress ? [
                     'run_status' => $progress->run_status,
                     'current_node_key' => $progress->current_node_key,

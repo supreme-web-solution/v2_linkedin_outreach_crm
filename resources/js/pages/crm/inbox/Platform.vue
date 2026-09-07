@@ -4,6 +4,7 @@ import { ArrowLeft, Bot, ExternalLink, Info, Loader2, Megaphone, MessageCircle, 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
 import AlexAvatar from '@/components/crm/AlexAvatar.vue';
+import InboxAiBriefBar, { type InboxBrief } from '@/components/crm/InboxAiBriefBar.vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import { formatEmailBody } from '@/lib/formatEmailBody';
@@ -78,6 +79,7 @@ const props = defineProps<{
     outreachContext: OutreachContext | null;
     unread_count: number;
     aiConfigured: boolean;
+    inbox_brief?: InboxBrief | null;
     supportsAttachments: boolean;
     filters: { search: string | null; campaign: number | null; id: number | null };
 }>();
@@ -679,6 +681,8 @@ function onComposerKeydown(e: KeyboardEvent) {
 
         <div v-if="flashSuccess" class="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{{ flashSuccess }}</div>
         <div v-if="flashError" class="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{{ flashError }}</div>
+
+        <InboxAiBriefBar :brief="inbox_brief ?? null" class="shrink-0" />
 
         <div class="grid min-h-0 flex-1 gap-4 lg:grid-cols-5">
             <!-- Threads list (hidden on mobile when a thread is open) -->

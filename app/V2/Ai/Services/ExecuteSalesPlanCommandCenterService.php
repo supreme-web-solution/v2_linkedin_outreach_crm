@@ -27,6 +27,9 @@ class ExecuteSalesPlanCommandCenterService
         string $surface = 'web',
         ?int $maxPause = null,
         ?int $maxFollowUps = null,
+        ?int $maxNurture = null,
+        ?int $maxScale = null,
+        ?int $maxActivate = null,
     ): array {
         $settings = $this->settingsService->for($user, $organizationId);
 
@@ -42,6 +45,9 @@ class ExecuteSalesPlanCommandCenterService
             $organizationId,
             $maxPause ?? 3,
             $maxFollowUps ?? 7,
+            $maxNurture ?? 3,
+            $maxScale ?? 2,
+            $maxActivate ?? 2,
         );
 
         if ($plan['empty'] ?? false) {

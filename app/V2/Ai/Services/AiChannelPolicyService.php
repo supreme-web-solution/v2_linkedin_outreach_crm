@@ -51,12 +51,13 @@ class AiChannelPolicyService
         $secondary = $this->labelsFor($this->secondaryKeys());
 
         $lines = [
-            'Default outreach: '.implode(' + ', $primary).' (primary).',
+            'Default outreach when unspecified: '.implode(' + ', $primary).'.',
         ];
 
         if ($secondary !== []) {
-            $lines[] = 'Secondary channels when the user asks or ICP fits: '.implode(', ', $secondary).'.';
-            $lines[] = 'Mention secondary channels in plans only when relevant — user must connect them on Integrations first.';
+            $lines[] = 'Also available (same Launch flow, unified inbox replies): '.implode(', ', $secondary).'.';
+            $lines[] = 'When the user asks for Instagram, Telegram, or WhatsApp outreach, set preferred_channels to that channel (or combo) — treat it as primary, not a footnote.';
+            $lines[] = 'Instagram needs @handles resolved (prepare_enrichment). Telegram needs phone or @handle. User must connect each channel on Integrations first.';
         }
 
         $lines[] = 'Zernio WhatsApp is Command Center control only — not prospect outreach.';
@@ -164,8 +165,8 @@ class AiChannelPolicyService
             'linkedin' => str_contains($hay, 'linked in'),
             'email' => str_contains($hay, 'mail'),
             'whatsapp' => str_contains($hay, 'whats app') || str_contains($hay, 'wa '),
-            'instagram' => str_contains($hay, 'insta') || str_contains($hay, 'ig '),
-            'telegram' => str_contains($hay, 'tg '),
+            'instagram' => str_contains($hay, 'instagram') || str_contains($hay, 'insta') || str_contains($hay, 'ig dm'),
+            'telegram' => str_contains($hay, 'telegram') || str_contains($hay, 'tg '),
             'twitter' => str_contains($hay, ' x ') || str_contains($hay, 'twitter'),
             default => false,
         };

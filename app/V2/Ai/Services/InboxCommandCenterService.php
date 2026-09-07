@@ -14,6 +14,7 @@ class InboxCommandCenterService
 {
     public function __construct(
         private readonly AttentionQueueService $attention,
+        private readonly NurtureQueueService $nurture,
         private readonly ActionApprovalService $approvals,
         private readonly CommandCenterService $commandCenter,
         private readonly AiEmployeeSettingsService $settingsService,
@@ -23,12 +24,30 @@ class InboxCommandCenterService
      * @return array{
      *     items: list<array<string,mixed>>,
      *     counts: array<string,int>,
-     *     summary: string
+     *     summary: string,
+     *     inbox_brief?: array<string,mixed>,
+     *     nurture_brief?: array<string,mixed>
      * }
      */
     public function attention(User $user, int $organizationId, int $limit = 10): array
     {
-        return $this->attention->forUser($user, $organizationId, $limit);
+        $result = $this->attention->forUser($user, $organizationId, $limit);
+        $result['nurture_brief'] = $this->nurture->briefForUser($user);
+
+        return $result;
+    }
+
+    /**
+     * @return array{
+     *     items: list<array<string,mixed>>,
+     *     counts: array<string,int>,
+     *     summary: string,
+     *     nurture_brief: array<string,mixed>
+     * }
+     */
+    public function nurtureQueue(User $user, int $limit = 50): array
+    {
+        return $this->nurture->forUser($user, $limit);
     }
 
     /**
@@ -114,11 +133,65 @@ class InboxCommandCenterService
 
         $card = $this->commandCenter->formatPlanCard($plan, $approval->id, $surface);
 
+        if ($autonomy->value >= AiAutonomyLevel::Autopilot->value) {
+            $auto = $this->tryAutoSendReply($approval, $user, $plan, $surface);
+            if ($auto !== null) {
+                return $auto;
+            }
+        }
+
         return [
             'approval' => $approval,
             'approval_id' => $approval->id,
             'plan' => $plan,
             'card' => $card,
+        ];
+    }
+
+    /**
+     * @param  array<string,mixed>  $plan
+     * @return array<string,mixed>|null
+     */
+    private function tryAutoSendReply(
+        AiActionApproval $approval,
+        User $user,
+        array $plan,
+        string $surface,
+    ): ?array {
+        try {
+            $result = app(ReplySendFromPlanService::class)->sendFromApproval($approval, $user);
+
+            return [
+                'approval' => $approval->fresh(),
+                'approval_id' => $approval->id,
+                'plan' => $plan,
+                'card' => $this->commandCenter->formatPlanCard($plan, null, $surface),
+                'auto_sent' => true,
+                'message' => $result['message'],
+            ];
+        } catch (\Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * @return array{message:string,inbox_url:string,message_id:int|null}
+     */
+    public function sendReplyNow(User $user, int $organizationId, int $v2ConversationId, string $message): array
+    {
+        $v2Conversation = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->whereKey($v2ConversationId)
+            ->firstOrFail();
+
+        $sent = app(UnifiedInboxReplyService::class)->sendApprovedReply($user, $v2Conversation, trim($message));
+
+        return [
+            'message' => 'Reply sent.',
+            'inbox_url' => url('/inbox/'.$v2Conversation->provider.'/'.$v2Conversation->id),
+            'message_id' => $sent->id,
         ];
     }
 

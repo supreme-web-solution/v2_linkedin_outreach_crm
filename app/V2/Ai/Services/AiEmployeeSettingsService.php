@@ -74,8 +74,10 @@ class AiEmployeeSettingsService
             return false; // requires approval path, not direct execute
         }
 
-        $allowlist = $settings->allowed_execute_tools
-            ?? config('socifusion_ai.default_allowed_execute_tools', []);
+        $allowlist = $settings->allowed_execute_tools;
+        if (! is_array($allowlist) || $allowlist === []) {
+            $allowlist = $this->defaultExecuteTools();
+        }
 
         if ($level === AiAutonomyLevel::Autopilot) {
             return in_array($toolName, $allowlist, true);
@@ -140,9 +142,35 @@ class AiEmployeeSettingsService
             $row->autonomy_level = $level;
         }
 
+        if (array_key_exists('allowed_execute_tools', $data)) {
+            $row->allowed_execute_tools = array_values(array_unique(array_filter(
+                (array) $data['allowed_execute_tools'],
+                fn ($tool) => is_string($tool) && $tool !== '',
+            )));
+        }
+
         $row->save();
 
         return $row->fresh();
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function defaultExecuteTools(): array
+    {
+        return array_values(array_unique(array_filter(
+            (array) config('socifusion_ai.default_allowed_execute_tools', []),
+            fn ($tool) => is_string($tool) && $tool !== '',
+        )));
+    }
+
+    public function configureWorkspaceForGoal(User $user, int $organizationId, string $goalKey): AiEmployeeSetting
+    {
+        return $this->updateForUser($user, $organizationId, [
+            'autonomy_level' => AiAutonomyLevel::Autopilot->value,
+            'allowed_execute_tools' => $this->defaultExecuteTools(),
+        ], allowAutonomous: true);
     }
 
     public function enableUnlessUserOptedOut(User $user, int $organizationId): AiEmployeeSetting

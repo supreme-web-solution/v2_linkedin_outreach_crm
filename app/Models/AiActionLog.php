@@ -20,6 +20,8 @@ class AiActionLog extends Model
         'output',
         'error',
         'duration_ms',
+        'undone_at',
+        'undo_result',
     ];
 
     protected function casts(): array
@@ -27,6 +29,8 @@ class AiActionLog extends Model
         return [
             'input' => 'array',
             'output' => 'array',
+            'undo_result' => 'array',
+            'undone_at' => 'datetime',
         ];
     }
 

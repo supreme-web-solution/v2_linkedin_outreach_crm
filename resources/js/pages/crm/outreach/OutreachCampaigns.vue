@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, Link, router } from '@inertiajs/vue3';
-import { Layers, Megaphone, Copy, Pause, Play, Plus, Search, Trash2 } from '@lucide/vue';
+import { Bot, Layers, Megaphone, Copy, Pause, Play, Plus, Search, Trash2 } from '@lucide/vue';
 import { ref } from 'vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import ChannelLimitsNoticeModal from '@/components/crm/ChannelLimitsNoticeModal.vue';
@@ -81,9 +81,14 @@ function duplicateCampaign(c: { id: number }) {
                 <h1 class="text-xl font-semibold">Multi-Channel Outreach</h1>
                 <p class="text-sm text-muted-foreground">Run LinkedIn, email, and messaging sequences — separate from extension campaigns.</p>
             </div>
-            <Link href="/outreach/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700">
-                <Plus class="h-4 w-4" /> New outreach
-            </Link>
+            <div class="flex flex-wrap items-center gap-2">
+                <Link href="/outreach/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700">
+                    <Plus class="h-4 w-4" /> New outreach
+                </Link>
+                <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted">
+                    <Bot class="h-4 w-4" /> Ask Alex
+                </Link>
+            </div>
         </div>
 
         <div class="rounded-xl border border-border bg-card p-4">
@@ -135,7 +140,12 @@ function duplicateCampaign(c: { id: number }) {
                     <p class="font-medium">No outreach campaigns yet</p>
                     <p class="text-sm text-muted-foreground">Build a multichannel sequence and launch when channels are connected.</p>
                 </div>
-                <Link href="/outreach/create" class="rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-primary-foreground">Create outreach</Link>
+                <div class="flex flex-wrap justify-center gap-2">
+                    <Link href="/outreach/create" class="rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-primary-foreground">Create outreach</Link>
+                    <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted">
+                        <Bot class="h-4 w-4" /> Ask Alex
+                    </Link>
+                </div>
             </div>
 
             <div v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

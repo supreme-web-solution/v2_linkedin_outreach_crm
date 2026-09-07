@@ -48,6 +48,16 @@ class DraftReplyTool extends GatedTool
             throw new \RuntimeException((string) ($result['message'] ?? 'Blocked'));
         }
 
+        if ($result['auto_sent'] ?? false) {
+            return [
+                'approval_id' => $result['approval_id'],
+                'plan' => $result['plan'],
+                'card' => $result['card'],
+                'auto_sent' => true,
+                'cta' => $result['message'] ?? 'Reply sent automatically (Autopilot+).',
+            ];
+        }
+
         return [
             'approval_id' => $result['approval_id'],
             'plan' => $result['plan'],

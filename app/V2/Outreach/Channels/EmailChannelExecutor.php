@@ -49,6 +49,8 @@ class EmailChannelExecutor implements ChannelExecutorInterface
 
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $content = $this->resolver->emailContent($node, $firstName);
+        $content['body'] = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
+            ->resolveMessageText($lead, $content['body'] ?: 'Hi there,');
 
         try {
             $providerKey = $this->providerManager->defaultProvider();

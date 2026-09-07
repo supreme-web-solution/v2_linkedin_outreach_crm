@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, Link, router } from '@inertiajs/vue3';
-import { Flag, Layers, Megaphone, Pause, Pencil, Play, Plus, Trash2, TrendingUp, Users } from '@lucide/vue';
+import { Bot, Flag, Layers, Megaphone, Pause, Pencil, Play, Plus, Trash2, TrendingUp, Users } from '@lucide/vue';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
@@ -149,9 +149,14 @@ function deleteCampaign(c: { id: number; name: string }) {
                     </template>
                 </LinkedInPageHeading>
             </div>
-            <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 shadow-sm">
-                <Plus class="h-4 w-4" /> New Campaign
-            </Link>
+            <div class="flex flex-wrap items-center gap-2">
+                <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 shadow-sm">
+                    <Plus class="h-4 w-4" /> New Campaign
+                </Link>
+                <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted">
+                    <Bot class="h-4 w-4" /> Ask Alex
+                </Link>
+            </div>
         </div>
 
         <div v-if="!hasOrg" class="rounded-xl border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-300">
@@ -212,9 +217,14 @@ function deleteCampaign(c: { id: number; name: string }) {
                 <p class="font-semibold">No campaigns yet</p>
                 <p class="text-sm text-muted-foreground mt-1">Create a campaign, attach lead lists, build your sequence, then launch from the extension.</p>
             </div>
-            <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700">
-                <Plus class="h-4 w-4" /> Create Campaign
-            </Link>
+            <div class="flex flex-wrap justify-center gap-2">
+                <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700">
+                    <Plus class="h-4 w-4" /> Create Campaign
+                </Link>
+                <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
+                    <Bot class="h-4 w-4" /> Ask Alex
+                </Link>
+            </div>
         </div>
 
         <div v-else-if="hasOrg" class="flex flex-col gap-3">

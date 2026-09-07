@@ -44,11 +44,15 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     Route::get('ai-employee', [AiEmployeeWebController::class, 'index'])->name('ai-employee.index');
+    Route::get('ai-employee/activity', [AiEmployeeWebController::class, 'activityPage'])->name('ai-employee.activity');
     Route::get('ai-employee/widget/bootstrap', [AiEmployeeWebController::class, 'widgetBootstrap'])->name('ai-employee.widget.bootstrap');
     Route::post('ai-employee/settings', [AiEmployeeWebController::class, 'updateSettings'])->name('ai-employee.settings.update');
     Route::post('ai-employee/chat', [AiEmployeeWebController::class, 'chat'])->name('ai-employee.chat');
     Route::get('ai-employee/messages', [AiEmployeeWebController::class, 'messages'])->name('ai-employee.messages');
     Route::get('ai-employee/attention', [AiEmployeeWebController::class, 'attention'])->name('ai-employee.attention');
+    Route::get('ai-employee/nurture', [AiEmployeeWebController::class, 'nurture'])->name('ai-employee.nurture');
+    Route::get('ai-employee/actions', [AiEmployeeWebController::class, 'actionHistory'])->name('ai-employee.actions');
+    Route::post('ai-employee/actions/{id}/undo', [AiEmployeeWebController::class, 'undoAction'])->name('ai-employee.actions.undo');
     Route::post('ai-employee/inbox/draft-reply', [AiEmployeeWebController::class, 'draftInboxReply'])->name('ai-employee.inbox.draft-reply');
     Route::post('ai-employee/inbox/next-action', [AiEmployeeWebController::class, 'stageNextBestAction'])->name('ai-employee.inbox.next-action');
     Route::get('ai-employee/whatsapp/status', [AiEmployeeWebController::class, 'whatsAppStatus'])->name('ai-employee.whatsapp.status');
@@ -159,6 +163,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     Route::delete('outreach/{id}', [OutreachWebController::class, 'destroy'])->whereNumber('id')->name('outreach.destroy');
 
     Route::get('inbox', [UnifiedInboxWebController::class, 'index'])->name('inbox');
+    Route::post('inbox/nurture/{leadId}/resume', [UnifiedInboxWebController::class, 'resumeNurture'])->whereNumber('leadId')->name('inbox.nurture.resume');
     Route::get('inbox/{platform}', [UnifiedInboxWebController::class, 'platform'])->where('platform', $enabledInboxPlatforms)->name('inbox.platform');
     Route::get('inbox/{platform}/{id}', [UnifiedInboxWebController::class, 'show'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.show');
     Route::get('inbox/{platform}/{id}/poll', [UnifiedInboxWebController::class, 'poll'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.poll');

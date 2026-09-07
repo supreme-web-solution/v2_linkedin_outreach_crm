@@ -43,6 +43,8 @@ type OnboardingStatus = {
     show_whatsapp_command?: boolean;
     can_open_command_center?: boolean;
     ready: boolean;
+    workspace_configured?: boolean;
+    autonomy_level?: number;
 };
 
 const props = defineProps<{
@@ -82,6 +84,19 @@ const showSkipWhatsapp = computed(
             && climaxConnections.value.length > 0,
         ),
 );
+const autonomyLabel = computed(() => {
+    const map: Record<number, string> = {
+        1: 'Copilot',
+        2: 'Assisted',
+        3: 'Autopilot',
+        4: 'Autonomous',
+    };
+    return map[status.value.autonomy_level ?? 3] ?? 'Autopilot';
+});
+
+function workspaceConfiguredMessage(label: string): string {
+    return `Great choice — **${label}**.\n\nI've configured your workspace on **${autonomyLabel.value}** — I can auto-send inbox replies and move maybe-later leads to nurture. Connect what's below and I'll detect when you're done.`;
+}
 
 function xsrf(): string {
     return decodeURIComponent(
@@ -163,7 +178,7 @@ async function pickGoal(key: string, label: string): Promise<void> {
         status.value = await res.json();
         chat.value.push({
             role: 'assistant',
-            content: `Great choice — **${label}**.\n\nI'll only ask for the connections you need. Tap **Connect** below and I'll detect when you're done.`,
+            content: workspaceConfiguredMessage(label),
         });
         startPolling();
     } finally {
@@ -452,10 +467,19 @@ watch(open, (v) => {
                             {{ g.label }}
                         </button>
                     </div>
+                    <p class="text-muted-foreground mt-2 text-xs">
+                        Or type your own below — WhatsApp, Instagram, competitors, etc.
+                    </p>
                 </div>
 
                 <!-- Connection cards in chat flow -->
                 <div v-if="showConnections" class="pl-11 space-y-3">
+                    <div
+                        v-if="status.workspace_configured"
+                        class="rounded-xl border border-blue-200 bg-blue-50/80 px-3.5 py-2.5 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100"
+                    >
+                        Workspace ready — **{{ autonomyLabel }}** mode with inbox reply + nurture auto-actions enabled.
+                    </div>
                     <div class="flex items-center justify-between gap-2">
                         <p class="text-xs font-medium tracking-wide text-muted-foreground uppercase">
                             Setup checklist
@@ -583,7 +607,7 @@ watch(open, (v) => {
                         <Input
                             v-model="draft"
                             class="h-12 rounded-2xl border-zinc-200 bg-zinc-50 pr-12 text-[15px] shadow-inner focus-visible:ring-blue-500 dark:bg-zinc-900"
-                            placeholder="Message Alex…"
+                            :placeholder="status.goal ? 'Message Alex…' : 'Type your own goal…'"
                             :disabled="busy"
                         />
                     </div>

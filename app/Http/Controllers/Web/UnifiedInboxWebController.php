@@ -13,6 +13,9 @@ use App\Models\V2OutreachLeadProgress;
 use App\V2\Outreach\InboxAttachmentSupport;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Ai\Services\InboxClassificationService;
+use App\V2\Ai\Services\AttentionQueueService;
+use App\V2\Ai\Services\LeadNurtureCommandCenterService;
+use App\V2\Ai\Services\NurtureQueueService;
 use App\V2\Services\OpenAIContentService;
 use App\V2\Services\OutreachChannelInboxSettingsService;
 use App\V2\Services\EmailAddressQuality;
@@ -45,7 +48,7 @@ class UnifiedInboxWebController extends Controller
     ) {
     }
 
-    public function index(): Response
+    public function index(Request $request): Response
     {
         /** @var User $user */
         $user = auth()->user();
@@ -100,9 +103,35 @@ class UnifiedInboxWebController extends Controller
             ];
         }
 
+        $tab = $request->query('tab') === 'nurture' ? 'nurture' : 'active';
+        $nurtureService = app(NurtureQueueService::class);
+        $nurtureBrief = $nurtureService->briefForUser($user);
+
         return Inertia::render('crm/inbox/Index', [
             'platforms' => $platformCards,
+            'inbox_brief' => $this->inboxBriefFor($user),
+            'nurture_brief' => $nurtureBrief,
+            'nurture_queue' => $tab === 'nurture' ? $nurtureService->forUser($user) : null,
+            'tab' => $tab,
         ]);
+    }
+
+    public function resumeNurture(int $leadId): RedirectResponse
+    {
+        /** @var User $user */
+        $user = auth()->user();
+
+        try {
+            $result = app(LeadNurtureCommandCenterService::class)->resumeFromNurture($user, $leadId);
+
+            return redirect()
+                ->route('inbox', ['tab' => 'nurture'])
+                ->with('success', $result['message']);
+        } catch (\Throwable $e) {
+            return redirect()
+                ->route('inbox', ['tab' => 'nurture'])
+                ->with('error', $e->getMessage());
+        }
     }
 
     public function platform(Request $request, string $platform): Response|RedirectResponse
@@ -174,6 +203,7 @@ class UnifiedInboxWebController extends Controller
                 'campaign' => $campaignFilter > 0 ? $campaignFilter : null,
                 'id' => $selectedId > 0 ? $selectedId : null,
             ],
+            'inbox_brief' => $this->inboxBriefFor($user),
         ]);
     }
 
@@ -219,6 +249,7 @@ class UnifiedInboxWebController extends Controller
                 'campaign' => null,
                 'id' => $id,
             ],
+            'inbox_brief' => $this->inboxBriefFor($user),
         ]);
     }
 
@@ -815,5 +846,19 @@ class UnifiedInboxWebController extends Controller
         $fromMeta = trim((string) Arr::get($conversation->meta ?? [], 'prospect_name', ''));
 
         return $fromMeta !== '' ? $fromMeta : null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function inboxBriefFor(User $user): ?array
+    {
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        if ($orgId <= 0) {
+            return null;
+        }
+
+        return app(AttentionQueueService::class)
+            ->forUser($user, $orgId, 5)['inbox_brief'] ?? null;
     }
 }

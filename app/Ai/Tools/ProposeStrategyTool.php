@@ -35,7 +35,7 @@ class ProposeStrategyTool extends GatedTool
             'goal' => $schema->string()->required(),
             'geography' => $schema->string()->nullable(),
             'icp_notes' => $schema->string()->nullable(),
-            'preferred_channels' => $schema->string()->nullable()->description('e.g. LinkedIn + Email (default), or add WhatsApp/Instagram/Telegram when user asks'),
+            'preferred_channels' => $schema->string()->nullable()->description('Default: LinkedIn + Email. Set Instagram, Telegram, or WhatsApp as primary when user asks for that channel.'),
             'target_count' => $schema->integer()->min(1)->nullable(),
             'follow_up_days' => $schema->integer()->min(1)->max(90)->nullable(),
             'list_hash' => $schema->string()->nullable()->description('Lead list id from find_prospects'),
@@ -74,6 +74,8 @@ class ProposeStrategyTool extends GatedTool
         );
         $plan = app(\App\V2\Ai\Services\ProspectAudienceResolverService::class)
             ->enrichPlanWithAudience($this->context->user, $plan);
+        $plan = app(\App\V2\Ai\Services\PlanFunnelService::class)
+            ->attachToPlan($plan, $this->context->user);
 
         return $this->stagePlan($plan);
     }

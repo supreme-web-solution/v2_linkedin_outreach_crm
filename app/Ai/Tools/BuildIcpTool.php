@@ -25,14 +25,15 @@ class BuildIcpTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Build an Ideal Customer Profile from a product/offer description, website notes, or competitor names. Stages a reviewable ICP plan.';
+        return 'Build an Ideal Customer Profile from offer, website, example customers, and competitors. Stages a reviewable ICP plan; after Launch say "find prospects".';
     }
 
     public function schema(JsonSchema $schema): array
     {
         return [
             'offer' => $schema->string()->required()->description('What the user sells'),
-            'website' => $schema->string()->nullable(),
+            'website' => $schema->string()->nullable()->description('Company website URL or notes'),
+            'customers' => $schema->string()->nullable()->description('Comma-separated example customers / logos'),
             'competitors' => $schema->string()->nullable()->description('Comma-separated competitor names'),
             'geography' => $schema->string()->nullable(),
             'notes' => $schema->string()->nullable(),
@@ -44,6 +45,7 @@ class BuildIcpTool extends GatedTool
         $offer = (string) $request['offer'];
         $geography = (string) ($request['geography'] ?? 'US');
         $competitors = array_values(array_filter(array_map('trim', explode(',', (string) ($request['competitors'] ?? '')))));
+        $customers = array_values(array_filter(array_map('trim', explode(',', (string) ($request['customers'] ?? '')))));
 
         $icp = app(PlanContentService::class)->buildIcp(
             $offer,
@@ -51,6 +53,7 @@ class BuildIcpTool extends GatedTool
             $competitors,
             $geography,
             $request['notes'] ?? null,
+            $customers,
         );
 
         $plan = [
@@ -58,13 +61,15 @@ class BuildIcpTool extends GatedTool
             'goal' => "Find ideal customers for: {$offer}",
             'icp' => $icp,
             'icp_notes' => (string) ($icp['summary'] ?? $offer),
+            'website' => $request['website'] ?? null,
+            'customers' => $customers,
             'geography' => $geography,
             'preferred_channels' => app(\App\V2\Ai\Services\AiChannelPolicyService::class)->defaultChannelsLabel(),
             'follow_up_days' => 21,
             'steps' => [
                 'Launch to save ICP to workspace',
-                'Find prospect lists matching ICP',
-                'Draft outreach campaign',
+                'Say "find prospects" — Alex searches LinkedIn from this ICP',
+                'Draft outreach campaign with the discovered list',
                 'Qualify replies and book meetings',
             ],
             'status' => 'awaiting_review',

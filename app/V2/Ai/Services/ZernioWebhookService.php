@@ -241,7 +241,20 @@ class ZernioWebhookService
         $latestId = is_array($latest) ? (int) ($latest['id'] ?? 0) : 0;
 
         if ($latestId > 0 && in_array($latestId, $pendingIds, true)) {
-            $buttons = $this->zernio->approvalButtons($latestId);
+            $tool = is_array($latest) ? ($latest['tool'] ?? null) : null;
+            $payload = is_array($latest) ? ($latest['payload'] ?? null) : null;
+            if (! is_array($payload)) {
+                $fromList = collect($result['pending_approvals'] ?? [])
+                    ->first(fn ($row) => is_array($row) && (int) ($row['id'] ?? 0) === $latestId);
+                $tool = is_array($fromList) ? ($fromList['tool'] ?? $tool) : $tool;
+                $payload = is_array($fromList) ? ($fromList['payload'] ?? null) : null;
+            }
+
+            $buttons = $this->zernio->approvalButtons(
+                $latestId,
+                is_string($tool) ? $tool : null,
+                is_array($payload) ? $payload : null,
+            );
         }
 
         $sent = $this->zernio->sendToIdentity($identity, $reply, $buttons);

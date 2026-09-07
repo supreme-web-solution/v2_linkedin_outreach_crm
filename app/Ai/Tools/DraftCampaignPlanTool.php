@@ -35,7 +35,7 @@ class DraftCampaignPlanTool extends GatedTool
             'goal' => $schema->string()->required(),
             'audience' => $schema->string()->required(),
             'target_count' => $schema->integer()->min(1)->nullable(),
-            'channels' => $schema->string()->nullable()->description('Primary: LinkedIn + Email. Secondary when relevant: WhatsApp, Instagram, Telegram, X'),
+            'channels' => $schema->string()->nullable()->description('Default: LinkedIn + Email. When user asks: Instagram, Telegram, WhatsApp (or combos). Launch picks matching sequence template.'),
             'follow_up_days' => $schema->integer()->min(1)->max(90)->nullable(),
             'source' => $schema->string()->nullable()->description('e.g. competitor audiences, LinkedIn search'),
             'list_hash' => $schema->string()->nullable(),
@@ -88,6 +88,8 @@ class DraftCampaignPlanTool extends GatedTool
         );
         $plan = app(\App\V2\Ai\Services\ProspectAudienceResolverService::class)
             ->enrichPlanWithAudience($this->context->user, $plan);
+        $plan = app(\App\V2\Ai\Services\PlanFunnelService::class)
+            ->attachToPlan($plan, $this->context->user);
 
         if ($this->context->autonomy()->value <= AiAutonomyLevel::Copilot->value) {
             return [

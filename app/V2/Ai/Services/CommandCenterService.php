@@ -105,6 +105,24 @@ class CommandCenterService
     }
 
     /**
+     * Newer messages after a cursor (used by web chat polling).
+     *
+     * @return Collection<int, AiMessage>
+     */
+    public function messagesAfter(AiConversation $conversation, int $afterId, int $limit = 50): Collection
+    {
+        $limit = max(1, min(100, $limit));
+
+        return AiMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->whereIn('role', ['user', 'assistant'])
+            ->where('id', '>', $afterId)
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
+    }
+
+    /**
      * @return Collection<int, AiMessage>
      */
     public function history(AiConversation $conversation, int $limit = 50): Collection
@@ -140,9 +158,26 @@ class CommandCenterService
             ->get();
     }
 
-    public function formatPlanCard(array $plan, ?int $approvalId = null, string $surface = 'web'): string
+    public function formatPlanCard(array $plan, ?int $approvalId = null, string $surface = 'web', ?string $tool = null): string
     {
         $lines = ['Got it. Here\'s the plan:'];
+
+        if (! empty($plan['funnel']) && is_array($plan['funnel']) && in_array($plan['type'] ?? '', ['strategy', 'campaign'], true)) {
+            $lines[] = '';
+            $lines[] = 'Funnel:';
+            foreach ($plan['funnel'] as $step) {
+                if (! is_array($step)) {
+                    continue;
+                }
+                $mark = match ((string) ($step['status'] ?? '')) {
+                    'ready' => '✓',
+                    'blocked' => '!',
+                    default => '·',
+                };
+                $lines[] = "{$mark} ".($step['label'] ?? 'Step').': '.($step['detail'] ?? '');
+            }
+            $lines[] = '';
+        }
 
         if (! empty($plan['goal'])) {
             $lines[] = '• Goal: '.$plan['goal'];
@@ -189,6 +224,38 @@ class CommandCenterService
             $c = $plan['counts'];
             $lines[] = '• Pause campaigns: '.($c['pause_campaign'] ?? 0);
             $lines[] = '• Follow-up replies: '.($c['draft_reply'] ?? 0);
+            if (! empty($c['move_to_nurture'])) {
+                $lines[] = '• Move to nurture: '.$c['move_to_nurture'];
+            }
+            if (! empty($c['scale_campaign'])) {
+                $lines[] = '• Scale volume: '.$c['scale_campaign'];
+            }
+            if (! empty($c['activate_campaign'])) {
+                $lines[] = '• Activate winners: '.$c['activate_campaign'];
+            }
+            if (! empty($c['shift_channel_mix'])) {
+                $lines[] = '• Channel mix shifts: '.$c['shift_channel_mix'];
+            }
+        }
+        if (($plan['type'] ?? '') === 'icp') {
+            $icp = is_array($plan['icp'] ?? null) ? $plan['icp'] : [];
+            if (! empty($icp['website'] ?? $plan['website'] ?? null)) {
+                $lines[] = '• Website: '.($icp['website'] ?? $plan['website']);
+            }
+            if (! empty($icp['customers'] ?? $plan['customers'] ?? null)) {
+                $customers = $icp['customers'] ?? $plan['customers'];
+                $lines[] = '• Customers: '.(is_array($customers) ? implode(', ', $customers) : $customers);
+            }
+            if (! empty($icp['competitors']) && is_array($icp['competitors'])) {
+                $lines[] = '• Competitors: '.implode(', ', $icp['competitors']);
+            }
+            if (! empty($icp['decision_maker'])) {
+                $lines[] = '• Decision maker: '.$icp['decision_maker'];
+            }
+            if (! empty($icp['likely_pain'])) {
+                $lines[] = '• Pain: '.$icp['likely_pain'];
+            }
+            $lines[] = '• Next after Launch: say "find prospects" to search LinkedIn from this ICP';
         }
         if (! empty($plan['booking_url'])) {
             $lines[] = '• Booking link: '.$plan['booking_url'];
@@ -277,6 +344,22 @@ class CommandCenterService
                 array_values($plan['evidence']),
             ));
         }
+        if (($plan['type'] ?? '') === 'campaign_inbox_ai') {
+            $lines[] = '• Campaign: '.($plan['campaign_name'] ?? '#'.($plan['campaign_id'] ?? ''));
+            $lines[] = '• Channel: '.($plan['channel_label'] ?? $plan['channel'] ?? 'inbox');
+            $lines[] = '• Auto-reply: '.(! empty($plan['auto_reply_enabled']) ? 'On' : 'Off');
+            $lines[] = '• Pause on reply: '.(! empty($plan['pause_on_reply']) ? 'Yes' : 'No');
+            if (! empty($plan['ai_context'])) {
+                $lines[] = '• AI context: "'.Str::limit((string) $plan['ai_context'], 200, '…').'"';
+            }
+        }
+        if (($plan['type'] ?? '') === 'csv_import') {
+            $lines[] = '• List name: '.($plan['list_name'] ?? 'Import');
+            if (isset($plan['preview_rows'])) {
+                $lines[] = '• Rows to import: '.$plan['preview_rows'];
+            }
+            $lines[] = '• Launch creates list_hash for draft_campaign_plan / propose_strategy';
+        }
         if (! empty($plan['mode']) && ($plan['type'] ?? '') === 'enrichment') {
             $lines[] = '• Enrichment: '.$plan['mode'];
             if (isset($plan['email_eligible'])) {
@@ -297,10 +380,21 @@ class CommandCenterService
 
         if ($approvalId) {
             $lines[] = '';
+            $labels = \App\V2\Ai\Support\ApprovalActionLabels::for(
+                $tool ?? (is_string($plan['tool'] ?? null) ? $plan['tool'] : null),
+                $plan,
+            );
             if ($surface === 'whatsapp') {
-                $lines[] = "Reply:\nLAUNCH {$approvalId} — start when ready\nREVIEW {$approvalId} — see this again\nREJECT {$approvalId} — discard";
+                $actionHints = [
+                    "• *{$labels['approve']}* — go ahead",
+                ];
+                if ($labels['show_preview']) {
+                    $actionHints[] = "• *{$labels['preview']}* — see this again";
+                }
+                $actionHints[] = "• *{$labels['reject']}* — discard";
+                $lines[] = "Tap a button below (or reply):\n".implode("\n", $actionHints);
             } else {
-                $lines[] = "Review & Launch ready (approval #{$approvalId}).";
+                $lines[] = "{$labels['summary']} — use Review & Launch when you're ready.";
             }
         }
 
@@ -316,11 +410,13 @@ class CommandCenterService
     {
         $trimmed = trim($text);
 
-        if (preg_match('/^\s*(LAUNCH|APPROVE|REJECT|REVIEW)\s*$/i', $trimmed, $bare)) {
-            $verb = strtoupper($bare[1]);
-            if ($verb === 'APPROVE') {
-                $verb = 'LAUNCH';
-            }
+        if (preg_match('/^\s*(LAUNCH|APPROVE|REJECT|REVIEW|PUBLISH|SEND|SAVE|DISCARD|PREVIEW|IMPORT|ENRICH)\s*$/i', $trimmed, $bare)) {
+            $verb = match (strtoupper($bare[1])) {
+                'APPROVE', 'PUBLISH', 'SEND', 'SAVE', 'IMPORT', 'ENRICH' => 'LAUNCH',
+                'DISCARD' => 'REJECT',
+                'PREVIEW' => 'REVIEW',
+                default => strtoupper($bare[1]),
+            };
 
             $pending = $this->pendingApprovals($user, $organizationId);
             if ($pending->isEmpty()) {
@@ -330,7 +426,7 @@ class CommandCenterService
                 ];
             }
 
-            // Button taps often arrive as bare "Launch" — default to the newest pending plan.
+            // Button taps often arrive as bare action words — default to the newest pending plan.
             $trimmed = $verb.' '.$pending->first()->id;
         }
 
@@ -371,7 +467,8 @@ class CommandCenterService
                     'reply' => $this->formatPlanCard(
                         $approval->payload ?? [],
                         $approval->status === 'pending' ? $approval->id : null,
-                        'whatsapp'
+                        'whatsapp',
+                        $approval->tool,
                     ),
                     'approval' => $approval,
                     'decision' => 'review',
@@ -494,6 +591,10 @@ class CommandCenterService
 
         if (in_array($lower, ['attention', 'who needs me?', 'who needs my attention?', 'inbox'], true)) {
             return ['handled' => false, 'rewrite' => 'Who needs my attention right now? Use get_attention_queue.'];
+        }
+
+        if (preg_match('/\b(nurture due|due for nurture|nurture follow[- ]?up)\b/i', $lower)) {
+            return ['handled' => false, 'rewrite' => "Who's due for nurture follow-up? Use get_nurture_due_queue."];
         }
 
         if (in_array($lower, ['help', 'menu', 'commands'], true)) {
@@ -629,7 +730,57 @@ class CommandCenterService
             return $this->launchContentReschedule($approval, $user);
         }
 
+        if ($tool === 'configure_campaign_inbox_ai' || $type === 'campaign_inbox_ai') {
+            return $this->launchCampaignInboxAi($approval, $user);
+        }
+
+        if ($tool === 'import_leads_csv' || $type === 'csv_import') {
+            return $this->launchCsvImport($approval, $user);
+        }
+
         return $this->launchCampaignPlan($approval, $user);
+    }
+
+    private function launchCampaignInboxAi(AiActionApproval $approval, User $user): string
+    {
+        try {
+            $result = app(CampaignInboxAiFromPlanService::class)->applyFromApproval($approval->fresh() ?? $approval, $user);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return "Approved #{$approval->id}, but inbox AI settings couldn't save: ".$e->getMessage();
+        }
+
+        return implode("\n", [
+            "Launched plan #{$approval->id}.",
+            $result['message'],
+            $result['campaign_url'],
+        ]);
+    }
+
+    private function launchCsvImport(AiActionApproval $approval, User $user): string
+    {
+        try {
+            $result = app(ImportLeadsCsvFromPlanService::class)->importFromApproval($approval->fresh() ?? $approval, $user);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return "Approved #{$approval->id}, but CSV import failed: ".$e->getMessage();
+        }
+
+        $listHash = (string) ($result['list']['list_hash'] ?? '');
+
+        return implode("\n", [
+            "Launched plan #{$approval->id}.",
+            $result['message'],
+            $result['skipped'] > 0 ? "{$result['skipped']} row(s) skipped." : '',
+            $listHash !== '' ? "List attached: {$listHash} (csv). Say \"draft campaign\" to use it." : '',
+        ]);
+    }
+
+    public function launchIntegrationBlockMessage(AiActionApproval $approval, User $user): ?string
+    {
+        return $this->blockedLaunchMissingIntegrations($approval, $user);
     }
 
     private function launchLinkedInPost(AiActionApproval $approval, User $user): string
@@ -829,6 +980,7 @@ class CommandCenterService
             "Launched plan #{$approval->id}.",
             $result['message'],
             'Summary: '.($result['icp']['summary'] ?? ''),
+            'Say *find prospects* to search LinkedIn from this ICP.',
         ]);
     }
 
@@ -1207,14 +1359,35 @@ class CommandCenterService
      */
     public function serializeApprovals(Collection $pending): array
     {
-        return $pending->map(fn (AiActionApproval $a) => [
-            'id' => $a->id,
-            'tool' => $a->tool,
-            'permission' => $a->permission,
-            'status' => $a->status,
-            'payload' => $a->payload,
-            'card_text' => $this->formatPlanCard($a->payload ?? [], $a->id, 'web'),
-            'created_at' => $a->created_at?->toIso8601String(),
-        ])->values()->all();
+        return $pending->map(function (AiActionApproval $a) {
+            $payload = is_array($a->payload) ? $a->payload : [];
+            $funnel = $payload['funnel'] ?? null;
+            if ($funnel === null && in_array($payload['type'] ?? '', ['strategy', 'campaign'], true)) {
+                $user = User::query()->find($a->user_id);
+                $funnel = $user
+                    ? app(PlanFunnelService::class)->forPlan($payload, $user)
+                    : [];
+            }
+
+            $labels = \App\V2\Ai\Support\ApprovalActionLabels::for($a->tool, $payload);
+
+            return [
+                'id' => $a->id,
+                'tool' => $a->tool,
+                'permission' => $a->permission,
+                'status' => $a->status,
+                'payload' => $payload,
+                'funnel' => $funnel ?? [],
+                'card_text' => $this->formatPlanCard($payload, $a->id, 'web', $a->tool),
+                'actions' => [
+                    'approve_label' => $labels['approve'],
+                    'reject_label' => $labels['reject'],
+                    'preview_label' => $labels['preview'],
+                    'show_preview' => $labels['show_preview'],
+                    'summary' => $labels['summary'],
+                ],
+                'created_at' => $a->created_at?->toIso8601String(),
+            ];
+        })->values()->all();
     }
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { computed, onMounted, ref, watch } from 'vue';
-import { AlertCircle, ChevronLeft, Clock, Copy, Edit2, FileText, Image as ImageIcon, Lightbulb, Loader2, PenLine, Rocket, Save, Send, Sparkles, Trash2, Type, Upload, Video, X } from '@lucide/vue';
+import { AlertCircle, ChevronLeft, Clock, Copy, Edit2, Eye, FileText, Image as ImageIcon, Lightbulb, Loader2, PenLine, Rocket, Save, Send, Sparkles, Trash2, Type, Upload, Video, X } from '@lucide/vue';
 import AppToolbarButton from '@/components/crm/AppToolbarButton.vue';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
@@ -9,6 +9,14 @@ import SimpleTextEditor from '@/components/crm/SimpleTextEditor.vue';
 import { INSPIRATION_DRAFT_KEY } from '@/lib/contentDraft';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 
 defineOptions({
     layout: { breadcrumbs: [{ title: 'Dashboard', href: '/dashboard' }, { title: 'Content', href: '/content' }] },
@@ -140,6 +148,57 @@ function fmtDate(v: string | null) {
 
 function preview(text: string, n = 120) {
     return text.length > n ? `${text.slice(0, n)}...` : text;
+}
+
+const viewingPost = ref<Post | null>(null);
+const viewOpen = computed({
+    get: () => viewingPost.value !== null,
+    set: (open: boolean) => {
+        if (!open) viewingPost.value = null;
+    },
+});
+
+function postImageUrls(post: Post | null): string[] {
+    if (!post?.meta) return [];
+    const urls: string[] = [];
+    const ai = typeof post.meta.ai_image_url === 'string' ? post.meta.ai_image_url.trim() : '';
+    if (ai) urls.push(ai);
+
+    const list = post.meta.image_urls;
+    if (Array.isArray(list)) {
+        for (const item of list) {
+            if (typeof item === 'string' && item.trim() && !urls.includes(item.trim())) {
+                urls.push(item.trim());
+            }
+        }
+    }
+
+    return urls;
+}
+
+function postVideoUrl(post: Post | null): string | null {
+    if (!post?.meta) return null;
+    const url = post.meta.video_url;
+    return typeof url === 'string' && url.trim() ? url.trim() : null;
+}
+
+function postHasMedia(post: Post): boolean {
+    return postImageUrls(post).length > 0 || Boolean(postVideoUrl(post));
+}
+
+function openView(post: Post) {
+    viewingPost.value = post;
+}
+
+function closeView() {
+    viewingPost.value = null;
+}
+
+function editFromView() {
+    const post = viewingPost.value;
+    if (!post) return;
+    closeView();
+    openEdit(post);
 }
 
 function openCreate() {
@@ -663,7 +722,40 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                     </button>
                                 </td>
                                 <td class="max-w-lg px-4 py-3">
-                                    <div class="font-medium text-foreground">{{ preview(post.content, 90) }}</div>
+                                    <button
+                                        type="button"
+                                        class="group w-full text-left"
+                                        title="View post"
+                                        @click="openView(post)"
+                                    >
+                                        <div class="flex items-start gap-2">
+                                            <div class="min-w-0 flex-1">
+                                                <div class="font-medium text-foreground group-hover:text-primary">
+                                                    {{ preview(post.content, 90) }}
+                                                </div>
+                                                <div
+                                                    v-if="postHasMedia(post)"
+                                                    class="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground"
+                                                >
+                                                    <span
+                                                        v-if="postImageUrls(post).length"
+                                                        class="inline-flex items-center gap-1"
+                                                    >
+                                                        <ImageIcon class="h-3 w-3" />
+                                                        {{ postImageUrls(post).length }} image{{ postImageUrls(post).length === 1 ? '' : 's' }}
+                                                    </span>
+                                                    <span
+                                                        v-if="postVideoUrl(post)"
+                                                        class="inline-flex items-center gap-1"
+                                                    >
+                                                        <Video class="h-3 w-3" />
+                                                        Video
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <Eye class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
+                                        </div>
+                                    </button>
                                 </td>
                                 <td class="px-4 py-3">
                                     <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="statusMap[post.status] ?? 'bg-slate-100 text-slate-600'">{{ post.status }}</span>
@@ -673,6 +765,14 @@ async function rewrite(mode: 'shorten' | 'expand') {
                                 </td>
                                 <td class="px-4 py-3">
                                     <div class="flex items-center justify-end gap-0.5">
+                                        <button
+                                            type="button"
+                                            title="View"
+                                            class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                            @click="openView(post)"
+                                        >
+                                            <Eye class="h-4 w-4" />
+                                        </button>
                                         <button
                                             v-if="['draft','failed'].includes(post.status)"
                                             type="button"
@@ -962,5 +1062,87 @@ async function rewrite(mode: 'shorten' | 'expand') {
                 </div>
             </div>
         </template>
+
+        <Dialog v-model:open="viewOpen">
+            <DialogContent class="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+                <DialogHeader class="shrink-0 border-b px-5 py-4 text-left">
+                    <DialogTitle class="flex items-center gap-2">
+                        <FileText class="h-4 w-4" />
+                        Post preview
+                    </DialogTitle>
+                    <DialogDescription class="flex flex-wrap items-center gap-2 pt-1">
+                        <span
+                            v-if="viewingPost"
+                            class="rounded-full px-2 py-0.5 text-xs font-medium capitalize"
+                            :class="statusMap[viewingPost.status] ?? 'bg-slate-100 text-slate-600'"
+                        >
+                            {{ viewingPost.status.replace(/_/g, ' ') }}
+                        </span>
+                        <span v-if="viewingPost" class="text-xs text-muted-foreground">
+                            {{ fmtDate(viewingPost.scheduled_at || viewingPost.published_at || viewingPost.created_at) }}
+                        </span>
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div v-if="viewingPost" class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+                    <p class="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                        {{ viewingPost.content }}
+                    </p>
+
+                    <div v-if="postImageUrls(viewingPost).length" class="space-y-2">
+                        <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            Image{{ postImageUrls(viewingPost).length === 1 ? '' : 's' }}
+                        </p>
+                        <div class="grid gap-3" :class="postImageUrls(viewingPost).length > 1 ? 'sm:grid-cols-2' : ''">
+                            <a
+                                v-for="(url, idx) in postImageUrls(viewingPost)"
+                                :key="`${url}-${idx}`"
+                                :href="url"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                class="block overflow-hidden rounded-xl border bg-muted/30"
+                            >
+                                <img
+                                    :src="url"
+                                    :alt="`Post image ${idx + 1}`"
+                                    class="max-h-[28rem] w-full object-contain"
+                                />
+                            </a>
+                        </div>
+                    </div>
+
+                    <div v-if="postVideoUrl(viewingPost)" class="space-y-2">
+                        <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Video</p>
+                        <div class="overflow-hidden rounded-xl border bg-black">
+                            <video
+                                :src="postVideoUrl(viewingPost)!"
+                                controls
+                                class="max-h-[28rem] w-full"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <DialogFooter class="shrink-0 gap-2 border-t px-5 py-3 sm:justify-between">
+                    <button
+                        type="button"
+                        class="rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                        @click="closeView"
+                    >
+                        Close
+                    </button>
+                    <div class="flex flex-wrap gap-2">
+                        <AppToolbarButton
+                            v-if="viewingPost && ['draft', 'failed'].includes(viewingPost.status)"
+                            variant="slate"
+                            @click="editFromView"
+                        >
+                            <Edit2 class="h-4 w-4" />
+                            Edit
+                        </AppToolbarButton>
+                    </div>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     </div>
 </template>

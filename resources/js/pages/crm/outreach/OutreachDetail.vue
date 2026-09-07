@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import {
-    Activity, AlertCircle, CheckCircle2, Clock, Copy, Inbox, Info, Layers, Loader2,
+    Activity, AlertCircle, Bot, CheckCircle2, Clock, Copy, Inbox, Info, Layers, Loader2,
     Pause, Play, Pencil, Radio, Rocket, ScrollText, Sparkles, Trash2, Users, XCircle, Zap,
 } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -137,6 +137,12 @@ type LeadRow = {
     full_name: string | null;
     status: string;
     email: string | null;
+    next_best_action?: {
+        action: string | null;
+        reason: string | null;
+        follow_up_at: string | null;
+        set_at: string | null;
+    } | null;
     progress: { current_node_label: string | null; next_run_at: string | null } | null;
 };
 
@@ -909,6 +915,7 @@ const channelActionEntries = computed(() =>
                     <tr class="border-b text-left text-muted-foreground">
                         <th class="py-2">Name</th>
                         <th>Step</th>
+                        <th>Next best</th>
                         <th>Status</th>
                         <th class="py-2 text-right">Logs</th>
                     </tr>
@@ -923,6 +930,17 @@ const channelActionEntries = computed(() =>
                         <td class="py-2 font-medium">{{ lead.full_name ?? 'Unknown' }}</td>
                         <td>
                             <span v-if="lead.progress?.current_node_label" class="text-blue-700">{{ lead.progress.current_node_label }}</span>
+                            <span v-else class="text-muted-foreground">—</span>
+                        </td>
+                        <td class="max-w-[220px]">
+                            <div v-if="lead.next_best_action?.action" class="rounded-md border border-sky-200 bg-sky-50/80 px-2 py-1 text-[10px] text-sky-900 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-100">
+                                <div class="font-medium leading-snug">{{ lead.next_best_action.action }}</div>
+                                <div v-if="lead.next_best_action.reason" class="mt-0.5 line-clamp-2 opacity-80">{{ lead.next_best_action.reason }}</div>
+                                <a
+                                    class="mt-1 inline-flex items-center gap-1 text-sky-700 underline dark:text-sky-300"
+                                    :href="`/ai-employee?prompt=${encodeURIComponent('Set next best action for outreach lead ' + lead.id)}`"
+                                ><Bot class="h-3 w-3" /> Ask Alex</a>
+                            </div>
                             <span v-else class="text-muted-foreground">—</span>
                         </td>
                         <td>
@@ -951,7 +969,7 @@ const channelActionEntries = computed(() =>
                         </td>
                     </tr>
                     <tr v-if="leads.data.length === 0">
-                        <td colspan="4" class="py-6 text-center text-muted-foreground">No leads yet.</td>
+                        <td colspan="5" class="py-6 text-center text-muted-foreground">No leads yet.</td>
                     </tr>
                 </tbody>
             </table>

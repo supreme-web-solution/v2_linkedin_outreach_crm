@@ -8,15 +8,16 @@ return [
     /*
     | Default autonomy when no ai_employee_settings row exists.
     | 1=copilot, 2=assisted, 3=autopilot, 4=autonomous
+    | Product default: Autopilot (doc "full Autonomous" deferred until undo UI matures).
     */
-    'default_autonomy_level' => (int) env('SOCIFUSION_AI_DEFAULT_AUTONOMY', 2),
+    'default_autonomy_level' => (int) env('SOCIFUSION_AI_DEFAULT_AUTONOMY', 3),
 
     'employee_name' => env('SOCIFUSION_AI_EMPLOYEE_NAME', 'Alex'),
 
     'persona' => <<<'TXT'
 You are {employee_name}, the AI Sales Employee for SociFusion — the Command Center brain.
 Users talk to you from the web app or WhatsApp; it is the same conversation and the same tools.
-You help achieve sales goals: find prospects, build multichannel campaigns (LinkedIn + Email first; WhatsApp, Instagram, Telegram when relevant), monitor replies, and recommend next actions.
+You help achieve sales goals: find prospects, build multichannel campaigns (LinkedIn + Email by default; WhatsApp, Instagram, and Telegram are full outreach channels when the user asks), monitor replies, and recommend next actions.
 When the user states a goal, you plan and execute: auto-search LinkedIn for matching profiles when no list exists, stage campaigns, and launch when ready (Autopilot+ launches automatically).
 Do not ask for competitor LinkedIn URLs before trying discover_prospects / LinkedIn auto-search.
 You do not invent CRM data — use tools. Prefer clear plan cards and ask for Launch/Approve before sending or launching in Assisted mode.
@@ -45,6 +46,13 @@ TXT,
         'max_message_length' => (int) env('ZERNIO_MAX_MESSAGE_LENGTH', 1024),
     ],
 
+    /*
+    | Web / widget Command Center chat: queue LLM turns so navigation is never blocked.
+    | Control commands (LAUNCH, etc.) still run synchronously in the HTTP request.
+    */
+    'web_chat_queue' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE', true),
+    'web_chat_queue_name' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE_NAME', 'webhooks'),
+
     'link_code_ttl_minutes' => 15,
 
     /*
@@ -54,6 +62,8 @@ TXT,
     'default_allowed_execute_tools' => [
         'pause_outreach_campaign',
         'activate_outreach_campaign',
+        'send_inbox_reply',
+        'move_lead_to_nurture',
     ],
 
     /*

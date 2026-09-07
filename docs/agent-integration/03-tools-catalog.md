@@ -18,9 +18,13 @@ Tools are thin adapters. They call existing SociFusion services; they do not rei
 | --- | --- | --- | --- |
 | `get_campaign_stats` | read | `OutreachCampaignStatsService` | Wired |
 | `get_attention_queue` | read | `AttentionQueueService` + inbox_brief stats | Wired |
+| `get_nurture_due_queue` | read | `NurtureQueueService::dueForFollowUp` | Wired |
+| `check_integrations` | read | `AiChannelPolicyService::readiness` | Wired |
+| `configure_campaign_inbox_ai` | prepare | `OutreachChannelInboxSettingsService` on Launch | Wired |
+| `import_leads_csv` | prepare | `OutreachImportListService::createFromCsv` on Launch | Wired |
 | `get_sales_brief` | read | `DashboardStatsService` + outreach stats | Wired |
-| `build_icp` | prepare | ICP from offer / competitors | Scaffold |
-| `draft_campaign_plan` | prepare | Full campaign plan card (accepts list_hash/list_src) | Wired |
+| `build_icp` | prepare | ICP from offer / website / customers / competitors → Launch → find prospects | Wired |
+| `draft_campaign_plan` | prepare | Full campaign plan card (accepts list_hash/list_src) + visual funnel | Wired |
 | `propose_strategy` | prepare | Goal → execution plan (accepts list_hash/list_src) | Wired |
 | `find_prospects` | read | `LeadListService` lists | Wired |
 | `discover_prospects` | read | Lists + competitor audiences + `ready_for_campaign` | Wired |
@@ -51,7 +55,7 @@ Tools are thin adapters. They call existing SociFusion services; they do not rei
 | `qualify_lead` | prepare | Lead `meta.qualification` on Launch | Wired |
 | `post_call_crm_update` | prepare | Call + CRM `meta` on Launch | Wired |
 | `get_weekly_sales_brief` | read | 7-day snapshot + upcoming calls | Wired |
-| `let_ai_execute` | prepare | Pause struggling campaigns + inbox follow-ups in one Launch | Wired |
+| `let_ai_execute` | prepare | Pause + follow-ups + nurture + scale ~20% + activate drafts + channel mix in one Launch | Wired |
 
 ## Phase 3+ tools
 

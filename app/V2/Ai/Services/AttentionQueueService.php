@@ -136,14 +136,23 @@ class AttentionQueueService
             'ai_handled_estimate' => $aiHandledEstimate,
         ]);
 
+        $headline = 'Inbox clear — nothing waiting on you.';
+        if ($totals['unread'] > 0 || $pendingCount > 0) {
+            $parts = [];
+            if ($needYou > 0) {
+                $parts[] = sprintf('%d need attention', $needYou);
+            }
+            if ($totals['meeting_ready'] > 0) {
+                $parts[] = sprintf('%d ready to book', $totals['meeting_ready']);
+            }
+            if ($parts === [] && $totals['unread'] > 0) {
+                $parts[] = sprintf('%d unread', $totals['unread']);
+            }
+            $headline = implode(', ', $parts).'.';
+        }
+
         $inboxBrief = [
-            'headline' => $totals['unread'] === 0 && $pendingCount === 0
-                ? 'Inbox clear — nothing waiting on you.'
-                : sprintf(
-                    'AI triaged %d unread thread(s). %d need you now.',
-                    $totals['unread'],
-                    $needYou,
-                ),
+            'headline' => $headline,
             'ai_handled_estimate' => $counts['ai_handled_estimate'],
             'need_you' => $needYou,
             'hot' => $totals['hot'],
