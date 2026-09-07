@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { Head, Link, usePage } from '@inertiajs/vue3';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import {
     ArrowRight,
     BarChart3,
     LayoutGrid,
+    Loader2,
     Megaphone,
     MessageSquare,
     Phone,
+    Rocket,
     Sparkles,
     Upload,
     Users2,
 } from '@lucide/vue';
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
+import AlexOnboardingModal from '@/components/crm/AlexOnboardingModal.vue';
+import AlexAvatar from '@/components/crm/AlexAvatar.vue';
+import { Button } from '@/components/ui/button';
 import type { User } from '@/types';
 
 defineOptions({
@@ -36,7 +41,28 @@ const props = defineProps<{
     recentActivity: Array<{ module: string; identifier: string; stat: number; created_at: string }>;
     organization: { id: number; name: string } | null;
     hasOrg: boolean;
+    onboarding: {
+        show: boolean;
+        completed: boolean;
+        step?: string;
+        goal?: string | null;
+        goal_label?: string | null;
+        starter_prompt?: string | null;
+        employee_name: string;
+        goal_options: Array<{ key: string; label: string }>;
+        connections?: Array<{
+            key: string;
+            label: string;
+            connected: boolean;
+            required: boolean;
+            kind: string;
+        }>;
+        whatsapp_command?: { linked: boolean; configured: boolean };
+        ready?: boolean;
+    };
 }>();
+
+const executeBusy = ref(false);
 
 const page = usePage();
 const user = computed(() => page.props.auth.user as User);
@@ -119,10 +145,35 @@ function campaignsSublabel(): string {
     if (outreach > 0) parts.push(`${outreach.toLocaleString()} multi-channel`);
     return parts.join(' · ') || 'Create a LinkedIn or multi-channel campaign';
 }
+
+function xsrf(): string {
+    return decodeURIComponent(
+        document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN='))?.split('=')[1] ?? '',
+    );
+}
+
+async function letAiExecute(): Promise<void> {
+    executeBusy.value = true;
+    try {
+        const res = await fetch('/ai-employee/execute-plan', {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf() },
+            credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (data.redirect) {
+            router.visit(data.redirect);
+        }
+    } finally {
+        executeBusy.value = false;
+    }
+}
 </script>
 
 <template>
     <Head title="Dashboard" />
+
+    <AlexOnboardingModal v-if="hasOrg && !onboarding.completed" :onboarding="onboarding" />
 
     <div class="flex flex-col gap-6 p-4 sm:p-5 md:p-6 lg:p-8">
         <div v-if="!hasOrg" class="rounded-2xl border border-yellow-500/40 bg-yellow-500/10 p-4 text-sm text-yellow-700 dark:text-yellow-400">
@@ -236,6 +287,31 @@ function campaignsSublabel(): string {
             <div class="rounded-2xl border border-border/60 bg-card p-4 shadow-sm sm:p-5">
                 <h2 class="text-base font-semibold text-foreground">Quick Actions</h2>
                 <p class="mt-1 text-sm text-muted-foreground">Jump into your most-used tools</p>
+
+                <div class="mt-4 rounded-xl border border-blue-500/20 bg-gradient-to-br from-blue-50 to-white p-3 dark:from-blue-950/30 dark:to-card">
+                    <div class="flex items-start gap-3">
+                        <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white">
+                            <Rocket class="size-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <p class="text-sm font-semibold">Let AI Execute</p>
+                            <p class="text-muted-foreground text-xs leading-relaxed">
+                                One tap — Alex pauses struggling campaigns and sends follow-ups to hot inbox threads.
+                            </p>
+                            <Button
+                                size="sm"
+                                class="mt-2 h-8 text-xs"
+                                :disabled="executeBusy"
+                                @click="letAiExecute"
+                            >
+                                <Loader2 v-if="executeBusy" class="mr-1 size-3 animate-spin" />
+                                <AlexAvatar v-else size="xs" class="mr-1 inline-flex" />
+                                Stage plan
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="mt-4 grid gap-2">
                     <Link
                         v-for="action in quickActions"

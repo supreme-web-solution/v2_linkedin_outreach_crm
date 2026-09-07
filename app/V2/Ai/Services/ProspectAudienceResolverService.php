@@ -1,0 +1,221 @@
+<?php
+
+namespace App\V2\Ai\Services;
+
+use App\Models\User;
+use App\V2\Ai\Support\PlanLeadList;
+use App\V2\Services\LeadListService;
+use Illuminate\Support\Str;
+use RuntimeException;
+
+class MissingProspectAudienceException extends RuntimeException
+{
+    /**
+     * @param  list<string>  $nextSteps
+     */
+    public function __construct(
+        string $message,
+        public readonly array $nextSteps = [],
+    ) {
+        parent::__construct($message);
+    }
+}
+
+class ProspectAudienceResolverService
+{
+    public function __construct(
+        private readonly LeadListService $leadLists,
+    ) {}
+
+    /**
+     * @param  array<string, mixed>  $plan
+     * @return array{
+     *     list_hash: string,
+     *     list_src: string,
+     *     list_name: string,
+     *     total_leads: int,
+     *     match_score: int
+     * }|null
+     */
+    public function resolve(User $user, array $plan, bool $strict = true): ?array
+    {
+        $hash = trim((string) ($plan['list_hash'] ?? $plan['lead_list_id'] ?? ''));
+        $src = trim((string) ($plan['list_src'] ?? $plan['lead_list_src'] ?? ''));
+
+        if ($hash !== '' && in_array($src, ['aud', 'sn', 'csv'], true)) {
+            $lists = $this->leadLists->listsForUser($user->id);
+            $match = $lists->first(
+                fn (array $list) => (string) $list['list_id'] === $hash && (string) $list['src'] === $src
+            );
+
+            return [
+                'list_hash' => $hash,
+                'list_src' => $src,
+                'list_name' => (string) ($plan['list_name'] ?? $match['list_name'] ?? 'Selected list'),
+                'total_leads' => (int) ($match['total_leads'] ?? 0),
+                'match_score' => 100,
+            ];
+        }
+
+        return $this->findBestMatch($user, $plan, $strict);
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     * @return array<string, mixed>
+     */
+    public function enrichPlanWithAudience(User $user, array $plan): array
+    {
+        $match = $this->resolve($user, $plan, strict: true);
+
+        if ($match === null) {
+            $plan['audience_status'] = 'missing';
+            $plan['audience_next_steps'] = $this->nextSteps($plan);
+
+            return $plan;
+        }
+
+        $plan = PlanLeadList::merge(
+            $plan,
+            $match['list_hash'],
+            $match['list_src'],
+            $match['list_name'],
+        );
+        $plan['audience_status'] = 'ready';
+        $plan['audience_leads'] = $match['total_leads'];
+        $plan['audience_note'] = "{$match['list_name']} ({$match['total_leads']} leads)";
+
+        return $plan;
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     * @return list<string>
+     */
+    public function nextSteps(array $plan): array
+    {
+        $goal = trim((string) ($plan['goal'] ?? $plan['audience'] ?? $plan['icp_notes'] ?? 'your ICP'));
+
+        return [
+            "Say: find prospects for {$goal}",
+            'Or: analyze my competitor audience, then harvest',
+            'Or: import / build a lead list in SociFusion → Leads',
+            'Then ask me to draft the campaign again — Launch only runs when a list is attached.',
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     * @return array{
+     *     list_hash: string,
+     *     list_src: string,
+     *     list_name: string,
+     *     total_leads: int,
+     *     match_score: int
+     * }|null
+     */
+    private function findBestMatch(User $user, array $plan, bool $strict): ?array
+    {
+        $needle = $this->searchNeedle($plan);
+        $tokens = array_values(array_filter(
+            preg_split('/\s+/', $needle) ?: [],
+            fn (string $token) => strlen($token) >= 3,
+        ));
+
+        $lists = $this->leadLists->listsForUser($user->id)
+            ->filter(fn (array $list) => (int) ($list['total_leads'] ?? 0) > 0)
+            ->values();
+
+        if ($lists->isEmpty()) {
+            return null;
+        }
+
+        $scored = $lists->map(function (array $list) use ($needle, $tokens) {
+            $name = Str::lower((string) $list['list_name']);
+            $score = 0;
+
+            if ($needle !== '' && str_contains($name, $needle)) {
+                $score += 10;
+            }
+
+            foreach ($tokens as $token) {
+                if (str_contains($name, $token)) {
+                    $score += 2;
+                }
+            }
+
+            $score += min(3, (int) floor(((int) $list['total_leads']) / 200));
+
+            return ['list' => $list, 'score' => $score];
+        })->sortByDesc('score')->values();
+
+        $best = $scored->first();
+        if (! $best || ($best['score'] ?? 0) <= 0) {
+            if ($strict) {
+                return null;
+            }
+
+            $largest = $lists->sortByDesc('total_leads')->first();
+            if (! $largest) {
+                return null;
+            }
+
+            return $this->normalizeListRef(
+                (string) $largest['list_id'],
+                (string) $largest['src'],
+                (string) $largest['list_name'],
+                (int) $largest['total_leads'],
+                0,
+            );
+        }
+
+        $list = $best['list'];
+
+        return $this->normalizeListRef(
+            (string) $list['list_id'],
+            (string) $list['src'],
+            (string) $list['list_name'],
+            (int) $list['total_leads'],
+            (int) $best['score'],
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     */
+    private function searchNeedle(array $plan): string
+    {
+        return Str::lower(trim(implode(' ', array_filter([
+            $plan['audience'] ?? null,
+            $plan['icp_notes'] ?? null,
+            $plan['icp']['summary'] ?? null,
+            $plan['geography'] ?? null,
+            $plan['goal'] ?? null,
+        ]))));
+    }
+
+    /**
+     * @return array{
+     *     list_hash: string,
+     *     list_src: string,
+     *     list_name: string,
+     *     total_leads: int,
+     *     match_score: int
+     * }
+     */
+    private function normalizeListRef(
+        string $listHash,
+        string $listSrc,
+        string $listName,
+        int $totalLeads = 0,
+        int $matchScore = 100,
+    ): array {
+        return [
+            'list_hash' => $listHash,
+            'list_src' => $listSrc,
+            'list_name' => $listName,
+            'total_leads' => $totalLeads,
+            'match_score' => $matchScore,
+        ];
+    }
+}

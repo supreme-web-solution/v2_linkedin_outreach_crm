@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Web\AiEmployeeWebController;
+use App\Http\Controllers\Web\OnboardingWebController;
 use App\Http\Controllers\Web\AiMessagesWebController;
 use App\Http\Controllers\Web\AnalyticsWebController;
 use App\Http\Controllers\Web\AutoResponsesWebController;
@@ -40,6 +42,27 @@ Route::post('book/{token}', [\App\Http\Controllers\Web\CallBookingWebController:
 
 Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use ($enabledInboxPlatforms, $enabledIntegrationChannels) {
     Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
+
+    Route::get('ai-employee', [AiEmployeeWebController::class, 'index'])->name('ai-employee.index');
+    Route::get('ai-employee/widget/bootstrap', [AiEmployeeWebController::class, 'widgetBootstrap'])->name('ai-employee.widget.bootstrap');
+    Route::post('ai-employee/chat', [AiEmployeeWebController::class, 'chat'])->name('ai-employee.chat');
+    Route::get('ai-employee/messages', [AiEmployeeWebController::class, 'messages'])->name('ai-employee.messages');
+    Route::get('ai-employee/attention', [AiEmployeeWebController::class, 'attention'])->name('ai-employee.attention');
+    Route::post('ai-employee/inbox/draft-reply', [AiEmployeeWebController::class, 'draftInboxReply'])->name('ai-employee.inbox.draft-reply');
+    Route::post('ai-employee/inbox/next-action', [AiEmployeeWebController::class, 'stageNextBestAction'])->name('ai-employee.inbox.next-action');
+    Route::get('ai-employee/whatsapp/status', [AiEmployeeWebController::class, 'whatsAppStatus'])->name('ai-employee.whatsapp.status');
+    Route::post('ai-employee/whatsapp/link', [AiEmployeeWebController::class, 'createWhatsAppLink'])->name('ai-employee.whatsapp.link');
+    Route::delete('ai-employee/whatsapp/link', [AiEmployeeWebController::class, 'disconnectWhatsApp'])->name('ai-employee.whatsapp.disconnect');
+    Route::post('ai-employee/approvals/decide', [AiEmployeeWebController::class, 'decideApproval'])->name('ai-employee.approvals.decide');
+    Route::post('ai-employee/execute-plan', [AiEmployeeWebController::class, 'stageExecutePlan'])->name('ai-employee.execute-plan');
+
+    Route::get('onboarding/status', [OnboardingWebController::class, 'status'])->name('onboarding.status');
+    Route::post('onboarding/chat', [OnboardingWebController::class, 'chat'])->name('onboarding.chat');
+    Route::post('onboarding/goal', [OnboardingWebController::class, 'selectGoal'])->name('onboarding.goal');
+    Route::post('onboarding/connect/{channel}', [OnboardingWebController::class, 'connect'])->name('onboarding.connect');
+    Route::post('onboarding/complete', [OnboardingWebController::class, 'complete'])->name('onboarding.complete');
+    Route::post('onboarding/dismiss', [OnboardingWebController::class, 'dismiss'])->name('onboarding.dismiss');
+    Route::post('onboarding/skip-whatsapp', [OnboardingWebController::class, 'skipWhatsappCommand'])->name('onboarding.skip-whatsapp');
 
     Route::inertia('tutorials', 'Tutorials')->name('tutorials');
 

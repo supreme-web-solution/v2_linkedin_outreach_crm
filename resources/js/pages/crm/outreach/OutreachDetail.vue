@@ -70,6 +70,12 @@ const props = defineProps<{
         }>;
     };
     aiConfigured?: boolean;
+    aiOptimization?: {
+        suggestions: Array<{ priority: string; title: string; detail: string; tool_hint?: string }>;
+        metrics?: Record<string, unknown>;
+        saved_at?: string | null;
+        command_center_url?: string;
+    } | null;
     stats?: {
         total_leads: number;
         by_status: { pending: number; running: number; replied: number; done: number; error: number; skipped: number };
@@ -292,7 +298,7 @@ watch(leadLogOpen, (open) => {
 async function refreshLiveData() {
     if (!isRunning.value) return;
     router.reload({
-        only: ['campaign', 'leads', 'stats', 'inboxSummary', 'concurrency', 'channel_limits'],
+        only: ['campaign', 'leads', 'stats', 'inboxSummary', 'concurrency', 'channel_limits', 'aiOptimization'],
         preserveScroll: true,
     });
 }
@@ -609,6 +615,40 @@ const channelActionEntries = computed(() =>
                 <p class="mt-1 text-2xl font-semibold tabular-nums">{{ stats.steps_completed }}</p>
                 <p v-if="stats.steps_failed" class="text-xs text-red-600">{{ stats.steps_failed }} failed</p>
             </div>
+        </div>
+
+        <div
+            v-if="aiOptimization?.suggestions?.length"
+            class="rounded-xl border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900 dark:bg-violet-950/30"
+        >
+            <div class="flex flex-wrap items-start justify-between gap-2">
+                <div class="flex items-center gap-2 text-sm font-semibold text-violet-950 dark:text-violet-100">
+                    <Sparkles class="h-4 w-4" />
+                    Alex recommendations
+                </div>
+                <a
+                    v-if="aiOptimization.command_center_url"
+                    :href="aiOptimization.command_center_url"
+                    class="text-xs text-violet-700 underline dark:text-violet-300"
+                >
+                    Command Center
+                </a>
+            </div>
+            <ul class="mt-3 space-y-2">
+                <li
+                    v-for="(item, idx) in aiOptimization.suggestions"
+                    :key="idx"
+                    class="rounded-lg border border-violet-200/80 bg-white/70 px-3 py-2 text-sm dark:border-violet-800 dark:bg-violet-950/40"
+                >
+                    <div class="flex items-center gap-2 font-medium capitalize text-violet-950 dark:text-violet-100">
+                        <span class="rounded-full bg-violet-200/80 px-2 py-0.5 text-[10px] uppercase dark:bg-violet-900">
+                            {{ item.priority }}
+                        </span>
+                        {{ item.title }}
+                    </div>
+                    <p class="mt-1 text-xs text-violet-900/80 dark:text-violet-200/80">{{ item.detail }}</p>
+                </li>
+            </ul>
         </div>
 
         <div v-if="stats?.funnel?.length" class="rounded-xl border bg-card p-4">

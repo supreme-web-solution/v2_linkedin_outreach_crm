@@ -7,6 +7,7 @@ use App\Http\Controllers\V2\LeadController;
 use App\Http\Controllers\V2\OutreachController;
 use App\Http\Controllers\V2\PostCommentController;
 use App\Http\Controllers\V2\ProviderWebhookController;
+use App\Http\Controllers\V2\ZernioWebhookController;
 use App\Http\Controllers\V2\ConversationController;
 use App\Http\Controllers\V2\CampaignController;
 use App\Http\Controllers\V2\AutoResponseController;
@@ -38,6 +39,7 @@ Route::middleware(['v2.extension.token', 'throttle:v2-extension'])->group(functi
 
 Route::prefix('provider-events')->group(function () {
     Route::post('/unipile', [ProviderWebhookController::class, 'unipile']);
+    Route::post('/zernio', ZernioWebhookController::class);
 });
 
 Route::middleware(['v2.extension.token', 'v2.tenant', 'throttle:v2-extension'])->group(function () {

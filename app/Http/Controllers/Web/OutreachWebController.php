@@ -285,6 +285,7 @@ class OutreachWebController extends Controller
                 'platforms' => $inboxByPlatform,
             ],
             'aiConfigured' => app(\App\V2\Services\OpenAIContentService::class)->isConfigured(),
+            'aiOptimization' => $this->extractAiOptimization($campaign),
             'stats' => $statsService->statsFor($campaign),
             'concurrency' => app(\App\V2\Outreach\OutreachConcurrencyLimiter::class)->snapshot((int) $campaign->user_id),
             'channel_limits' => app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->snapshotsForChannels(
@@ -627,6 +628,26 @@ class OutreachWebController extends Controller
         );
 
         return redirect('/outreach')->with('success', 'Outreach campaign deleted.');
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function extractAiOptimization(V2OutreachCampaign $campaign): ?array
+    {
+        $meta = is_array($campaign->meta) ? $campaign->meta : [];
+        $optimization = $meta['ai_optimization'] ?? null;
+
+        if (! is_array($optimization) || ($optimization['suggestions'] ?? []) === []) {
+            return null;
+        }
+
+        return [
+            'suggestions' => $optimization['suggestions'],
+            'metrics' => $optimization['metrics'] ?? [],
+            'saved_at' => $optimization['saved_at'] ?? null,
+            'command_center_url' => url('/ai-employee'),
+        ];
     }
 
     private function findOwned(int $id): V2OutreachCampaign

@@ -1,0 +1,134 @@
+<script setup lang="ts">
+import { Loader2, Send } from '@lucide/vue';
+import ChatTypingIndicator from '@/components/crm/ChatTypingIndicator.vue';
+import CommandCenterChannelLabel from '@/components/crm/CommandCenterChannelLabel.vue';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import type { useCommandCenterChat } from '@/composables/useCommandCenterChat';
+
+type ChatApi = ReturnType<typeof useCommandCenterChat>;
+
+const props = defineProps<{
+    chat: ChatApi;
+    compact?: boolean;
+}>();
+
+const {
+    chat: messages,
+    draft,
+    settings,
+    sending,
+    bootstrapping,
+    hasOlderMessages,
+    loadingOlder,
+    scrollEl,
+    send,
+    loadOlderMessages,
+    onChatScroll,
+    formatMessageHtml,
+    formatChatDateDivider,
+    formatChatMessageTime,
+    showChatDateDivider,
+} = props.chat;
+</script>
+
+<template>
+    <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+            ref="scrollEl"
+            class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3"
+            @scroll="onChatScroll"
+        >
+            <div v-if="bootstrapping" class="flex justify-center py-8">
+                <Loader2 class="text-muted-foreground size-5 animate-spin" />
+            </div>
+
+            <template v-else>
+                <div v-if="hasOlderMessages" class="flex justify-center py-1">
+                    <button
+                        type="button"
+                        class="inline-flex items-center gap-1.5 rounded-full border bg-background px-3 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-60"
+                        :disabled="loadingOlder"
+                        @click="loadOlderMessages"
+                    >
+                        <Loader2 v-if="loadingOlder" class="size-3 animate-spin" />
+                        {{ loadingOlder ? 'Loading…' : 'Load older messages' }}
+                    </button>
+                </div>
+
+                <template v-for="(m, i) in messages" :key="m.id ?? `local-${i}`">
+                    <div
+                        v-if="showChatDateDivider(messages, i)"
+                        class="flex justify-center py-1"
+                    >
+                        <span class="rounded-full bg-muted/70 px-3 py-1 text-[11px] font-medium text-muted-foreground shadow-sm">
+                            {{ formatChatDateDivider(m.created_at) }}
+                        </span>
+                    </div>
+
+                    <div
+                        class="flex"
+                        :class="m.role === 'user' ? 'justify-end' : 'justify-start'"
+                    >
+                        <div class="max-w-[92%] space-y-1">
+                            <CommandCenterChannelLabel
+                                :channel="m.channel"
+                                :align="m.role === 'user' ? 'right' : 'left'"
+                            />
+                            <div
+                                class="rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap [&_strong]:font-semibold"
+                                :class="
+                                    m.role === 'user'
+                                        ? 'rounded-br-md bg-primary text-primary-foreground [&_strong]:text-primary-foreground'
+                                        : 'rounded-bl-md bg-muted text-foreground'
+                                "
+                            >
+                                <span v-html="formatMessageHtml(m.content)" />
+                                <div
+                                    v-if="m.created_at"
+                                    class="mt-1.5 flex justify-end border-t pt-1"
+                                    :class="
+                                        m.role === 'user'
+                                            ? 'border-primary-foreground/15'
+                                            : 'border-border/60'
+                                    "
+                                >
+                                    <time
+                                        :datetime="m.created_at"
+                                        class="text-[11px] font-medium tabular-nums tracking-wide select-none"
+                                        :class="
+                                            m.role === 'user'
+                                                ? 'text-primary-foreground/75'
+                                                : 'text-muted-foreground'
+                                        "
+                                    >
+                                        {{ formatChatMessageTime(m.created_at) }}
+                                    </time>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <ChatTypingIndicator
+                    v-if="sending"
+                    :name="settings.employee_name"
+                    :show-label="!compact"
+                />
+            </template>
+        </div>
+
+        <form class="flex shrink-0 gap-2 border-t p-3" @submit.prevent="send()">
+            <Input
+                v-model="draft"
+                placeholder="Message Alex…"
+                class="flex-1"
+                :disabled="sending || bootstrapping || !settings.enabled || settings.kill_switch"
+            />
+            <Button type="submit" size="icon" :disabled="sending || bootstrapping || !draft.trim()">
+                <Loader2 v-if="sending" class="size-4 animate-spin" />
+                <Send v-else class="size-4" />
+            </Button>
+        </form>
+    </div>
+</template>

@@ -3,6 +3,7 @@ import AppContent from '@/components/AppContent.vue';
 import AppShell from '@/components/AppShell.vue';
 import AppSidebar from '@/components/AppSidebar.vue';
 import AppSidebarHeader from '@/components/AppSidebarHeader.vue';
+import CommandCenterFloatingWidget from '@/components/crm/CommandCenterFloatingWidget.vue';
 import { Toaster } from '@/components/ui/sonner';
 import { Link, usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
@@ -34,5 +35,6 @@ const isImpersonating = computed(() => Boolean(page.props.isImpersonating));
             </div>
         </AppContent>
         <Toaster />
+        <CommandCenterFloatingWidget />
     </AppShell>
 </template>

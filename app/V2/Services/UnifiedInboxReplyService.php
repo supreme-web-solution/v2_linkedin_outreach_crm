@@ -12,6 +12,7 @@ use App\V2\Outreach\OutreachActivityLogger;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Outreach\OutreachWebhookProgressService;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 
 class UnifiedInboxReplyService
 {
@@ -36,6 +37,86 @@ class UnifiedInboxReplyService
         private readonly OpenAIContentService $openai,
         private readonly OutreachActivityLogger $logger,
     ) {}
+
+    /**
+     * Draft a reply for Command Center review (does not send).
+     *
+     * @return array{
+     *     draft: string,
+     *     prospect_name: string,
+     *     channel: string,
+     *     channel_label: string,
+     *     inbound_preview: string,
+     *     inbox_url: string,
+     *     conversation_id: int
+     * }
+     */
+    public function draftReplyForConversation(User $user, V2Conversation $conversation): array
+    {
+        if ((int) $conversation->user_id !== (int) $user->id) {
+            throw new \RuntimeException('Conversation not found.');
+        }
+
+        $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $leadId = (int) (Arr::get($meta, 'outreach_lead_id') ?? 0);
+        $campaignId = (int) (Arr::get($meta, 'outreach_campaign_id') ?? 0);
+
+        $lead = $leadId > 0 ? V2OutreachLead::query()->find($leadId) : null;
+        $campaign = $campaignId > 0 ? V2OutreachCampaign::query()->find($campaignId) : null;
+
+        $latestInbound = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('direction', 'inbound')
+            ->orderByDesc('received_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first();
+
+        $inboundBody = trim((string) ($latestInbound?->body ?? ''));
+        if ($inboundBody === '') {
+            throw new \RuntimeException('No inbound message to reply to in this conversation.');
+        }
+
+        $aiContext = $this->channelSettings->aiContextFor($campaign, (string) $conversation->provider);
+        if ($aiContext === '' && $campaign) {
+            $aiContext = trim((string) ($campaign->name ?? '')).' outreach follow-up.';
+        }
+
+        if (! $this->openai->isConfigured()) {
+            throw new \RuntimeException('OpenAI is not configured for inbox reply drafting.');
+        }
+
+        $draft = $this->generateAiReply($conversation, $inboundBody, $aiContext, $user, $lead, $campaign);
+        if ($draft === '') {
+            throw new \RuntimeException('Could not generate a reply draft. Check campaign AI context in outreach settings.');
+        }
+
+        $prospectName = trim((string) ($lead?->full_name ?? Arr::get($meta, 'prospect_name', 'Prospect')));
+
+        return [
+            'draft' => $draft,
+            'prospect_name' => $prospectName !== '' ? $prospectName : 'Prospect',
+            'channel' => (string) $conversation->provider,
+            'channel_label' => OutreachChannelRegistry::channelLabel((string) $conversation->provider),
+            'inbound_preview' => Str::limit($inboundBody, 200, '…'),
+            'inbox_url' => url('/inbox/'.$conversation->provider.'/'.$conversation->id),
+            'conversation_id' => $conversation->id,
+        ];
+    }
+
+    public function sendApprovedReply(User $user, V2Conversation $conversation, string $text): V2Message
+    {
+        if ((int) $conversation->user_id !== (int) $user->id) {
+            throw new \RuntimeException('Conversation not found.');
+        }
+
+        $body = trim($text);
+        if ($body === '') {
+            throw new \RuntimeException('Reply text is empty.');
+        }
+
+        return $this->inbox->sendMessage($user, $conversation, $body);
+    }
 
     public function handleInbound(V2Conversation $conversation, string $inboundBody, int $userId): void
     {

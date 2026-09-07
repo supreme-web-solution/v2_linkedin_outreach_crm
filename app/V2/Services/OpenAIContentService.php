@@ -212,6 +212,38 @@ PROMPT;
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    public function generateAgentJson(string $systemPrompt, string $userPrompt, int $maxTokens = 900): array
+    {
+        if (! $this->isConfigured()) {
+            throw new \RuntimeException(OpenAiUserError::NOT_CONFIGURED);
+        }
+
+        $response = Http::withToken($this->apiKey())
+            ->timeout(60)
+            ->post('https://api.openai.com/v1/chat/completions', [
+                'model' => 'gpt-4o-mini',
+                'messages' => [
+                    ['role' => 'system', 'content' => $systemPrompt],
+                    ['role' => 'user', 'content' => $userPrompt],
+                ],
+                'max_tokens' => $maxTokens,
+                'temperature' => 0.55,
+                'response_format' => ['type' => 'json_object'],
+            ]);
+
+        if (! $response->ok()) {
+            throw new \RuntimeException(OpenAiUserError::fromHttp($response->status(), $response->body()));
+        }
+
+        $raw = trim((string) Arr::get($response->json(), 'choices.0.message.content', ''));
+        $decoded = json_decode($raw, true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
      * Generate a LinkedIn comment reply for a feed post.
      */
     public function generateLinkedInComment(string $postContent, string $tone = 'professional'): string

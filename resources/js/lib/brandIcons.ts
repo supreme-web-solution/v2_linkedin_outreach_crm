@@ -12,7 +12,8 @@ export const BRAND_ICON_SRC: Record<BrandChannel, string> = {
 };
 
 export function brandIconSrc(channel?: string | null): string {
-    const key = String(channel ?? 'linkedin').toLowerCase() as BrandChannel;
+    const raw = String(channel ?? 'linkedin').toLowerCase();
+    const key = (raw === 'whatsapp_command' ? 'whatsapp' : raw) as BrandChannel;
 
     return BRAND_ICON_SRC[key] ?? BRAND_ICON_SRC.email;
 }

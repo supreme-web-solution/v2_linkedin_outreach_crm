@@ -12,6 +12,7 @@ use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
 use App\V2\Outreach\InboxAttachmentSupport;
 use App\V2\Outreach\OutreachChannelRegistry;
+use App\V2\Ai\Services\InboxClassificationService;
 use App\V2\Services\OpenAIContentService;
 use App\V2\Services\OutreachChannelInboxSettingsService;
 use App\V2\Services\EmailAddressQuality;
@@ -462,6 +463,8 @@ class UnifiedInboxWebController extends Controller
 
         $channelConfig = $this->channelSettings->forCampaignChannel($campaign, $provider);
 
+        $aiInsights = $this->buildAiInsights($conversation, $lead);
+
         return [
             'campaign' => [
                 'id' => $campaign->id,
@@ -487,6 +490,51 @@ class UnifiedInboxWebController extends Controller
             'campaign_outbound_count' => $campaignOutboundCount,
             'channel_settings' => $channelConfig,
             'settings_update_url' => route('outreach.channel-inbox', [$campaign->id, $provider]),
+            'ai_insights' => $aiInsights,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function buildAiInsights(V2Conversation $conversation, ?V2OutreachLead $lead): ?array
+    {
+        $latestInbound = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('direction', 'inbound')
+            ->orderByDesc('received_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first();
+
+        $body = trim((string) ($latestInbound?->body ?? ''));
+        $classification = $body !== ''
+            ? app(InboxClassificationService::class)->classify($body)
+            : null;
+
+        $leadMeta = is_array($lead?->meta) ? $lead->meta : [];
+        $nextBest = is_array($leadMeta['next_best_action'] ?? null) ? $leadMeta['next_best_action'] : null;
+        $personalizedDraft = is_array($leadMeta['ai_personalized_draft'] ?? null)
+            ? $leadMeta['ai_personalized_draft']
+            : null;
+
+        if ($classification === null && $nextBest === null && $personalizedDraft === null) {
+            return null;
+        }
+
+        return [
+            'classification' => $classification,
+            'next_best_action' => $nextBest ? [
+                'action' => $nextBest['action'] ?? null,
+                'reason' => $nextBest['reason'] ?? null,
+                'set_at' => $nextBest['set_at'] ?? null,
+            ] : null,
+            'personalized_draft' => $personalizedDraft ? [
+                'text' => $personalizedDraft['text'] ?? null,
+                'channel' => $personalizedDraft['channel'] ?? null,
+                'saved_at' => $personalizedDraft['saved_at'] ?? null,
+            ] : null,
+            'command_center_url' => url('/ai-employee'),
         ];
     }
 

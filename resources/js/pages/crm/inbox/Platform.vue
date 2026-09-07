@@ -3,6 +3,7 @@ import { Head, Link, router, useForm, usePage } from '@inertiajs/vue3';
 import { ArrowLeft, Bot, ExternalLink, Info, Loader2, Megaphone, MessageCircle, MessagesSquare, Paperclip, Pause, Search, Send, Sparkles, Trash2, X, AlertTriangle } from '@lucide/vue';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import ListSearchBar from '@/components/crm/ListSearchBar.vue';
+import AlexAvatar from '@/components/crm/AlexAvatar.vue';
 import ListPagination from '@/components/crm/ListPagination.vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
 import { formatEmailBody } from '@/lib/formatEmailBody';
@@ -39,6 +40,18 @@ type OutreachContext = {
     campaign_outbound_count: number;
     channel_settings: { ai_context: string; auto_reply_enabled: boolean; pause_on_reply: boolean };
     settings_update_url: string;
+    ai_insights?: {
+        classification?: {
+            priority: string;
+            intent: string;
+            stage: string;
+            recommended_action: string;
+            evidence?: string[];
+        } | null;
+        next_best_action?: { action: string | null; reason: string | null; set_at: string | null } | null;
+        personalized_draft?: { text: string | null; channel: string | null; saved_at: string | null } | null;
+        command_center_url?: string;
+    } | null;
 };
 
 type ConversationsPaginator = {
@@ -1121,6 +1134,40 @@ function onComposerKeydown(e: KeyboardEvent) {
                         <p v-if="localOutreachContext.lead" class="mt-1 text-xs text-muted-foreground capitalize">
                             {{ localOutreachContext.lead.full_name }} · {{ localOutreachContext.lead.status }}
                         </p>
+                        <div
+                            v-if="localOutreachContext.ai_insights?.next_best_action?.action"
+                            class="mt-3 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-2 text-xs text-violet-950 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-100"
+                        >
+                            <div class="font-medium">Next best action</div>
+                            <p class="mt-1">{{ localOutreachContext.ai_insights.next_best_action.action }}</p>
+                            <p v-if="localOutreachContext.ai_insights.next_best_action.reason" class="mt-1 text-[11px] opacity-80">
+                                {{ localOutreachContext.ai_insights.next_best_action.reason }}
+                            </p>
+                        </div>
+                        <div
+                            v-if="localOutreachContext.ai_insights?.classification"
+                            class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+                        >
+                            <div class="font-medium capitalize">
+                                {{ localOutreachContext.ai_insights.classification.intent.replace(/_/g, ' ') }}
+                                · {{ localOutreachContext.ai_insights.classification.priority.replace(/_/g, ' ') }}
+                            </div>
+                            <p class="mt-1">{{ localOutreachContext.ai_insights.classification.recommended_action }}</p>
+                        </div>
+                        <div
+                            v-if="localOutreachContext.ai_insights?.personalized_draft?.text"
+                            class="mt-3 rounded-lg border border-border bg-muted/30 px-2.5 py-2 text-xs"
+                        >
+                            <div class="font-medium">Saved personalized draft</div>
+                            <p class="mt-1 whitespace-pre-wrap">{{ localOutreachContext.ai_insights.personalized_draft.text }}</p>
+                        </div>
+                        <Link
+                            v-if="localOutreachContext.ai_insights?.command_center_url"
+                            :href="localOutreachContext.ai_insights.command_center_url"
+                            class="mt-3 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                            <AlexAvatar size="xs" class="inline-flex" /> Open Command Center
+                        </Link>
                         <p v-if="localOutreachContext.lead?.email" class="mt-1 truncate text-xs text-muted-foreground">
                             {{ localOutreachContext.lead.email }}
                         </p>

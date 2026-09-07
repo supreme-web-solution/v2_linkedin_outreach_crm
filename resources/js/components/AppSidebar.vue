@@ -50,6 +50,7 @@ function hasAny(keys: string[]): boolean {
 
 const overviewItems: NavItem[] = [
     { title: 'Dashboard', href: dashboard(), icon: LayoutGrid },
+    { title: 'Command Center', href: '/ai-employee', icon: Sparkles },
     { title: 'Tutorials', href: '/tutorials', icon: GraduationCap },
     { title: 'Calendar', href: '/calendar', icon: Calendar },
     { title: 'Analytics', href: '/analytics', icon: BarChart3 },

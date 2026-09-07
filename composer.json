@@ -13,6 +13,7 @@
         "archtechx/laravel-seo": "^0.10.4",
         "cloudinary/cloudinary_php": "^3.1",
         "inertiajs/inertia-laravel": "^3.0",
+        "laravel/ai": "^0.11",
         "laravel/chisel": "^0.1.0",
         "laravel/fortify": "^1.37.2",
         "laravel/framework": "^13.7",
