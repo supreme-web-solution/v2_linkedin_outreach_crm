@@ -15,6 +15,7 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { useClientList } from '@/composables/useClientList';
+import { brandIconSrc } from '@/lib/brandIcons';
 
 defineOptions({
     layout: {
@@ -31,6 +32,7 @@ interface LeadList {
     list_hash: string;
     total_leads: number;
     source: string;
+    channel?: string | null;
     src: 'aud' | 'sn' | 'csv';
     created_at: string | null;
 }
@@ -72,10 +74,10 @@ async function searchInstagram() {
     igError.value = '';
     const query = igQuery.value.trim();
     if (!query) {
-        igError.value = 'Enter a keyword (e.g. fitness coaches Lagos).';
+        igError.value = 'Enter a keyword (e.g. coffee, nasa).';
         return;
     }
-    const limit = Math.min(100, Math.max(1, Number(igLimit.value) || 25));
+    const limit = Math.min(250, Math.max(1, Number(igLimit.value) || 25));
     igBusy.value = true;
     try {
         const res = await fetch('/leads/search-instagram', {
@@ -286,7 +288,14 @@ function sourceBadgeClass(): string {
     return 'bg-blue-500/10 text-blue-600';
 }
 
+function isInstagramList(list: LeadList): boolean {
+    return list.channel === 'instagram'
+        || list.source === 'Instagram'
+        || /^IG:/i.test(list.list_name);
+}
+
 const audienceListCount = computed(() => props.stats.audience_lists + props.stats.sn_lists);
+const igIcon = brandIconSrc('instagram');
 </script>
 
 <template>
@@ -301,7 +310,7 @@ const audienceListCount = computed(() => props.stats.audience_lists + props.stat
             </LinkedInPageHeading>
             <div class="flex flex-wrap items-center gap-2 shrink-0">
                 <Button class="gap-2" @click="igSearchModalOpen = true">
-                    <Search class="h-4 w-4" />
+                    <img :src="igIcon" alt="" class="h-4 w-4" />
                     Find Instagram leads
                 </Button>
                 <Button variant="outline" class="gap-2" @click="profileModalOpen = true">
@@ -501,12 +510,30 @@ const audienceListCount = computed(() => props.stats.audience_lists + props.stat
                                 </button>
                             </td>
                             <td class="px-4 py-3">
-                                <Link :href="listHref(list)" class="font-medium text-foreground hover:text-blue-600 hover:underline">
+                                <Link :href="listHref(list)" class="inline-flex items-center gap-2 font-medium text-foreground hover:text-blue-600 hover:underline">
+                                    <img
+                                        v-if="isInstagramList(list)"
+                                        :src="igIcon"
+                                        alt=""
+                                        class="h-4 w-4 shrink-0"
+                                        title="Instagram"
+                                    />
                                     {{ list.list_name }}
                                 </Link>
                             </td>
                             <td class="px-4 py-3">
-                                <span class="rounded-full bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-600">{{ list.source }}</span>
+                                <span
+                                    class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
+                                    :class="isInstagramList(list) ? 'bg-pink-500/10 text-pink-700 dark:text-pink-300' : 'bg-blue-500/10 text-blue-600'"
+                                >
+                                    <img
+                                        v-if="isInstagramList(list)"
+                                        :src="igIcon"
+                                        alt=""
+                                        class="h-3 w-3"
+                                    />
+                                    {{ list.source }}
+                                </span>
                             </td>
                             <td class="px-4 py-3 text-right tabular-nums">{{ list.total_leads.toLocaleString() }}</td>
                             <td class="px-4 py-3 text-muted-foreground">{{ fmtDate(list.created_at) }}</td>
@@ -540,28 +567,32 @@ const audienceListCount = computed(() => props.stats.audience_lists + props.stat
     <Dialog v-model:open="igSearchModalOpen">
         <DialogContent class="sm:max-w-md">
             <DialogHeader>
-                <DialogTitle>Find Instagram leads</DialogTitle>
+                <DialogTitle class="inline-flex items-center gap-2">
+                    <img :src="igIcon" alt="" class="h-5 w-5" />
+                    Find Instagram leads
+                </DialogTitle>
                 <DialogDescription>
-                    Keyword search via Mindcase — returns many profiles. Instagram handle is filled; other channels stay empty until you enrich them.
+                    Mindcase Search mode — keyword to find Instagram accounts (e.g. coffee, nasa). Max 250 results. Instagram handle is filled; other channels stay empty.
                 </DialogDescription>
             </DialogHeader>
             <div class="flex flex-col gap-3">
                 <input
                     v-model="igQuery"
                     type="text"
-                    placeholder="e.g. fitness coaches Lagos, SaaS founders Nigeria"
+                    placeholder="Keyword e.g. coffee, nasa, fitness Lagos"
                     class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                     @keydown.enter.prevent="searchInstagram"
                 />
                 <div class="flex items-center gap-2">
-                    <label class="shrink-0 text-sm text-muted-foreground">How many</label>
+                    <label class="shrink-0 text-sm text-muted-foreground">Max results</label>
                     <input
                         v-model.number="igLimit"
                         type="number"
                         min="1"
-                        max="100"
+                        max="250"
                         class="w-24 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                     />
+                    <span class="text-xs text-muted-foreground">max 250</span>
                 </div>
                 <input
                     v-model="igListName"

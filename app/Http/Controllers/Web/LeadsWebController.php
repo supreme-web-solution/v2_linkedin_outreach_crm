@@ -65,6 +65,7 @@ class LeadsWebController extends Controller
                 'list_hash' => $list['list_hash'],
                 'total_leads' => $list['total_leads'],
                 'source' => $list['source'],
+                'channel' => $list['channel'] ?? null,
                 'src' => 'csv',
                 'created_at' => $list['created_at'],
             ])
@@ -245,7 +246,7 @@ class LeadsWebController extends Controller
     {
         $data = $request->validate([
             'query' => ['required', 'string', 'max:500'],
-            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:250'],
             'list_name' => ['nullable', 'string', 'max:120'],
         ]);
 
@@ -338,7 +339,7 @@ class LeadsWebController extends Controller
                 $message = 'Saved LinkedIn profile into "'.$built['list_name'].'" ('.$built['total_leads'].' lead).';
                 $listHash = $built['list_hash'];
                 $src = $built['list_src'];
-            } elseif (preg_match('#instagram\.com/([^/?#]+)#i', $url, $ig) || preg_match('/^@?[\w.]{2,30}$/', $url)) {
+            } elseif (preg_match('~instagram\.com/([^/?#]+)~i', $url, $ig) || preg_match('/^@?[\w.]{2,30}$/', $url)) {
                 $handle = isset($ig[1]) ? $ig[1] : ltrim($url, '@');
                 $built = app(InstagramAudienceBuilderService::class)->searchAndPersist(
                     $user,

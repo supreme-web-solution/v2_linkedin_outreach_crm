@@ -262,18 +262,18 @@ class DiscoverProspectsService
     ): array {
         // Keyword is primary. Only force username lookup for @handle or profile URL.
         $usernames = [];
-        if ($profileUrl && preg_match('#instagram\.com/([^/?#]+)#i', $profileUrl, $m)) {
+        if ($profileUrl && preg_match('~instagram\.com/([^/?#]+)~i', $profileUrl, $m)) {
             $usernames[] = $m[1];
         } elseif (preg_match('/^@[\w.]{2,30}$/', trim($query))) {
             $usernames[] = ltrim(trim($query), '@');
-        } elseif (preg_match('#instagram\.com/([^/?#]+)#i', trim($query), $m)) {
+        } elseif (preg_match('~instagram\.com/([^/?#]+)~i', trim($query), $m)) {
             $usernames[] = $m[1];
         }
 
         $built = $this->instagramAudience->searchAndPersist(
             $user,
             $query,
-            max(1, min(100, $limit)),
+            max(1, min(250, $limit)),
             $usernames !== [] ? $usernames : null,
         );
 

@@ -49,7 +49,7 @@ class InstagramAudienceBuilderService
             return null;
         }
 
-        $cap = max(1, min(100, $limit ?? 25));
+        $cap = max(1, min(250, $limit ?? 25));
         $handles = [];
         foreach ($usernames ?? [] as $u) {
             $h = $this->cleanHandle((string) $u);
@@ -135,7 +135,7 @@ class InstagramAudienceBuilderService
     private function cleanHandle(string $value): string
     {
         $value = trim($value);
-        if (preg_match('#instagram\.com/([^/?#]+)#i', $value, $m)) {
+        if (preg_match('~instagram\.com/([^/?#]+)~i', $value, $m)) {
             $value = $m[1];
         }
 

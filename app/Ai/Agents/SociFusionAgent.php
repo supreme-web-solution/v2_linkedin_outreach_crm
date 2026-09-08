@@ -88,7 +88,7 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\n1. build_icp only when ICP is truly unclear"
             ."\n2. discover_prospects — platform=linkedin (default) or platform=instagram (Mindcase). NEW / fetch / N prospects: pass target_count. LinkedIn filters: geography, network_degree, title, company, open_link. Instagram PRIMARY: keyword query + target_count (many leads). Optional: @handle / profile_url only when exact person known. Always SAVES list_hash"
             ."\n- Pause/activate many campaigns → pause_outreach_campaign / activate_outreach_campaign with campaign_ids[] (bulk). Delete many → one bulk Confirm Delete"
-            ."\n- Instagram keyword search → discover_prospects platform=instagram query='fitness coaches Lagos' target_count=25 (Mindcase). Do not ask for handles first. WA/TG: save_contacts only (no public directory)"
+            ."\n- Instagram keyword search → discover_prospects platform=instagram query='coffee' or 'nasa' (Mindcase Search Query) + target_count up to 250. Do not ask for handles first. WA/TG: save_contacts only (no public directory)"
             ."\n3. propose_strategy / draft_campaign_plan — include list_hash + list_src from discovery (and network_depths / first_degree_only when returned). If discovery just saved a list, ALWAYS pass that list_hash"
             ."\n4. Launch rules by mode:"
             ."\n   • Copilot — no staging, no Review & Launch"

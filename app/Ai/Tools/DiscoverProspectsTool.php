@@ -31,12 +31,12 @@ class DiscoverProspectsTool extends GatedTool
     {
         return [
             'query' => $schema->string()->required()->description(
-                'LinkedIn ICP keywords, or Instagram KEYWORD (e.g. "fitness coaches Lagos"). Use @handle only when looking up one known account',
+                'LinkedIn ICP keywords, or Instagram Search keyword (Mindcase: e.g. "coffee", "nasa" — finds accounts by topic). Use @handle only for Handle mode (exact accounts)',
             ),
-            'platform' => $schema->string()->nullable()->description('linkedin (default) or instagram (Mindcase keyword search)'),
+            'platform' => $schema->string()->nullable()->description('linkedin (default) or instagram (Mindcase Search keyword → up to 250)'),
             'competitors' => $schema->string()->nullable()->description('Optional comma-separated competitor names'),
-            'target_count' => $schema->integer()->min(1)->max(500)->nullable()->description(
-                'Fetch and SAVE ~N NEW profiles (forces fresh search)',
+            'target_count' => $schema->integer()->min(1)->max(250)->nullable()->description(
+                'Fetch and SAVE ~N NEW profiles (forces fresh search). Instagram capped at 250 (Mindcase maxResults)',
             ),
             'prefer_fresh' => $schema->boolean()->nullable()->description(
                 'true = force fetch+save even without target_count',
