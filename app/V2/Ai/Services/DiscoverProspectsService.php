@@ -11,6 +11,9 @@ use Illuminate\Support\Str;
 
 class DiscoverProspectsService
 {
+    /** Minimum score to treat a saved list as an intentional match (not engagers fallback). */
+    public const STRONG_MATCH_SCORE = 10;
+
     public function __construct(
         private readonly LeadListService $leadLists,
         private readonly ProspectAudienceResolverService $audienceResolver,
@@ -22,44 +25,72 @@ class DiscoverProspectsService
      *
      * @return array<string, mixed>
      */
-    public function discover(User $user, string $query, ?string $competitors = null, int $limit = 10, ?int $targetCount = null): array
-    {
+    public function discover(
+        User $user,
+        string $query,
+        ?string $competitors = null,
+        int $limit = 10,
+        ?int $targetCount = null,
+        bool $preferFresh = false,
+    ): array {
         $limit = max(1, min(20, $limit));
         $query = trim($query);
         $competitorNames = array_values(array_filter(array_map('trim', explode(',', (string) $competitors))));
-        $targetCount = $targetCount !== null ? max(25, min(500, $targetCount)) : null;
+        $targetCount = $targetCount !== null ? max(10, min(500, $targetCount)) : null;
 
-        $lists = $this->matchLeadLists($user, $query, $limit);
-        $competitorAudiences = $this->competitorAudiences($user, $competitorNames, $limit);
+        // Any explicit net-new size (or prefer_fresh) → LinkedIn search + SAVE, do not reuse engagers lists.
+        $forceFresh = $preferFresh || $targetCount !== null;
+
+        $lists = $this->matchLeadLists($user, $query, $limit, includeWeakFallback: ! $forceFresh);
+        $competitorAudiences = $forceFresh
+            ? []
+            : $this->competitorAudiences($user, $competitorNames, $limit);
         $merged = collect($lists)->concat($competitorAudiences)->unique(fn (array $row) => ($row['list_src'] ?? '').':'.($row['list_hash'] ?? ''))->values();
 
         $best = $merged->sortByDesc('match_score')->first();
+        $strongMatch = $best && (int) ($best['match_score'] ?? 0) >= self::STRONG_MATCH_SCORE
+            ? $best
+            : null;
+
         $planProbe = [
             'goal' => $query,
             'icp_notes' => $query,
             'audience' => $query,
             'target_count' => $targetCount ?? 100,
+            'prefer_fresh_audience' => $forceFresh,
         ];
 
-        if ($best) {
+        // Only attach a saved list before search when it is a strong name match AND user did not ask for fresh N.
+        if (! $forceFresh && $strongMatch) {
             $planProbe = PlanLeadList::merge(
                 $planProbe,
-                (string) $best['list_hash'],
-                (string) $best['list_src'],
-                (string) ($best['list_name'] ?? 'Matched list'),
+                (string) $strongMatch['list_hash'],
+                (string) $strongMatch['list_src'],
+                (string) ($strongMatch['list_name'] ?? 'Matched list'),
             );
         }
 
-        $resolved = $this->audienceResolver->resolve($user, $planProbe, strict: true);
-        $autoSourced = null;
+        $resolved = $forceFresh
+            ? null
+            : $this->audienceResolver->resolve($user, $planProbe, strict: true);
 
-        // Prefer net-new LinkedIn search when user asked for a large fresh audience
-        // or when no strong list match exists.
-        $shouldAutoSearch = $resolved === null
-            || ($targetCount !== null && $targetCount >= 50 && (int) ($resolved['total_leads'] ?? 0) < (int) ($targetCount * 0.4));
+        if ($resolved !== null && (int) ($resolved['match_score'] ?? 0) < self::STRONG_MATCH_SCORE) {
+            $resolved = null;
+        }
+
+        $autoSourced = null;
+        $shouldAutoSearch = $forceFresh || $resolved === null;
 
         if ($shouldAutoSearch) {
-            $autoSourced = $this->linkedInAudience->tryBuildFromPlan($user, (int) ($user->current_organization_id ?? 0), $planProbe);
+            $searchPlan = $planProbe;
+            unset($searchPlan['list_hash'], $searchPlan['list_src'], $searchPlan['list_name'], $searchPlan['lead_list_id'], $searchPlan['lead_list_src']);
+
+            $autoSourced = $this->linkedInAudience->tryBuildFromPlan(
+                $user,
+                (int) ($user->current_organization_id ?? 0),
+                $searchPlan,
+            );
+
             if ($autoSourced) {
                 $planProbe = PlanLeadList::merge(
                     $planProbe,
@@ -70,7 +101,9 @@ class DiscoverProspectsService
                 $resolved = $autoSourced;
                 $merged = $merged->prepend(array_merge($autoSourced, [
                     'origin' => 'linkedin_search',
-                    'note' => 'Auto-sourced from LinkedIn search'.($targetCount ? " (target ~{$targetCount})" : ''),
+                    'note' => 'Fetched from LinkedIn and saved'
+                        .($targetCount ? " (target {$targetCount})" : ''),
+                    'match_score' => 100,
                 ]));
             }
         }
@@ -80,35 +113,35 @@ class DiscoverProspectsService
         $nextSteps = [];
         if ($resolved === null && $merged->isEmpty()) {
             $nextSteps = [
-                'Connect LinkedIn in SociFusion → Integrations, then ask again — Alex will auto-search for matching profiles.',
+                'Connect LinkedIn in SociFusion → Integrations, then ask again — Alex will fetch and save matching profiles.',
                 'Or import / build a lead list in SociFusion → Leads',
                 'Or share a competitor LinkedIn company URL to harvest engagers',
             ];
         } elseif ($resolved === null) {
             $nextSteps = [
-                'Lists exist but none strongly match "'.$query.'".',
-                'Alex will retry LinkedIn search on Launch — connect LinkedIn if not linked yet.',
-                'Or pick the closest list from results and pass list_hash + list_src into your campaign plan',
+                'Could not fetch new LinkedIn profiles for "'.$query.'" yet.',
+                'Confirm LinkedIn is connected, then ask again with a target count (e.g. 30).',
+                'Or pick a saved list by exact name and pass list_hash + list_src.',
             ];
         } elseif ($autoSourced !== null) {
             $found = (int) ($resolved['total_leads'] ?? 0);
             $nextSteps = [
-                'Auto-built audience: '.$resolved['list_name']." ({$found} profiles from LinkedIn).",
+                'Fetched and saved audience: '.$resolved['list_name']." ({$found} profiles).",
+                'list_hash='.$resolved['list_hash'].' list_src='.$resolved['list_src'],
             ];
             if ($targetCount !== null && $found < $targetCount) {
-                $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Each LinkedIn search stays ≤100 to avoid rate limits — ask Alex to discover again to grow this same list safely.";
+                $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Ask Alex to discover again to grow this same saved list (≤100 per run).";
             }
             $nextSteps = array_merge($nextSteps, [
-                '• propose_strategy or draft_campaign_plan with this list attached',
+                '• propose_strategy or draft_campaign_plan USING this list_hash (do not swap to an old engagers list)',
                 '• prepare_enrichment if emails/phones are missing',
-                '• Launch when ready — Autopilot will auto-launch when a list is attached',
+                '• Launch when ready',
             ]);
         } else {
             $nextSteps = [
-                'Best audience: '.$resolved['list_name'].' ('.$resolved['total_leads'].' leads).',
+                'Best saved audience: '.$resolved['list_name'].' ('.$resolved['total_leads'].' leads).',
                 '• propose_strategy or draft_campaign_plan with this list attached',
-                '• prepare_enrichment if emails/phones are missing',
-                '• Launch only when the plan shows the audience list',
+                '• Or pass target_count to fetch NEW LinkedIn profiles instead',
             ];
         }
 
@@ -120,11 +153,12 @@ class DiscoverProspectsService
             'total_leads_in_matches' => $totalLeads,
             'ready_for_campaign' => $resolved !== null,
             'auto_sourced' => $autoSourced !== null,
+            'fresh_fetch' => $forceFresh,
             'target_count' => $targetCount,
             'next_steps' => $nextSteps,
             'limits' => [
-                'note' => 'Alex checks saved lists first, then auto-searches LinkedIn via your connected account when no list matches (or when you ask for a large fresh audience).',
-                'linkedin_search_cap' => 'Each LinkedIn auto-search returns up to ~100 profiles (rate-limit safe). Repeat discover_prospects to grow toward larger targets on the same list.',
+                'note' => 'When target_count / prefer_fresh is set, Alex ALWAYS fetches LinkedIn profiles and saves a new list. Saved engagers lists are only reused on a strong name match when you did not ask for a fresh count.',
+                'linkedin_search_cap' => 'Each LinkedIn fetch returns up to ~100 profiles and is saved under Leads. Repeat discover_prospects to grow the same list.',
                 'competitor_harvest' => 'Optional: prepare_competitor_harvest for engagers from a competitor post/profile.',
             ],
         ];
@@ -133,7 +167,7 @@ class DiscoverProspectsService
     /**
      * @return list<array<string, mixed>>
      */
-    private function matchLeadLists(User $user, string $query, int $limit): array
+    private function matchLeadLists(User $user, string $query, int $limit, bool $includeWeakFallback = true): array
     {
         $tokens = array_values(array_filter(preg_split('/\s+/', Str::lower($query)) ?: [], fn ($t) => strlen($t) >= 2));
         $lists = $this->leadLists->listsForUser($user->id);
@@ -150,7 +184,10 @@ class DiscoverProspectsService
                         $score += 2;
                     }
                 }
-                $score += min(3, (int) floor(((int) $list['total_leads']) / 200));
+                // Size bonus alone must not create a "match" — only boost real name hits.
+                if ($score > 0) {
+                    $score += min(3, (int) floor(((int) $list['total_leads']) / 200));
+                }
 
                 return $score > 0 ? array_merge($list, [
                     'match_score' => $score,
@@ -165,11 +202,11 @@ class DiscoverProspectsService
             ->values()
             ->all();
 
-        if ($matched === [] && $lists->isNotEmpty()) {
+        if ($matched === [] && $includeWeakFallback && $lists->isNotEmpty()) {
             return $lists->sortByDesc('total_leads')->take(min(5, $limit))->values()
                 ->map(fn (array $l) => array_merge($l, [
                     'match_score' => 0,
-                    'note' => 'No keyword match — largest existing lists',
+                    'note' => 'No keyword match — largest existing lists (suggestions only)',
                     'list_hash' => (string) $l['list_id'],
                     'list_src' => (string) $l['src'],
                     'origin' => 'lead_list',
@@ -197,7 +234,11 @@ class DiscoverProspectsService
             $meta = json_decode((string) $a->source_meta, true) ?: [];
             $name = (string) $a->audience_name;
             $hay = Str::lower($name.' '.($meta['company_name'] ?? '').' '.($meta['person_name'] ?? ''));
-            $score = str_contains(Str::lower((string) $a->source), 'competitor') ? 5 : 2;
+            $score = 0;
+
+            if (str_contains(Str::lower((string) $a->source), 'competitor')) {
+                $score += 3;
+            }
 
             foreach ($competitorNames as $competitor) {
                 if ($competitor !== '' && str_contains($hay, Str::lower($competitor))) {
@@ -205,7 +246,8 @@ class DiscoverProspectsService
                 }
             }
 
-            if ($count === 0) {
+            // Name tokens from competitor names only — no free base score for every engagers list.
+            if ($score === 0 || $count === 0) {
                 return null;
             }
 

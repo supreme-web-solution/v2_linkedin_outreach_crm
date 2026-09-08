@@ -22,7 +22,7 @@ class DiscoverProspectsTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Unified prospect discovery: search existing lead lists + competitor harvest audiences, then auto-search LinkedIn for net-new profiles (pass target_count for ~N agencies from scratch).';
+        return 'Prospect discovery. When target_count or prefer_fresh=true: ALWAYS fetch NEW LinkedIn profiles, SAVE them as a lead list, and return that list_hash — never reuse engagers/old lists. Without target_count: may suggest strong-matching saved lists first.';
     }
 
     public function schema(JsonSchema $schema): array
@@ -30,7 +30,12 @@ class DiscoverProspectsTool extends GatedTool
         return [
             'query' => $schema->string()->required()->description('ICP, industry, geography, or goal keywords'),
             'competitors' => $schema->string()->nullable()->description('Optional comma-separated competitor names'),
-            'target_count' => $schema->integer()->min(25)->max(500)->nullable()->description('Desired net-new audience size (LinkedIn search up to ~100 per run)'),
+            'target_count' => $schema->integer()->min(10)->max(500)->nullable()->description(
+                'Fetch and SAVE ~N NEW LinkedIn profiles (forces fresh search; do not reuse old lists)',
+            ),
+            'prefer_fresh' => $schema->boolean()->nullable()->description(
+                'true = force LinkedIn fetch+save even without target_count',
+            ),
             'limit' => $schema->integer()->min(1)->max(20)->nullable(),
         ];
     }
@@ -43,6 +48,7 @@ class DiscoverProspectsTool extends GatedTool
             competitors: $request['competitors'] ?? null,
             limit: (int) ($request['limit'] ?? 10),
             targetCount: isset($request['target_count']) ? (int) $request['target_count'] : null,
+            preferFresh: (bool) ($request['prefer_fresh'] ?? false),
         );
     }
 }

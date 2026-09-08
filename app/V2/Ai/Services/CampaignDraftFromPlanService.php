@@ -75,6 +75,10 @@ class CampaignDraftFromPlanService
                 'created_via' => 'command_center',
                 'ai_personalize_first_touch' => true,
                 'ai_custom_sequence' => $resolved['custom'],
+                // Cap how many leads sync from a large source list when the plan asked for N.
+                'max_leads' => isset($payload['target_count'])
+                    ? max(1, min(500, (int) $payload['target_count']))
+                    : null,
             ],
         ]);
 

@@ -67,7 +67,49 @@ class ProspectAudienceResolverService
      */
     public function enrichPlanWithAudience(User $user, array $plan): array
     {
+        $explicitHash = trim((string) ($plan['list_hash'] ?? $plan['lead_list_id'] ?? ''));
+        $explicitSrc = trim((string) ($plan['list_src'] ?? $plan['lead_list_src'] ?? ''));
+        $preferFresh = ! empty($plan['prefer_fresh_audience']);
+
+        // Fresh N requested and no explicit list_hash → LinkedIn fetch+save, never silent engagers reuse.
+        if ($preferFresh && $explicitHash === '') {
+            $orgId = (int) ($user->current_organization_id ?? 0);
+            $built = $orgId > 0
+                ? $this->linkedInAudience->tryBuildFromPlan($user, $orgId, $plan)
+                : null;
+
+            if ($built !== null) {
+                $plan = PlanLeadList::merge(
+                    $plan,
+                    $built['list_hash'],
+                    $built['list_src'],
+                    $built['list_name'],
+                );
+                $plan['audience_status'] = 'attached';
+                $plan['audience_leads'] = $built['total_leads'];
+                $plan['audience_note'] = $built['list_name'].' ('.$built['total_leads'].' leads, fetched from LinkedIn and saved)';
+                $plan['prefer_fresh_audience'] = true;
+
+                return $plan;
+            }
+
+            $plan['audience_status'] = 'missing';
+            $plan['audience_next_steps'] = $this->nextSteps($plan);
+
+            return $plan;
+        }
+
         $match = $this->resolve($user, $plan, strict: true);
+
+        // Weak fuzzy matches are not good enough when a target size was requested.
+        if (
+            $match !== null
+            && $explicitHash === ''
+            && isset($plan['target_count'])
+            && (int) ($match['match_score'] ?? 0) < DiscoverProspectsService::STRONG_MATCH_SCORE
+        ) {
+            $match = null;
+        }
 
         if ($match === null) {
             $orgId = (int) ($user->current_organization_id ?? 0);
@@ -93,6 +135,11 @@ class ProspectAudienceResolverService
             $plan['audience_next_steps'] = $this->nextSteps($plan);
 
             return $plan;
+        }
+
+        // Explicit list_hash from tool/user always wins.
+        if ($explicitHash !== '' && $explicitSrc !== '') {
+            $match = $this->resolve($user, $plan, strict: true) ?? $match;
         }
 
         $plan = PlanLeadList::merge(
@@ -164,29 +211,34 @@ class ProspectAudienceResolverService
                 }
             }
 
-            $score += min(3, (int) floor(((int) $list['total_leads']) / 200));
+            if ($score > 0) {
+                $score += min(3, (int) floor(((int) $list['total_leads']) / 200));
+            }
 
             return ['list' => $list, 'score' => $score];
         })->sortByDesc('score')->values();
 
         $best = $scored->first();
-        if (! $best || ($best['score'] ?? 0) <= 0) {
+        // Size-only / weak token hits must not win in strict mode.
+        if (! $best || ($best['score'] ?? 0) < DiscoverProspectsService::STRONG_MATCH_SCORE) {
             if ($strict) {
                 return null;
             }
 
-            $largest = $lists->sortByDesc('total_leads')->first();
-            if (! $largest) {
-                return null;
-            }
+            if (! $best || ($best['score'] ?? 0) <= 0) {
+                $largest = $lists->sortByDesc('total_leads')->first();
+                if (! $largest) {
+                    return null;
+                }
 
-            return $this->normalizeListRef(
-                (string) $largest['list_id'],
-                (string) $largest['src'],
-                (string) $largest['list_name'],
-                (int) $largest['total_leads'],
-                0,
-            );
+                return $this->normalizeListRef(
+                    (string) $largest['list_id'],
+                    (string) $largest['src'],
+                    (string) $largest['list_name'],
+                    (int) $largest['total_leads'],
+                    0,
+                );
+            }
         }
 
         $list = $best['list'];

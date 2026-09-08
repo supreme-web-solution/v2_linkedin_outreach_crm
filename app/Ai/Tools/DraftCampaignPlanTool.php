@@ -55,7 +55,9 @@ class DraftCampaignPlanTool extends GatedTool
     {
         $channels = (string) ($request['channels'] ?? app(\App\V2\Ai\Services\AiChannelPolicyService::class)->defaultChannelsLabel());
         $days = (int) ($request['follow_up_days'] ?? 21);
+        $explicitTarget = array_key_exists('target_count', $request->all());
         $count = (int) ($request['target_count'] ?? 500);
+        $hasList = trim((string) ($request['list_hash'] ?? '')) !== '';
 
         $sequence = $request['sequence'] ?? null;
         if (! is_array($sequence) || $sequence === []) {
@@ -79,6 +81,7 @@ class DraftCampaignPlanTool extends GatedTool
             'channels' => $channels,
             'follow_up_days' => $days,
             'source' => $request['source'] ?? 'LinkedIn search + existing lists',
+            'prefer_fresh_audience' => $explicitTarget && ! $hasList,
             'sequence' => array_values(array_map('strval', $sequence)),
             'sequence_steps' => is_array($request['sequence_steps'] ?? null) ? $request['sequence_steps'] : null,
             'steps' => [

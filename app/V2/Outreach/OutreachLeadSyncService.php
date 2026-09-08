@@ -47,6 +47,14 @@ class OutreachLeadSyncService
      */
     public function syncNextChunk(V2OutreachCampaign $campaign, int $listIndex = 0, int $afterId = 0): array
     {
+        $maxLeads = (int) (($campaign->meta['max_leads'] ?? 0));
+        if ($maxLeads > 0) {
+            $current = (int) $campaign->outreachLeads()->count();
+            if ($current >= $maxLeads) {
+                return ['done' => true, 'list_index' => $listIndex, 'after_id' => 0, 'added' => 0];
+            }
+        }
+
         $lists = $campaign->outreachLists()->orderBy('id')->get();
         if ($lists->isEmpty() || $listIndex >= $lists->count()) {
             return ['done' => true, 'list_index' => $listIndex, 'after_id' => 0, 'added' => 0];
@@ -60,6 +68,13 @@ class OutreachLeadSyncService
             'sn' => $this->syncSnChunk($campaign, $list, $afterId),
             default => ['added' => 0, 'after_id' => 0, 'exhausted' => true],
         };
+
+        if ($maxLeads > 0) {
+            $current = (int) $campaign->outreachLeads()->count();
+            if ($current >= $maxLeads) {
+                return ['done' => true, 'list_index' => $listIndex, 'after_id' => 0, 'added' => $result['added']];
+            }
+        }
 
         if ($result['exhausted']) {
             $nextIndex = $listIndex + 1;
@@ -98,6 +113,21 @@ class OutreachLeadSyncService
             ['outreach_campaign_id' => $campaign->id, 'outreach_lead_id' => $lead->id],
             ['current_node_key' => 0, 'next_node_key' => 1, 'run_status' => 0, 'channel_state' => []]
         );
+    }
+
+    /**
+     * null = unlimited; 0 = stop creating more leads.
+     */
+    private function remainingLeadSlots(V2OutreachCampaign $campaign): ?int
+    {
+        $maxLeads = (int) (($campaign->meta['max_leads'] ?? 0));
+        if ($maxLeads <= 0) {
+            return null;
+        }
+
+        $current = (int) $campaign->outreachLeads()->count();
+
+        return max(0, $maxLeads - $current);
     }
 
     public function markSyncing(V2OutreachCampaign $campaign): void
@@ -276,6 +306,14 @@ class OutreachLeadSyncService
         $added = 0;
         $lastId = $afterId;
         foreach ($rows as $row) {
+            if ($this->remainingLeadSlots($campaign) === 0) {
+                return [
+                    'added' => $added,
+                    'after_id' => $lastId,
+                    'exhausted' => true,
+                ];
+            }
+
             $lastId = (int) $row->id;
             $contactRow = [
                 'email' => trim((string) ($row->email ?? '')),
@@ -352,6 +390,14 @@ class OutreachLeadSyncService
         $lastId = $afterId;
 
         foreach ($rows as $row) {
+            if ($this->remainingLeadSlots($campaign) === 0) {
+                return [
+                    'added' => $added,
+                    'after_id' => $lastId,
+                    'exhausted' => true,
+                ];
+            }
+
             $lastId = (int) $row->id;
             $name = trim(($row->con_first_name ?? '').' '.($row->con_last_name ?? ''));
             $profileId = $row->con_public_identifier ?: $row->con_id;
@@ -440,6 +486,14 @@ class OutreachLeadSyncService
         $lastId = $afterId;
 
         foreach ($rows as $row) {
+            if ($this->remainingLeadSlots($campaign) === 0) {
+                return [
+                    'added' => $added,
+                    'after_id' => $lastId,
+                    'exhausted' => true,
+                ];
+            }
+
             $lastId = (int) $row->id;
             $name = trim(($row->first_name ?? '').' '.($row->last_name ?? ''));
             $linkedinKey = $this->resolver->normalizeLinkedinKey($row->lid ?: $row->sn_lid);

@@ -46,6 +46,9 @@ class ProposeStrategyTool extends GatedTool
 
     protected function run(Request $request): array
     {
+        $explicitTarget = array_key_exists('target_count', $request->all());
+        $hasList = trim((string) ($request['list_hash'] ?? '')) !== '';
+
         $plan = [
             'type' => 'strategy',
             'goal' => (string) $request['goal'],
@@ -54,6 +57,7 @@ class ProposeStrategyTool extends GatedTool
             'preferred_channels' => $request['preferred_channels'] ?? app(\App\V2\Ai\Services\AiChannelPolicyService::class)->defaultChannelsLabel(),
             'target_count' => $request['target_count'] ?? 500,
             'follow_up_days' => $request['follow_up_days'] ?? 21,
+            'prefer_fresh_audience' => $explicitTarget && ! $hasList,
             'steps' => [
                 'Clarify / confirm ICP',
                 'Find matching companies and decision makers',
