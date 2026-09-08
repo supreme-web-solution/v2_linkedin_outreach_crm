@@ -41,6 +41,8 @@ class LinkedInAudienceBuilderService
         }
 
         $targetCount = isset($plan['target_count']) ? (int) $plan['target_count'] : null;
+        // One search run ≤100 profiles — safer for LinkedIn/Unipile rate limits.
+        // Larger goals grow by repeating discover_prospects into the same list.
         $filters = IcpSearchFilterParser::fromGoal(
             $query,
             isset($plan['geography']) ? (string) $plan['geography'] : null,

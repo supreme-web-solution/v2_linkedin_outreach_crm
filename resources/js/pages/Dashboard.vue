@@ -125,9 +125,9 @@ const statCards = [
 ];
 
 const quickActions = [
+    { href: '/ai-employee', label: 'Ask Alex', icon: Bot },
     { href: '/leads', label: 'View Leads', icon: Users2 },
     { href: '/outreach/create', label: 'New outreach', icon: Upload },
-    { href: '/ai-employee', label: 'Ask Alex', icon: Bot },
     { href: '/campaigns', label: 'Campaigns', icon: Megaphone },
     { href: '/conversations', label: 'Conversations', icon: MessageSquare },
     { href: '/analytics', label: 'Analytics', icon: BarChart3 },

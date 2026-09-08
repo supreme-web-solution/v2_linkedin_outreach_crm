@@ -63,6 +63,7 @@ class IcpSearchFilterParser
 
         $limit = $fallbackLimit ?? 50;
         if ($targetMeetings !== null) {
+            // Keep per-search modest — LinkedIn/Unipile rate limits; grow via repeat discover.
             $limit = min(100, max(25, $targetMeetings * 5));
         }
 

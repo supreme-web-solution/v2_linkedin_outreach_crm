@@ -53,6 +53,41 @@ class CampaignDraftFromPlanServiceTest extends TestCase
         $this->assertSame('linkedin_whatsapp', $type);
     }
 
+    public function test_builds_custom_sequence_from_prose_steps(): void
+    {
+        $resolved = app(\App\V2\Ai\Services\PlanSequenceNodeBuilder::class)->resolve([
+            'preferred_channels' => 'LinkedIn + Email',
+            'sequence' => [
+                'Send Invite',
+                'Wait 3 days',
+                'Send Email',
+                'Wait 5 days',
+                'Follow-up',
+            ],
+        ]);
+
+        $this->assertTrue($resolved['custom']);
+        $this->assertSame('custom', $resolved['template_type']);
+        $types = array_column($resolved['node_model'], 'type');
+        $this->assertContains('action', $types);
+        $this->assertContains('delay', $types);
+        $this->assertContains('end', $types);
+    }
+
+    public function test_falls_back_to_preset_when_sequence_is_vague(): void
+    {
+        $resolved = app(\App\V2\Ai\Services\PlanSequenceNodeBuilder::class)->resolve([
+            'preferred_channels' => 'LinkedIn + Email',
+            'sequence' => [
+                'Qualify interested prospects',
+                'Book meetings',
+            ],
+        ]);
+
+        $this->assertFalse($resolved['custom']);
+        $this->assertSame('linkedin_email', $resolved['template_type']);
+    }
+
     public function test_channel_policy_detects_telegram_in_free_text(): void
     {
         $mentioned = app(AiChannelPolicyService::class)->mentionedInText('run a telegram outreach campaign');

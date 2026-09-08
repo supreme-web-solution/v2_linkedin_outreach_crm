@@ -73,8 +73,11 @@ const props = defineProps<{
     aiOptimization?: {
         suggestions: Array<{ priority: string; title: string; detail: string; tool_hint?: string }>;
         metrics?: Record<string, unknown>;
+        summary?: string | null;
         saved_at?: string | null;
         command_center_url?: string;
+        optimize_url?: string;
+        can_apply_follow_ups?: boolean;
     } | null;
     stats?: {
         total_leads: number;
@@ -132,6 +135,7 @@ const launching = ref(false);
 const duplicating = ref(false);
 const savingTemplate = ref(false);
 const togglingStatus = ref(false);
+const optimizing = ref(false);
 type LeadRow = {
     id: number;
     full_name: string | null;
@@ -369,6 +373,15 @@ function launch() {
     router.post(`/outreach/${props.campaign.id}/activate`, {}, {
         onFinish: () => { launching.value = false; },
         onSuccess: () => startLiveUpdates(),
+    });
+}
+
+function runOptimize(applyFollowUps = false) {
+    const url = props.aiOptimization?.optimize_url ?? `/outreach/${props.campaign.id}/optimize`;
+    optimizing.value = true;
+    router.post(url, { apply_follow_ups: applyFollowUps ? 1 : 0 }, {
+        preserveScroll: true,
+        onFinish: () => { optimizing.value = false; },
     });
 }
 
@@ -624,23 +637,51 @@ const channelActionEntries = computed(() =>
         </div>
 
         <div
-            v-if="aiOptimization?.suggestions?.length"
             class="rounded-xl border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900 dark:bg-violet-950/30"
         >
             <div class="flex flex-wrap items-start justify-between gap-2">
-                <div class="flex items-center gap-2 text-sm font-semibold text-violet-950 dark:text-violet-100">
-                    <Sparkles class="h-4 w-4" />
-                    Alex recommendations
+                <div>
+                    <div class="flex items-center gap-2 text-sm font-semibold text-violet-950 dark:text-violet-100">
+                        <Sparkles class="h-4 w-4" />
+                        Alex recommendations
+                    </div>
+                    <p v-if="aiOptimization?.summary" class="mt-1 text-xs text-violet-900/80 dark:text-violet-200/80">
+                        {{ aiOptimization.summary }}
+                    </p>
                 </div>
-                <a
-                    v-if="aiOptimization.command_center_url"
-                    :href="aiOptimization.command_center_url"
-                    class="text-xs text-violet-700 underline dark:text-violet-300"
-                >
-                    Command Center
-                </a>
+                <div class="flex flex-wrap items-center gap-2">
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        class="h-8 text-xs"
+                        :disabled="optimizing"
+                        @click="runOptimize(false)"
+                    >
+                        <Loader2 v-if="optimizing" class="mr-1 h-3 w-3 animate-spin" />
+                        <Sparkles v-else class="mr-1 h-3 w-3" />
+                        Refresh analysis
+                    </Button>
+                    <Button
+                        v-if="aiOptimization?.can_apply_follow_ups"
+                        type="button"
+                        size="sm"
+                        class="h-8 bg-violet-600 text-xs text-white hover:bg-violet-700"
+                        :disabled="optimizing"
+                        @click="runOptimize(true)"
+                    >
+                        Apply wait changes
+                    </Button>
+                    <a
+                        v-if="aiOptimization?.command_center_url"
+                        :href="aiOptimization.command_center_url"
+                        class="text-xs text-violet-700 underline dark:text-violet-300"
+                    >
+                        Command Center
+                    </a>
+                </div>
             </div>
-            <ul class="mt-3 space-y-2">
+            <ul v-if="aiOptimization?.suggestions?.length" class="mt-3 space-y-2">
                 <li
                     v-for="(item, idx) in aiOptimization.suggestions"
                     :key="idx"
@@ -655,6 +696,9 @@ const channelActionEntries = computed(() =>
                     <p class="mt-1 text-xs text-violet-900/80 dark:text-violet-200/80">{{ item.detail }}</p>
                 </li>
             </ul>
+            <p v-else class="mt-3 text-xs text-violet-900/70 dark:text-violet-200/70">
+                No urgent changes right now. Tap Refresh analysis anytime, or ask Alex in Command Center.
+            </p>
         </div>
 
         <div v-if="stats?.funnel?.length" class="rounded-xl border bg-card p-4">

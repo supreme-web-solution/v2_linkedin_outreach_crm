@@ -152,6 +152,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     Route::get('outreach/create', [OutreachWebController::class, 'create'])->name('outreach.create');
     Route::post('outreach', [OutreachWebController::class, 'store'])->name('outreach.store');
     Route::get('outreach/{id}', [OutreachWebController::class, 'show'])->whereNumber('id')->name('outreach.show');
+    Route::post('outreach/{id}/optimize', [OutreachWebController::class, 'optimize'])->whereNumber('id')->name('outreach.optimize');
     Route::get('outreach/{id}/edit', [OutreachWebController::class, 'edit'])->whereNumber('id')->name('outreach.edit');
     Route::put('outreach/{id}', [OutreachWebController::class, 'update'])->whereNumber('id')->name('outreach.update');
     Route::post('outreach/{id}/activate', [OutreachWebController::class, 'activate'])->whereNumber('id')->name('outreach.activate');

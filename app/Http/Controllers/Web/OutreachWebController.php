@@ -293,7 +293,7 @@ class OutreachWebController extends Controller
                 'platforms' => $inboxByPlatform,
             ],
             'aiConfigured' => app(\App\V2\Services\OpenAIContentService::class)->isConfigured(),
-            'aiOptimization' => $this->extractAiOptimization($campaign),
+            'aiOptimization' => $this->buildAiOptimizationPanel($campaign),
             'stats' => $statsService->statsFor($campaign),
             'concurrency' => app(\App\V2\Outreach\OutreachConcurrencyLimiter::class)->snapshot((int) $campaign->user_id),
             'channel_limits' => app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->snapshotsForChannels(
@@ -636,6 +636,87 @@ class OutreachWebController extends Controller
         );
 
         return redirect('/outreach')->with('success', 'Outreach campaign deleted.');
+    }
+
+    /**
+     * Analyze campaign performance and persist Alex recommendations on the campaign page.
+     */
+    public function optimize(Request $request, int $id): RedirectResponse
+    {
+        $campaign = $this->findOwned($id);
+        $analysis = app(\App\V2\Ai\Services\CampaignOptimizerService::class)->analyze($campaign);
+
+        $applyFollowUps = $request->boolean('apply_follow_ups');
+        $autoApplied = [];
+
+        if ($applyFollowUps) {
+            $hasFollowUpHint = collect($analysis['suggestions'] ?? [])->contains(
+                fn (array $s) => ($s['tool_hint'] ?? '') === 'adjust_follow_up',
+            );
+
+            if ($hasFollowUpHint) {
+                try {
+                    $synthetic = new \App\Models\AiActionApproval([
+                        'organization_id' => (int) $campaign->organization_id,
+                        'payload' => [
+                            'campaign_id' => $campaign->id,
+                            'adjustment' => 'shorten_waits',
+                            'delta_days' => 2,
+                            'reason' => 'Applied from outreach detail optimizer panel.',
+                        ],
+                    ]);
+                    $result = app(\App\V2\Ai\Services\FollowUpAdjustFromPlanService::class)
+                        ->applyFromApproval($synthetic, auth()->user());
+                    $autoApplied[] = $result['message'] ?? 'Follow-up waits shortened.';
+                    $campaign->refresh();
+                } catch (\Throwable $e) {
+                    report($e);
+
+                    return back()->with('error', 'Could not apply follow-up changes: '.$e->getMessage());
+                }
+            }
+        }
+
+        $meta = is_array($campaign->meta) ? $campaign->meta : [];
+        $meta['ai_optimization'] = [
+            'suggestions' => $analysis['suggestions'] ?? [],
+            'metrics' => $analysis['metrics'] ?? [],
+            'summary' => $analysis['summary'] ?? null,
+            'saved_at' => now()->toIso8601String(),
+            'source' => 'outreach_detail',
+            'auto_applied' => $autoApplied,
+        ];
+        $campaign->update(['meta' => $meta]);
+
+        $message = $analysis['summary'] ?? 'Alex reviewed this campaign.';
+        if ($autoApplied !== []) {
+            $message .= ' '.implode(' ', $autoApplied);
+        }
+
+        return back()->with('success', $message);
+    }
+
+    /**
+     * Live suggestions + any saved optimization meta for the detail panel.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildAiOptimizationPanel(V2OutreachCampaign $campaign): array
+    {
+        $saved = $this->extractAiOptimization($campaign);
+        $live = app(\App\V2\Ai\Services\CampaignOptimizerService::class)->analyze($campaign);
+
+        return [
+            'suggestions' => $live['suggestions'] ?? [],
+            'metrics' => $live['metrics'] ?? [],
+            'summary' => $live['summary'] ?? null,
+            'saved_at' => $saved['saved_at'] ?? null,
+            'command_center_url' => url('/ai-employee'),
+            'optimize_url' => route('outreach.optimize', $campaign->id),
+            'can_apply_follow_ups' => collect($live['suggestions'] ?? [])->contains(
+                fn (array $s) => ($s['tool_hint'] ?? '') === 'adjust_follow_up',
+            ),
+        ];
     }
 
     /**

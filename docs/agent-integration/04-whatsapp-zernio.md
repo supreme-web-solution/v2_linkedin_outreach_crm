@@ -106,9 +106,20 @@ Webhook URL: `POST https://{your-domain}/api/v2/provider-events/zernio`
 
 Configure webhook secret in Zernio dashboard; same value as `ZERNIO_WEBHOOK_SECRET`.
 
-## Voice notes (later)
+## Voice notes
 
-Transcribe via Laravel AI audio → same orchestrator prompt path.
+Inbound WhatsApp **voice / audio** messages are transcribed with Laravel AI (`Transcription::fromPath`) and then run through the **same** Command Center orchestrator as text.
+
+Flow:
+1. Zernio `message.received` with audio attachment (or `audio` / `voice` fields)
+2. Download media → temp file under `storage/app/tmp/whatsapp-voice`
+3. `WhatsAppVoiceTranscriptionService` → OpenAI (default transcription provider)
+4. Prefixed message `[Voice note]\n{transcript}` → queue / `AgentOrchestrator`
+5. Reply delivered on WhatsApp as text (same approval buttons)
+
+Images still require a text caption. Voice notes do not.
+
+Requires `OPENAI_API_KEY` (or whatever `config('ai.default_for_transcription')` uses).
 
 ## Telegram (Phase 4)
 

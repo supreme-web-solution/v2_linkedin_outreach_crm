@@ -83,6 +83,7 @@ class ZernioWebhookService
         $from = $parsed['from'];
         $text = $parsed['text'];
         $media = $parsed['media'] ?? null;
+        $mediaType = is_array($media) ? Str::lower((string) ($media['type'] ?? '')) : '';
 
         if ($from === '') {
             Log::warning('[Zernio] inbound message ignored', [
@@ -103,13 +104,44 @@ class ZernioWebhookService
             return $this->ok(['ignored' => true, 'reason' => 'empty_from_or_text']);
         }
 
-        if ($text === '' && $media !== null) {
+        // Voice notes: transcribe → same Alex text path (caption optional).
+        if ($mediaType === 'audio' && $text === '') {
+            $transcript = app(WhatsAppVoiceTranscriptionService::class)->transcribe($media);
+            if ($transcript === null || $transcript === '') {
+                $this->zernio->sendText(
+                    $this->identities->normalizeExternalId('whatsapp', $from),
+                    "I couldn't hear that voice note clearly. Please try again, or type your message.",
+                );
+
+                return $this->ok(['ignored' => true, 'reason' => 'voice_transcription_failed']);
+            }
+
+            $text = $transcript;
+            Log::info('[Zernio] voice note transcribed', [
+                'from' => $from,
+                'message_id' => $parsed['message_id'],
+                'transcript_preview' => Str::limit($transcript, 120),
+            ]);
+        }
+
+        // Images still need a caption (used as the command for Alex).
+        if ($text === '' && $mediaType === 'image') {
             Log::info('[Zernio] inbound image ignored (caption required)', [
                 'from' => $from,
                 'message_id' => $parsed['message_id'],
             ]);
 
             return $this->ok(['ignored' => true, 'reason' => 'image_only']);
+        }
+
+        if ($text === '' && $media !== null) {
+            Log::info('[Zernio] inbound media ignored (unsupported without text)', [
+                'from' => $from,
+                'message_id' => $parsed['message_id'],
+                'media_type' => $mediaType !== '' ? $mediaType : null,
+            ]);
+
+            return $this->ok(['ignored' => true, 'reason' => 'unsupported_media']);
         }
 
         $link = $this->identities->findValidCode($text);
@@ -164,8 +196,13 @@ class ZernioWebhookService
             $identity->id,
         );
 
-        if ($media !== null) {
+        if ($mediaType === 'image') {
             app(WhatsAppMediaIngestService::class)->storeForConversation($conversation, $user, $media);
+        }
+
+        // Soft-tag voice so Command Center history can show it came from audio.
+        if ($mediaType === 'audio') {
+            $text = "[Voice note]\n".$text;
         }
 
         if ((bool) config('socifusion_ai.zernio.queue_inbound', true)) {
@@ -183,9 +220,10 @@ class ZernioWebhookService
                     'user_id' => $user->id,
                     'message_id' => $parsed['message_id'],
                     'queue' => config('queue.default'),
+                    'from_voice' => $mediaType === 'audio',
                 ]);
 
-                return $this->ok(['queued' => true]);
+                return $this->ok(['queued' => true, 'from_voice' => $mediaType === 'audio']);
             } catch (\Throwable $e) {
                 Log::warning('[Zernio] queue unavailable — processing synchronously', [
                     'identity_id' => $identity->id,
@@ -214,6 +252,7 @@ class ZernioWebhookService
         return $this->ok([
             'conversation_id' => $result['conversation_id'] ?? null,
             'duplicate' => $result['duplicate'] ?? false,
+            'from_voice' => $mediaType === 'audio',
         ]);
     }
 

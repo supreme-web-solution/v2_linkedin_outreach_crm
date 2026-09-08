@@ -205,6 +205,117 @@ class ZernioWebhookTest extends TestCase
         });
     }
 
+    public function test_voice_note_is_transcribed_and_queued_for_alex(): void
+    {
+        Queue::fake();
+        config()->set('socifusion_ai.zernio.queue_inbound', true);
+
+        \Laravel\Ai\Transcription::fake([
+            'Find 500 US marketing agencies with 5 to 50 employees',
+        ]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'https://cdn.example.test/voice.ogg' => \Illuminate\Support\Facades\Http::response('fake-ogg-bytes', 200, [
+                'Content-Type' => 'audio/ogg',
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        $org = V2Organization::query()->create([
+            'name' => 'Voice Org',
+            'slug' => 'voice-org-zernio',
+            'owner_id' => $user->id,
+        ]);
+        V2OrganizationUser::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'role' => 'owner',
+        ]);
+
+        $identity = AiChannelIdentity::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'channel' => 'whatsapp',
+            'external_id' => '+15559876543',
+            'status' => 'active',
+            'verified_at' => now(),
+        ]);
+
+        $payload = json_encode([
+            'id' => 'evt-voice-1',
+            'event' => 'message.received',
+            'message' => [
+                'id' => 'msg-voice-1',
+                'text' => '',
+                'sender' => ['phoneNumber' => '+15559876543'],
+                'attachments' => [[
+                    'type' => 'audio',
+                    'url' => 'https://cdn.example.test/voice.ogg',
+                    'mimeType' => 'audio/ogg',
+                ]],
+            ],
+            'conversation' => ['id' => 'conv-voice-1'],
+            'account' => ['id' => 'acc-voice-1'],
+        ], JSON_THROW_ON_ERROR);
+
+        $this->signedPost($payload)
+            ->assertOk()
+            ->assertJson(['queued' => true, 'from_voice' => true]);
+
+        Queue::assertPushed(ProcessZernioInboundMessageJob::class, function (ProcessZernioInboundMessageJob $job) use ($identity) {
+            return $job->identityId === $identity->id
+                && str_contains($job->message, '[Voice note]')
+                && str_contains($job->message, 'Find 500 US marketing agencies');
+        });
+
+        \Laravel\Ai\Transcription::assertGenerated(fn () => true);
+    }
+
+    public function test_voice_note_transcription_failure_notifies_sender(): void
+    {
+        Queue::fake();
+        config()->set('socifusion_ai.zernio.queue_inbound', true);
+        config()->set('socifusion_ai.zernio.api_key', 'test-key');
+        config()->set('socifusion_ai.zernio.base_url', 'https://zernio.test');
+
+        \Laravel\Ai\Transcription::fake([
+            fn () => throw new \RuntimeException('stt failed'),
+        ]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'https://cdn.example.test/bad-voice.ogg' => \Illuminate\Support\Facades\Http::response('x', 200),
+            'https://zernio.test/*' => \Illuminate\Support\Facades\Http::response(['ok' => true], 200),
+        ]);
+
+        $payload = json_encode([
+            'id' => 'evt-voice-fail',
+            'event' => 'message.received',
+            'message' => [
+                'id' => 'msg-voice-fail',
+                'text' => '',
+                'sender' => ['phoneNumber' => '+15551112222'],
+                'attachments' => [[
+                    'type' => 'voice',
+                    'url' => 'https://cdn.example.test/bad-voice.ogg',
+                    'mimeType' => 'audio/ogg',
+                ]],
+            ],
+            'conversation' => [
+                'id' => 'conv-fail',
+                'contact' => ['phone' => '+15551112222'],
+            ],
+        ], JSON_THROW_ON_ERROR);
+
+        $this->signedPost($payload)
+            ->assertOk()
+            ->assertJson([
+                'ignored' => true,
+                'reason' => 'voice_transcription_failed',
+            ]);
+
+        Queue::assertNothingPushed();
+    }
+
     private function signedPost(string $rawPayload, ?string $signature = null)
     {
         $signature ??= app(ZernioClient::class)->computeSignature($rawPayload);

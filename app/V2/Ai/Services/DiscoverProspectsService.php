@@ -96,7 +96,7 @@ class DiscoverProspectsService
                 'Auto-built audience: '.$resolved['list_name']." ({$found} profiles from LinkedIn).",
             ];
             if ($targetCount !== null && $found < $targetCount) {
-                $nextSteps[] = "Found {$found} of ~{$targetCount} requested — LinkedIn search caps around 100 per run. Launch this list, then ask to discover again to grow it.";
+                $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Each LinkedIn search stays ≤100 to avoid rate limits — ask Alex to discover again to grow this same list safely.";
             }
             $nextSteps = array_merge($nextSteps, [
                 '• propose_strategy or draft_campaign_plan with this list attached',
@@ -124,7 +124,7 @@ class DiscoverProspectsService
             'next_steps' => $nextSteps,
             'limits' => [
                 'note' => 'Alex checks saved lists first, then auto-searches LinkedIn via your connected account when no list matches (or when you ask for a large fresh audience).',
-                'linkedin_search_cap' => 'Each LinkedIn auto-search returns up to ~100 profiles. Repeat discover_prospects to grow toward larger targets.',
+                'linkedin_search_cap' => 'Each LinkedIn auto-search returns up to ~100 profiles (rate-limit safe). Repeat discover_prospects to grow toward larger targets on the same list.',
                 'competitor_harvest' => 'Optional: prepare_competitor_harvest for engagers from a competitor post/profile.',
             ],
         ];

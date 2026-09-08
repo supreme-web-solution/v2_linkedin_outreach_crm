@@ -664,6 +664,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $requestedLimit = max(1, min(100, (int) ($filters['limit'] ?? 20)));
 
         // Always send count — Unipile defaults to ~10 when omitted.
+        // Cap at 100 per search to stay within LinkedIn/Unipile rate limits.
         $apiFilters['count'] = $requestedLimit;
 
         if (! empty($filters['location'])) {

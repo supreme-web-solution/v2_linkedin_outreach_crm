@@ -35,9 +35,11 @@ class DraftCampaignPlanTool extends GatedTool
             'goal' => $schema->string()->required(),
             'audience' => $schema->string()->required(),
             'target_count' => $schema->integer()->min(1)->nullable(),
-            'channels' => $schema->string()->nullable()->description('Default: LinkedIn + Email. When user asks: Instagram, Telegram, WhatsApp (or combos). Launch picks matching sequence template.'),
+            'channels' => $schema->string()->nullable()->description('Default: LinkedIn + Email. When user asks: Instagram, Telegram, WhatsApp (or combos).'),
             'follow_up_days' => $schema->integer()->min(1)->max(90)->nullable(),
             'source' => $schema->string()->nullable()->description('e.g. competitor audiences, LinkedIn search'),
+            'sequence' => $schema->array()->nullable()->description('Ordered prose steps Alex should execute, e.g. ["Send Invite","Wait 3 days","Send Email","Wait 5 days","Follow-up"]. Launch builds a custom sequence from this when possible.'),
+            'sequence_steps' => $schema->array()->nullable()->description('Optional structured steps: {type:action|delay, channel, action, label, wait_days, message, subject, body}'),
             'list_hash' => $schema->string()->nullable(),
             'list_src' => $schema->string()->enum(['aud', 'sn', 'csv'])->nullable(),
             'list_name' => $schema->string()->nullable(),
@@ -50,6 +52,18 @@ class DraftCampaignPlanTool extends GatedTool
         $days = (int) ($request['follow_up_days'] ?? 21);
         $count = (int) ($request['target_count'] ?? 500);
 
+        $sequence = $request['sequence'] ?? null;
+        if (! is_array($sequence) || $sequence === []) {
+            $sequence = [
+                'Connection / first touch',
+                'Wait 3 days',
+                'Message / email',
+                'Wait 5 days',
+                'Follow-up',
+                'AI reply handling — stop on reply',
+            ];
+        }
+
         $plan = [
             'type' => 'campaign',
             'goal' => (string) $request['goal'],
@@ -60,14 +74,8 @@ class DraftCampaignPlanTool extends GatedTool
             'channels' => $channels,
             'follow_up_days' => $days,
             'source' => $request['source'] ?? 'LinkedIn search + existing lists',
-            'sequence' => [
-                'Connection / first touch',
-                'Wait 3 days',
-                'Message / email',
-                'Wait 5 days',
-                'Follow-up',
-                'AI reply handling — stop on reply',
-            ],
+            'sequence' => array_values(array_map('strval', $sequence)),
+            'sequence_steps' => is_array($request['sequence_steps'] ?? null) ? $request['sequence_steps'] : null,
             'steps' => [
                 'Confirm audience: '.$request['audience'],
                 'Source prospects ('.$count.' est.)',

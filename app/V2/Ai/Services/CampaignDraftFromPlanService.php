@@ -54,9 +54,9 @@ class CampaignDraftFromPlanService
             $audience['list_name'],
         );
 
-        $templateType = $this->resolveTemplateType($payload);
-        $templates = V2OutreachCampaign::templates();
-        $nodeModel = $templates[$templateType]['node_model'] ?? $templates['linkedin_email']['node_model'];
+        $resolved = app(PlanSequenceNodeBuilder::class)->resolve($payload);
+        $templateType = $resolved['template_type'];
+        $nodeModel = $resolved['node_model'];
 
         $goal = (string) ($payload['goal'] ?? 'AI Command Center campaign');
         $name = Str::limit('AI: '.$goal, 180, '');
@@ -74,6 +74,7 @@ class CampaignDraftFromPlanService
                 'ai_plan' => $payload,
                 'created_via' => 'command_center',
                 'ai_personalize_first_touch' => true,
+                'ai_custom_sequence' => $resolved['custom'],
             ],
         ]);
 

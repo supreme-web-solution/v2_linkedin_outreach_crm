@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { Eraser, Loader2, Rocket, Send, X } from '@lucide/vue';
 import ChatTypingIndicator from '@/components/crm/ChatTypingIndicator.vue';
 import CommandCenterChannelLabel from '@/components/crm/CommandCenterChannelLabel.vue';
+import CommandCenterMessageContent from '@/components/crm/CommandCenterMessageContent.vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { useCommandCenterChat } from '@/composables/useCommandCenterChat';
@@ -116,7 +117,10 @@ const actionableApprovals = computed(() => (pendingApprovals.value ?? []).slice(
                                         : 'rounded-bl-md bg-muted text-foreground'
                                 "
                             >
-                                <span v-html="formatMessageHtml(m.content)" />
+                                <CommandCenterMessageContent
+                                    :content="m.content"
+                                    :on-primary="m.role === 'user'"
+                                />
                                 <div
                                     v-if="m.created_at"
                                     class="mt-1.5 flex justify-end border-t pt-1"

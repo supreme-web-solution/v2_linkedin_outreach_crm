@@ -150,11 +150,11 @@ function deleteCampaign(c: { id: number; name: string }) {
                 </LinkedInPageHeading>
             </div>
             <div class="flex flex-wrap items-center gap-2">
-                <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700 shadow-sm">
-                    <Plus class="h-4 w-4" /> New Campaign
-                </Link>
-                <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted">
+                <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700">
                     <Bot class="h-4 w-4" /> Ask Alex
+                </Link>
+                <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted">
+                    <Plus class="h-4 w-4" /> New Campaign
                 </Link>
             </div>
         </div>
@@ -218,11 +218,11 @@ function deleteCampaign(c: { id: number; name: string }) {
                 <p class="text-sm text-muted-foreground mt-1">Create a campaign, attach lead lists, build your sequence, then launch from the extension.</p>
             </div>
             <div class="flex flex-wrap justify-center gap-2">
-                <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700 active:from-blue-600 active:to-blue-700">
-                    <Plus class="h-4 w-4" /> Create Campaign
-                </Link>
-                <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
+                <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700">
                     <Bot class="h-4 w-4" /> Ask Alex
+                </Link>
+                <Link href="/campaigns/create" class="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
+                    <Plus class="h-4 w-4" /> Create Campaign
                 </Link>
             </div>
         </div>

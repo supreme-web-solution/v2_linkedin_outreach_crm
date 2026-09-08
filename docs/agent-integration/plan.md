@@ -52,7 +52,8 @@ Never: Agent → SQL. Always: Agent → Tool → Service → Model.
 3. **Phase 2** — Zernio production ← **code done**; you add live `ZERNIO_*` keys when ready  
 4. **Phase 3** — AI Sales Execution ← done  
 5. **Phase 5** — Autonomous Employee ← **core tools done** (optimizer + auto wait adjust, meeting brief, qualify, post-call CRM, weekly brief, book_meeting, discover_prospects, inbox_brief)
-6. **Later** — Telegram control, Slack control, voice notes, full Autonomous default
+6. **Later** — Telegram control, Slack control, full Autonomous default
+   (WhatsApp voice notes: shipped — Laravel AI transcription → same orchestrator)
 
 ## Vision checklist (Command Center)
 

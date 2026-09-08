@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import CommandCenterChannelLabel from '@/components/crm/CommandCenterChannelLabel.vue';
+import CommandCenterMessageContent from '@/components/crm/CommandCenterMessageContent.vue';
 import WhatsAppCommandLinkPanel, { type WhatsAppCommandLink } from '@/components/crm/WhatsAppCommandLinkPanel.vue';
 import ChatTypingIndicator from '@/components/crm/ChatTypingIndicator.vue';
 import { Input } from '@/components/ui/input';
@@ -839,7 +840,10 @@ async function disconnectWhatsApp() {
                                             : 'rounded-bl-md bg-muted text-foreground'
                                     "
                                 >
-                                    <span v-html="formatMessageHtml(m.content)" />
+                                    <CommandCenterMessageContent
+                                        :content="m.content"
+                                        :on-primary="m.role === 'user'"
+                                    />
                                     <div
                                         v-if="m.created_at"
                                         class="mt-1.5 flex justify-end border-t pt-1"

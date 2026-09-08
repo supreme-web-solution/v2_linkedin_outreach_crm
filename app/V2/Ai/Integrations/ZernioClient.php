@@ -152,53 +152,112 @@ class ZernioClient
             $candidates[] = $message['media'];
         }
 
+        foreach (['audio', 'voice', 'voiceNote', 'ptt'] as $nestedKey) {
+            $nested = $message[$nestedKey] ?? null;
+            if (is_array($nested)) {
+                $candidates[] = $nested;
+            }
+        }
+
         foreach ($candidates as $attachment) {
-            $type = Str::lower(trim((string) (
-                $attachment['type']
-                ?? $attachment['mediaType']
-                ?? $attachment['kind']
-                ?? 'image'
-            )));
-
-            if ($type !== '' && ! str_contains($type, 'image') && ! in_array($type, ['photo', 'picture', 'media', 'file'], true)) {
-                continue;
+            $parsed = $this->normalizeMediaAttachment($attachment);
+            if ($parsed !== null) {
+                return $parsed;
             }
-
-            $url = trim((string) (
-                $attachment['url']
-                ?? $attachment['mediaUrl']
-                ?? $attachment['link']
-                ?? $attachment['secureUrl']
-                ?? data_get($attachment, 'payload.url')
-                ?? ''
-            ));
-
-            if ($url === '') {
-                continue;
-            }
-
-            return [
-                'type' => 'image',
-                'url' => $url,
-                'mime' => isset($attachment['mimeType']) ? (string) $attachment['mimeType'] : null,
-            ];
         }
 
         foreach ([
-            data_get($message, 'image.url'),
-            data_get($message, 'imageUrl'),
-            data_get($message, 'mediaUrl'),
-        ] as $url) {
-            if (is_string($url) && trim($url) !== '') {
-                return [
-                    'type' => 'image',
-                    'url' => trim($url),
-                    'mime' => null,
-                ];
+            ['type' => 'audio', 'urls' => [
+                data_get($message, 'audio.url'),
+                data_get($message, 'voice.url'),
+                data_get($message, 'voiceUrl'),
+                data_get($message, 'audioUrl'),
+            ]],
+            ['type' => 'image', 'urls' => [
+                data_get($message, 'image.url'),
+                data_get($message, 'imageUrl'),
+                data_get($message, 'mediaUrl'),
+            ]],
+        ] as $group) {
+            foreach ($group['urls'] as $url) {
+                if (is_string($url) && trim($url) !== '') {
+                    return [
+                        'type' => $group['type'],
+                        'url' => trim($url),
+                        'mime' => $group['type'] === 'audio' ? 'audio/ogg' : null,
+                    ];
+                }
             }
         }
 
         return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $attachment
+     * @return array{type:string,url:string,mime:?string}|null
+     */
+    private function normalizeMediaAttachment(array $attachment): ?array
+    {
+        $url = trim((string) (
+            $attachment['url']
+            ?? $attachment['mediaUrl']
+            ?? $attachment['link']
+            ?? $attachment['secureUrl']
+            ?? data_get($attachment, 'payload.url')
+            ?? ''
+        ));
+
+        if ($url === '') {
+            return null;
+        }
+
+        $typeRaw = Str::lower(trim((string) (
+            $attachment['type']
+            ?? $attachment['mediaType']
+            ?? $attachment['kind']
+            ?? ''
+        )));
+        $mime = isset($attachment['mimeType'])
+            ? (string) $attachment['mimeType']
+            : (isset($attachment['mime']) ? (string) $attachment['mime'] : null);
+        $mimeLower = Str::lower(trim((string) $mime));
+
+        $isAudio = str_starts_with($mimeLower, 'audio/')
+            || str_contains($typeRaw, 'audio')
+            || str_contains($typeRaw, 'voice')
+            || str_contains($typeRaw, 'ptt')
+            || in_array($typeRaw, ['ogg', 'opus', 'amr', 'mp3', 'm4a', 'wav'], true)
+            || $this->urlLooksLikeAudio($url);
+
+        $isImage = str_starts_with($mimeLower, 'image/')
+            || str_contains($typeRaw, 'image')
+            || in_array($typeRaw, ['photo', 'picture', 'media', 'file', ''], true);
+
+        if ($isAudio) {
+            return [
+                'type' => 'audio',
+                'url' => $url,
+                'mime' => $mime !== null && $mime !== '' ? $mime : 'audio/ogg',
+            ];
+        }
+
+        if ($isImage) {
+            return [
+                'type' => 'image',
+                'url' => $url,
+                'mime' => $mime,
+            ];
+        }
+
+        return null;
+    }
+
+    private function urlLooksLikeAudio(string $url): bool
+    {
+        $path = Str::lower((string) parse_url($url, PHP_URL_PATH));
+
+        return (bool) preg_match('/\.(ogg|opus|mp3|m4a|wav|amr|aac|3gp)(\?|$)/', $path);
     }
 
     /**
