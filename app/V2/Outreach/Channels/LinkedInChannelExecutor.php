@@ -37,9 +37,14 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
         $recipientId = $this->resolveRecipientId($campaign, $lead, $context);
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $message = $this->resolver->messageText($node, $firstName);
-        $message = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
-            ->resolveMessageText($lead, $message);
+        // Never attach first-touch personalization to connection invites — a note
+        // triggers LinkedIn's ~5 noted-invite/day limit. Personalize DMs only.
+        if ($action === 'send_message') {
+            $message = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
+                ->resolveMessageText($lead, $message);
+        }
         $providerKey = $this->providerManager->defaultProvider();
+        $action = \App\V2\Outreach\OutreachChannelRegistry::normalizeAction('linkedin', $action);
 
         if ($recipientId === '' && ! in_array($action, [], true)) {
             return ['status' => 'skipped', 'error_message' => 'Missing LinkedIn profile ID for lead.'];
@@ -120,7 +125,7 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
             $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
             if ($tempLimit->isTemporaryLimit($e)) {
                 $quotaAction = match ($action) {
-                    'send_invite' => \App\V2\Services\UnipileDailyActionLimiter::ACTION_INVITES,
+                    'send_invite' => \App\V2\Services\UnipileDailyActionLimiter::inviteActionForMessage($message),
                     'send_message' => \App\V2\Services\UnipileDailyActionLimiter::ACTION_MESSAGES,
                     default => null,
                 };

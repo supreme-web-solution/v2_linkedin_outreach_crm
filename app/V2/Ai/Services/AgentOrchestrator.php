@@ -405,6 +405,23 @@ class AgentOrchestrator
             );
         } catch (Throwable $e) {
             report($e);
+            try {
+                app(AiErrorLogService::class)->capture(
+                    $e,
+                    'agent_turn',
+                    $user,
+                    $organizationId,
+                    $conversation,
+                    $channel,
+                    $promptMessage,
+                    [
+                        'autonomy_level' => $settings->autonomy_level ?? null,
+                        'employee_name' => $settings->employee_name ?? null,
+                    ],
+                );
+            } catch (Throwable $logError) {
+                report($logError);
+            }
             $reply = 'I hit an error processing that. Please try again in a moment.';
         }
 

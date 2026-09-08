@@ -317,8 +317,8 @@ class OutreachLeadReadinessService
                         'telegram_provider_id' => trim((string) ($row->telegram_provider_id ?? '')),
                         'twitter_handle' => trim((string) ($row->twitter_handle ?? '')),
                         'twitter_provider_id' => trim((string) ($row->twitter_provider_id ?? '')),
-                        'email_fetch_attempted' => false,
-                        'email_fetch_status' => '',
+                        'email_fetch_attempted' => ! empty($row->email_fetch_attempted_at),
+                        'email_fetch_status' => (string) ($row->email_fetch_status ?? ''),
                         'phone_fetch_attempted' => ! empty($row->phone_fetch_attempted_at),
                         'phone_fetch_status' => (string) ($row->phone_fetch_status ?? ''),
                         'has_linkedin_id' => $profileId !== '',
@@ -422,52 +422,67 @@ class OutreachLeadReadinessService
         $missingEmail = 0;
         $fetchable = 0;
         $pending = 0;
-        $byAudience = [];
+        $audBatches = [];
+        $snBatches = [];
 
         foreach ($rows as $row) {
             if (($row['email'] ?? '') !== '') {
                 continue;
             }
             $missingEmail++;
-            if (($row['src'] ?? '') !== 'aud' || ! ($row['has_linkedin_id'] ?? false)) {
+            if (! ($row['has_linkedin_id'] ?? false)) {
                 continue;
             }
 
+            $src = (string) ($row['src'] ?? '');
             $hash = (string) ($row['list_hash'] ?? '');
-            if ($hash === '') {
+            if ($hash === '' || ! in_array($src, ['aud', 'sn'], true)) {
                 continue;
-            }
-
-            if (! isset($byAudience[$hash])) {
-                $byAudience[$hash] = ['list_hash' => $hash, 'fetchable_ids' => [], 'pending' => 0];
             }
 
             if (($row['email_fetch_status'] ?? '') === 'pending' || ($row['email_fetch_status'] ?? '') === 'processing') {
                 $pending++;
-                $byAudience[$hash]['pending']++;
-            } elseif (! ($row['email_fetch_attempted'] ?? false)) {
-                $fetchable++;
-                $byAudience[$hash]['fetchable_ids'][] = (int) $row['record_id'];
+                continue;
+            }
+
+            if ($row['email_fetch_attempted'] ?? false) {
+                continue;
+            }
+
+            $fetchable++;
+            if ($src === 'aud') {
+                $audBatches[$hash]['list_hash'] = $hash;
+                $audBatches[$hash]['audience_list_ids'][] = (int) $row['record_id'];
+            } else {
+                $snBatches[$hash]['list_hash'] = $hash;
+                $snBatches[$hash]['sn_lead_ids'][] = (int) $row['record_id'];
             }
         }
 
         $batches = [];
-        foreach ($byAudience as $aud) {
-            if ($aud['fetchable_ids'] !== []) {
-                $batches[] = [
-                    'list_hash' => $aud['list_hash'],
-                    'audience_list_ids' => $aud['fetchable_ids'],
-                    'count' => count($aud['fetchable_ids']),
-                ];
-            }
+        foreach ($audBatches as $batch) {
+            $batches[] = [
+                'list_hash' => $batch['list_hash'],
+                'list_src' => 'aud',
+                'audience_list_ids' => $batch['audience_list_ids'],
+                'count' => count($batch['audience_list_ids']),
+            ];
+        }
+        foreach ($snBatches as $batch) {
+            $batches[] = [
+                'list_hash' => $batch['list_hash'],
+                'list_src' => 'sn',
+                'sn_lead_ids' => $batch['sn_lead_ids'],
+                'count' => count($batch['sn_lead_ids']),
+            ];
         }
 
         return [
             'missing_email' => $missingEmail,
             'fetchable' => $fetchable,
             'pending' => $pending,
-            'can_batch_fetch' => $hasAudienceLists && $fetchable > 0,
-            'sn_only_hint' => ! $hasAudienceLists && $missingEmail > 0,
+            'can_batch_fetch' => $fetchable > 0,
+            'sn_only_hint' => ! $hasAudienceLists && $missingEmail > 0 && $fetchable === 0,
             'batches' => $batches,
         ];
     }

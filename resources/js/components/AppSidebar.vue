@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Link, usePage } from '@inertiajs/vue3';
 import {
+    AlertTriangle,
     BarChart3,
     Bot,
     Building2,
@@ -133,6 +134,7 @@ const adminNavItems = computed<NavItem[]>(() => {
     }
     if (isPlatformAdmin.value) {
         items.push({ title: 'Users', href: '/admin/users', icon: Users });
+        items.push({ title: 'Alex errors', href: '/admin/ai-errors', icon: AlertTriangle });
     }
     return items;
 });

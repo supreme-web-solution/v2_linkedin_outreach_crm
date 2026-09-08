@@ -532,42 +532,54 @@ class OutreachContactEnrichmentService
         }
 
         $batches = $preview['email_fetch']['batches'] ?? [];
-        $allIds = [];
-        foreach ($batches as $batch) {
-            foreach ($batch['audience_list_ids'] ?? [] as $id) {
-                $allIds[] = (int) $id;
-            }
-        }
-
-        if ($allIds === []) {
+        $fetchable = (int) ($preview['email_fetch']['fetchable'] ?? 0);
+        if ($batches === [] || $fetchable <= 0) {
             return 0;
         }
 
-        $capacity = $limiter->queueCapacity($user, min(count($allIds), $batchSize));
+        $capacity = $limiter->queueCapacity($user, min($fetchable, $batchSize));
         if (! ($capacity['allowed'] ?? false)) {
             return 0;
         }
 
-        $allowedIds = array_slice($allIds, 0, min($batchSize, $capacity['max_queue_now'] ?? 0));
-        if ($allowedIds === []) {
-            return 0;
-        }
-
-        $allowedSet = array_flip($allowedIds);
+        $left = min($batchSize, (int) ($capacity['max_queue_now'] ?? 0));
         $queued = 0;
 
         foreach ($batches as $batch) {
-            $ids = array_values(array_filter(
-                $batch['audience_list_ids'] ?? [],
-                fn ($id) => isset($allowedSet[(int) $id]),
-            ));
+            if ($left <= 0) {
+                break;
+            }
 
+            $src = (string) ($batch['list_src'] ?? 'aud');
+            if ($src === 'sn') {
+                $ids = array_values(array_map('intval', $batch['sn_lead_ids'] ?? []));
+                $ids = array_slice($ids, 0, $left);
+                if ($ids === []) {
+                    continue;
+                }
+                \App\Models\SnLead::query()->whereIn('id', $ids)->update([
+                    'email_fetch_attempted_at' => now(),
+                    'email_fetch_status' => 'pending',
+                ]);
+                \App\Jobs\FetchSnEmailBatchJob::dispatchChunked($ids, $user->id, (string) ($batch['list_hash'] ?? ''));
+                $queued += count($ids);
+                $left -= count($ids);
+                continue;
+            }
+
+            $ids = array_values(array_map('intval', $batch['audience_list_ids'] ?? []));
+            $ids = array_slice($ids, 0, $left);
             if ($ids === []) {
                 continue;
             }
 
+            \App\Models\AudienceList::query()->whereIn('id', $ids)->update([
+                'email_fetch_attempted_at' => now(),
+                'email_fetch_status' => 'pending',
+            ]);
             FetchAudienceEmailBatchJob::dispatchChunked($ids, $user->id);
             $queued += count($ids);
+            $left -= count($ids);
         }
 
         return $queued;

@@ -94,7 +94,10 @@ class CampaignStepExecutor
                 return $tempLimit->deferredResult($userId);
             }
 
-            if ($deferred = $this->deferIfOverDailyCap($userId, UnipileDailyActionLimiter::ACTION_INVITES)) {
+            if ($deferred = $this->deferIfOverDailyCap(
+                $userId,
+                UnipileDailyActionLimiter::inviteActionForMessage($message),
+            )) {
                 return $deferred;
             }
 
@@ -109,7 +112,7 @@ class CampaignStepExecutor
                     return ['response' => $response];
                 },
                 $userId,
-                UnipileDailyActionLimiter::ACTION_INVITES,
+                UnipileDailyActionLimiter::inviteActionForMessage($message),
             );
         }
 

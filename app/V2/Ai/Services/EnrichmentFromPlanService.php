@@ -47,42 +47,57 @@ class EnrichmentFromPlanService
         if (in_array($mode, ['email', 'both'], true)) {
             $preview = $readiness->previewForLists($leadLists, [], $user->id);
             $batches = $preview['email_fetch']['batches'] ?? [];
+            $fetchable = (int) ($preview['email_fetch']['fetchable'] ?? 0);
 
-            $allIds = [];
-            foreach ($batches as $batch) {
-                foreach ($batch['audience_list_ids'] as $id) {
-                    $allIds[] = (int) $id;
-                }
-            }
-
-            if ($allIds === []) {
+            if ($fetchable <= 0 || $batches === []) {
                 $messages[] = 'No profiles eligible for email enrichment on this list.';
             } else {
-                $capacity = $limiter->queueCapacity($user, count($allIds));
+                $capacity = $limiter->queueCapacity($user, min($fetchable, $limiter->batchSize()));
                 if (! $capacity['allowed']) {
                     throw new \RuntimeException((string) ($capacity['message'] ?? 'Enrichment limit reached.'));
                 }
 
-                $allowedIds = array_slice($allIds, 0, $capacity['max_queue_now']);
-                $allowedSet = array_flip($allowedIds);
+                $maxNow = (int) ($capacity['max_queue_now'] ?? 0);
+                $left = $maxNow;
 
                 foreach ($batches as $batch) {
-                    $ids = array_values(array_filter(
-                        $batch['audience_list_ids'],
-                        fn ($id) => isset($allowedSet[(int) $id]),
-                    ));
-
-                    if ($ids === []) {
+                    if ($left <= 0) {
+                        break;
+                    }
+                    $src = (string) ($batch['list_src'] ?? $listSrc);
+                    if ($src === 'sn') {
+                        $ids = array_values(array_map('intval', $batch['sn_lead_ids'] ?? []));
+                        $ids = array_slice($ids, 0, $left);
+                        if ($ids === []) {
+                            continue;
+                        }
+                        \App\Models\SnLead::query()->whereIn('id', $ids)->update([
+                            'email_fetch_attempted_at' => now(),
+                            'email_fetch_status' => 'pending',
+                        ]);
+                        \App\Jobs\FetchSnEmailBatchJob::dispatchChunked($ids, $user->id, (string) ($batch['list_hash'] ?? $listHash));
+                        $queued += count($ids);
+                        $left -= count($ids);
                         continue;
                     }
 
+                    $ids = array_values(array_map('intval', $batch['audience_list_ids'] ?? []));
+                    $ids = array_slice($ids, 0, $left);
+                    if ($ids === []) {
+                        continue;
+                    }
+                    \App\Models\AudienceList::query()->whereIn('id', $ids)->update([
+                        'email_fetch_attempted_at' => now(),
+                        'email_fetch_status' => 'pending',
+                    ]);
                     FetchAudienceEmailBatchJob::dispatchChunked($ids, $user->id);
                     $queued += count($ids);
+                    $left -= count($ids);
                 }
 
-                $skipped += count($allIds) - $queued;
+                $skipped += max(0, $fetchable - $queued);
                 if ($queued > 0) {
-                    $messages[] = "Queued {$queued} email enrichment job(s).";
+                    $messages[] = "Queued {$queued} email enrichment job(s) (wave capped; daily limit still applies).";
                 }
             }
         }

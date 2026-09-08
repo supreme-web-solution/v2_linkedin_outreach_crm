@@ -114,6 +114,117 @@ class OutreachLeadSyncService
         ])->save();
     }
 
+    /**
+     * Copy newly enriched emails from audience/SN/overlay onto campaign leads that still lack email.
+     *
+     * @param  list<int>|null  $onlyLeadIds
+     */
+    public function refreshMissingEmails(V2OutreachCampaign $campaign, ?array $onlyLeadIds = null): int
+    {
+        $query = V2OutreachLead::query()
+            ->where('outreach_campaign_id', $campaign->id)
+            ->where(function ($q) {
+                $q->whereNull('email')->orWhere('email', '');
+            });
+
+        if ($onlyLeadIds !== null) {
+            $query->whereIn('id', array_map('intval', $onlyLeadIds));
+        }
+
+        $leads = $query->orderBy('id')->limit(500)->get();
+        if ($leads->isEmpty()) {
+            return 0;
+        }
+
+        $userId = (int) $campaign->user_id;
+        $updated = 0;
+
+        foreach ($leads as $lead) {
+            $email = $this->resolveEmailFromSources($lead, $userId);
+            if ($email === null || $email === '') {
+                continue;
+            }
+
+            $lead->forceFill(['email' => $email])->save();
+            $updated++;
+        }
+
+        return $updated;
+    }
+
+    private function resolveEmailFromSources(V2OutreachLead $lead, int $userId): ?string
+    {
+        $src = trim((string) ($lead->source_list_src ?? ''));
+        $recordId = (int) ($lead->source_record_id ?? 0);
+        $meta = is_array($lead->meta) ? $lead->meta : [];
+        $listHash = trim((string) ($meta['list_hash'] ?? ''));
+        $linkedinKey = $this->resolver->normalizeLinkedinKey(
+            (string) ($lead->provider_profile_id ?? ''),
+        );
+
+        if ($linkedinKey !== '') {
+            $overlays = $this->resolver->overlaysForKeys($userId, [$linkedinKey]);
+            $overlayEmail = trim((string) ($overlays[strtolower($linkedinKey)]['email'] ?? ''));
+            if ($overlayEmail !== '') {
+                return $overlayEmail;
+            }
+        }
+
+        if ($src === 'aud' && $recordId > 0) {
+            $row = AudienceList::query()->find($recordId);
+            $email = trim((string) ($row?->con_email ?? ''));
+            if ($email !== '') {
+                return $email;
+            }
+        }
+
+        if ($src === 'sn' && $recordId > 0) {
+            $row = SnLead::query()->find($recordId);
+            $email = trim((string) ($row?->email ?? ''));
+            if ($email !== '') {
+                return $email;
+            }
+        }
+
+        if ($listHash !== '' && $linkedinKey !== '') {
+            if ($src === 'aud' || $src === '') {
+                $row = AudienceList::query()
+                    ->where('audience_id', $listHash)
+                    ->where(function ($q) use ($linkedinKey, $lead) {
+                        $pub = (string) ($lead->provider_profile_id ?? '');
+                        $q->where('con_public_identifier', $linkedinKey);
+                        if ($pub !== '') {
+                            $q->orWhere('con_public_identifier', $pub)
+                                ->orWhere('con_id', $pub);
+                        }
+                    })
+                    ->first();
+                $email = trim((string) ($row?->con_email ?? ''));
+                if ($email !== '') {
+                    return $email;
+                }
+            }
+            if ($src === 'sn' || $src === '') {
+                $row = SnLead::query()
+                    ->where('sn_list_id', $listHash)
+                    ->where(function ($q) use ($linkedinKey, $lead) {
+                        $pub = (string) ($lead->provider_profile_id ?? '');
+                        $q->where('lid', $linkedinKey)->orWhere('sn_lid', $linkedinKey);
+                        if ($pub !== '') {
+                            $q->orWhere('lid', $pub)->orWhere('sn_lid', $pub);
+                        }
+                    })
+                    ->first();
+                $email = trim((string) ($row?->email ?? ''));
+                if ($email !== '') {
+                    return $email;
+                }
+            }
+        }
+
+        return null;
+    }
+
     public function markSyncComplete(V2OutreachCampaign $campaign, int $added): void
     {
         $meta = is_array($campaign->meta) ? $campaign->meta : [];

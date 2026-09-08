@@ -16,6 +16,9 @@ class UnipileDailyActionLimiter
 {
     public const ACTION_INVITES = 'invites';
 
+    /** Connection invites that include a personal note (LinkedIn ~5/day). */
+    public const ACTION_NOTED_INVITES = 'noted_invites';
+
     public const ACTION_NEW_CHATS = 'new_chats';
 
     public const ACTION_MESSAGES = 'messages';
@@ -23,10 +26,21 @@ class UnipileDailyActionLimiter
     /** Account-wide LinkedIn cool-down label (no separate daily cap). */
     public const ACTION_LINKEDIN = 'linkedin';
 
+    /**
+     * Blank-note invites use the regular invite cap; noted invites use the tighter noted cap.
+     */
+    public static function inviteActionForMessage(?string $message): string
+    {
+        return trim((string) $message) !== ''
+            ? self::ACTION_NOTED_INVITES
+            : self::ACTION_INVITES;
+    }
+
     public function limitFor(string $action): int
     {
         return (int) match ($action) {
             self::ACTION_INVITES => config('services.unipile_pacing.daily_invites', 40),
+            self::ACTION_NOTED_INVITES => config('services.unipile_pacing.daily_noted_invites', 5),
             self::ACTION_NEW_CHATS => config('services.unipile_pacing.daily_new_chats', 60),
             self::ACTION_MESSAGES => config('services.unipile_pacing.daily_messages', 200),
             default => 0,
@@ -37,6 +51,7 @@ class UnipileDailyActionLimiter
     {
         return match ($action) {
             self::ACTION_INVITES => 'connection invites',
+            self::ACTION_NOTED_INVITES => 'noted connection invites',
             self::ACTION_NEW_CHATS => 'new chats',
             self::ACTION_MESSAGES => 'messages',
             self::ACTION_LINKEDIN => 'LinkedIn actions',

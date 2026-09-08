@@ -37,13 +37,14 @@ class AnalyticsTest extends TestCase
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
             ->component('crm/Analytics')
-            ->has('dailyQuotas.items', 4)
+            ->has('dailyQuotas.items', 5)
             ->where('dailyQuotas.items.0.key', 'invites')
             ->where('dailyQuotas.items.0.used', 1)
-            ->where('dailyQuotas.items.1.key', 'new_chats')
-            ->where('dailyQuotas.items.1.used', 2)
-            ->where('dailyQuotas.items.3.key', 'email_enrichment')
-            ->where('dailyQuotas.items.3.used', 12)
+            ->where('dailyQuotas.items.1.key', 'noted_invites')
+            ->where('dailyQuotas.items.2.key', 'new_chats')
+            ->where('dailyQuotas.items.2.used', 2)
+            ->where('dailyQuotas.items.4.key', 'email_enrichment')
+            ->where('dailyQuotas.items.4.used', 12)
             ->has('dailyQuotas.resets_at')
         );
     }

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Web\AdminAiErrorLogsWebController;
 use App\Http\Controllers\Web\AdminUsersWebController;
 use App\Http\Controllers\Web\ResellerUsersWebController;
 use Illuminate\Support\Facades\Route;
@@ -16,6 +17,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::put('users/entitlements', [AdminUsersWebController::class, 'assignEntitlements'])->name('admin.users.entitlements');
         Route::get('users/{id}/permissions', [AdminUsersWebController::class, 'permissions'])->whereNumber('id')->name('admin.users.permissions');
         Route::post('users/{id}/impersonate', [AdminUsersWebController::class, 'impersonate'])->whereNumber('id')->name('admin.users.impersonate');
+
+        Route::get('ai-errors', [AdminAiErrorLogsWebController::class, 'index'])->name('admin.ai-errors');
     });
 
     Route::middleware('reseller')->prefix('reseller')->group(function () {

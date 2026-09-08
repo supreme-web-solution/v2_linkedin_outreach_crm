@@ -118,6 +118,9 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\n- Enrich a list → prepare_enrichment (list_hash + list_src)"
             ."\n- Start outreach → activate_outreach_campaign after draft exists"
             ."\n- Delete something → delete_resource (kind=outreach|linkedin|lead_list|content_post|inbox_conversation|outreach_template). Campaigns can also use delete_campaign. ALWAYS stages Confirm Delete — never auto-deletes at any autonomy level. lead_list needs list_src; inbox_conversation needs platform"
+            ."\n- Sequence actions MUST use built-in keys only: LinkedIn send_invite (not connect), send_message, visit_profile, like_post, endorse; Email send_email; other channels send_message. Prefer sequence prose like \"Send Invite\" or sequence_steps with those exact action keys"
+            ."\n- LinkedIn Send Invite: leave the invite note EMPTY for volume (higher daily cap). Only attach a note when the user explicitly wants personalized invites — noted invites are capped ~5/day and the rest wait until tomorrow"
+            ."\n- Email in a campaign sequence: enrichment auto-runs in waves of 25 and respects the daily enrichment cap; leftovers continue the next day. Prefer prepare_enrichment only when the user asks to enrich a list before a campaign exists"
             ."\nNever invent CRM numbers; use tools. Never say you messaged prospects unless an execute tool succeeded.";
     }
 

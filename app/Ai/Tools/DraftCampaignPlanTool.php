@@ -39,7 +39,12 @@ class DraftCampaignPlanTool extends GatedTool
             'follow_up_days' => $schema->integer()->min(1)->max(90)->nullable(),
             'source' => $schema->string()->nullable()->description('e.g. competitor audiences, LinkedIn search'),
             'sequence' => $schema->array()->nullable()->description('Ordered prose steps Alex should execute, e.g. ["Send Invite","Wait 3 days","Send Email","Wait 5 days","Follow-up"]. Launch builds a custom sequence from this when possible.'),
-            'sequence_steps' => $schema->array()->nullable()->description('Optional structured steps: {type:action|delay, channel, action, label, wait_days, message, subject, body}'),
+            'sequence_steps' => $schema->array()->nullable()->description(
+                'Optional structured steps. action MUST be a built-in key only: '
+                .'linkedin=visit_profile|send_invite|send_message|like_post|endorse; '
+                .'email=send_email; whatsapp/instagram/telegram/twitter=send_message (twitter also follow). '
+                .'Never use connect — use send_invite for connection requests.',
+            ),
             'list_hash' => $schema->string()->nullable(),
             'list_src' => $schema->string()->enum(['aud', 'sn', 'csv'])->nullable(),
             'list_name' => $schema->string()->nullable(),

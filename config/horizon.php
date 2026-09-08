@@ -81,7 +81,7 @@ return [
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
             'minProcesses' => 1,
-            'maxProcesses' => 1,
+            'maxProcesses' => 2,
             'balanceMaxShift' => 1,
             'balanceCooldown' => 3,
             'memory' => 256,
@@ -98,7 +98,7 @@ return [
             'queue' => ['enrichment'],
             'balance' => 'simple',
             'minProcesses' => 1,
-            'maxProcesses' => 1,
+            'maxProcesses' => 2,
             'balanceMaxShift' => 1,
             'balanceCooldown' => 3,
             'memory' => 256,
@@ -114,7 +114,7 @@ return [
 
     'environments' => [
         'production' => [
-            // Cap main at 2 so enrich (1) + main (2) ≤ 3 workers total on the shared 4GB box.
+            // Cap main at 2; enrichment runs up to 2 concurrent chunk jobs.
             'supervisor-main' => [
                 'minProcesses' => 1,
                 'maxProcesses' => 2,
@@ -124,7 +124,7 @@ return [
             ],
             'supervisor-enrichment' => [
                 'minProcesses' => 1,
-                'maxProcesses' => 1,
+                'maxProcesses' => 2,
                 'force' => true,
             ],
         ],
@@ -136,7 +136,7 @@ return [
             ],
             'supervisor-enrichment' => [
                 'minProcesses' => 1,
-                'maxProcesses' => 1,
+                'maxProcesses' => 2,
             ],
         ],
     ],

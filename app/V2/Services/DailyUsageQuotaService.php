@@ -37,8 +37,14 @@ class DailyUsageQuotaService
                 $this->unipileQuota(
                     $user->id,
                     UnipileDailyActionLimiter::ACTION_INVITES,
-                    'Connection invites',
-                    'Invites sent through campaigns, outreach, and the extension.',
+                    'Connection invites (no note)',
+                    'Blank-note invites through campaigns and outreach (higher daily volume).',
+                ),
+                $this->unipileQuota(
+                    $user->id,
+                    UnipileDailyActionLimiter::ACTION_NOTED_INVITES,
+                    'Noted connection invites',
+                    'Invites with a personal note — LinkedIn typically allows about 5/day; extras wait until tomorrow.',
                 ),
                 $this->unipileQuota(
                     $user->id,
@@ -61,7 +67,11 @@ class DailyUsageQuotaService
     /**
      * Compact invite/message caps for campaign & outreach UI notices.
      *
-     * @return array{invites: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool}, messages: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool}}
+     * @return array{
+     *     invites: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool},
+     *     noted_invites: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool},
+     *     messages: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool}
+     * }
      */
     public function linkedInActionQuotas(User $user): array
     {
@@ -82,6 +92,7 @@ class DailyUsageQuotaService
 
         return [
             'invites' => $pick(UnipileDailyActionLimiter::ACTION_INVITES),
+            'noted_invites' => $pick(UnipileDailyActionLimiter::ACTION_NOTED_INVITES),
             'messages' => $pick(UnipileDailyActionLimiter::ACTION_MESSAGES),
         ];
     }

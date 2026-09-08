@@ -86,6 +86,10 @@ class OutreachStepExecutor
 
         $channel = (string) ($node['channel'] ?? '');
         $action = (string) ($node['action'] ?? '');
+        if ($channel !== '') {
+            $action = OutreachChannelRegistry::normalizeAction($channel, $action);
+            $node['action'] = $action;
+        }
 
         if ($channel === '' || $action === '') {
             return ['status' => 'failed', 'error_message' => 'Step missing channel or action.'];
@@ -107,13 +111,15 @@ class OutreachStepExecutor
             return ['status' => 'failed', 'error_message' => "No executor for channel: {$channel}"];
         }
 
-        if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, $channel, $action)) {
+        if ($deferred = $this->deferIfOverDailyCap((int) $campaign->user_id, $channel, $action, $node)) {
             return $deferred;
         }
 
         $quotaAction = $channel === 'linkedin'
             ? match ($action) {
-                'send_invite' => UnipileDailyActionLimiter::ACTION_INVITES,
+                'send_invite' => UnipileDailyActionLimiter::inviteActionForMessage(
+                    $this->resolver->messageText($node, null),
+                ),
                 'send_message' => UnipileDailyActionLimiter::ACTION_MESSAGES,
                 default => null,
             }
@@ -194,17 +200,21 @@ class OutreachStepExecutor
     /**
      * Reserve daily quota for LinkedIn send actions only.
      * Other platforms use per-channel temporary cool-downs instead.
+     * Noted invites (message attached) use the tighter 5/day cap.
      *
+     * @param  array<string, mixed>  $node
      * @return array<string, mixed>|null
      */
-    private function deferIfOverDailyCap(int $userId, string $channel, string $action): ?array
+    private function deferIfOverDailyCap(int $userId, string $channel, string $action, array $node = []): ?array
     {
         if ($channel !== 'linkedin') {
             return null;
         }
 
         $quotaAction = match ($action) {
-            'send_invite' => UnipileDailyActionLimiter::ACTION_INVITES,
+            'send_invite' => UnipileDailyActionLimiter::inviteActionForMessage(
+                $this->resolver->messageText($node, null),
+            ),
             'send_message' => UnipileDailyActionLimiter::ACTION_MESSAGES,
             default => null,
         };

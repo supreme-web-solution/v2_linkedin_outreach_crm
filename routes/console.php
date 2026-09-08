@@ -26,6 +26,16 @@ Schedule::command('outreach:dispatch-due')
     ->withoutOverlapping()
     ->runInBackground();
 
+Schedule::command('outreach:enrich-email-waves')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('outreach:enrich-email-waves')
+    ->dailyAt('00:20')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 Schedule::command('queue:recover --release-stale')
     ->everyFiveMinutes()
     ->withoutOverlapping()

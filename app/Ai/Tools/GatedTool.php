@@ -84,6 +84,21 @@ abstract class GatedTool implements Tool
                 $durationMs,
             );
 
+            try {
+                app(\App\V2\Ai\Services\AiErrorLogService::class)->capture(
+                    $e,
+                    'tool:'.$this->toolName(),
+                    $this->context->user,
+                    $this->context->organizationId,
+                    $this->context->conversation,
+                    $this->context->channel,
+                    null,
+                    ['args' => $request->all(), 'duration_ms' => $durationMs],
+                );
+            } catch (Throwable) {
+                // never fail the tool path because logging failed
+            }
+
             return json_encode([
                 'ok' => false,
                 'error' => $e->getMessage(),

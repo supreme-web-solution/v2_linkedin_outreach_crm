@@ -79,6 +79,24 @@ class SyncOutreachLeadsAndRunJob implements ShouldQueue
             );
 
             $fresh = $campaign->fresh();
+            if ($fresh) {
+                try {
+                    app(\App\V2\Outreach\CampaignEmailEnrichmentWaveService::class)
+                        ->processCampaign($fresh, 'campaign_start');
+                } catch (Throwable $enrichError) {
+                    report($enrichError);
+                    $logger->log(
+                        $campaign->id,
+                        null,
+                        null,
+                        null,
+                        'info',
+                        'Email enrichment wave skipped: '.$enrichError->getMessage(),
+                    );
+                }
+                $fresh = $fresh->fresh() ?? $fresh;
+            }
+
             if ($fresh && ! empty(($fresh->meta['ai_personalize_first_touch'] ?? false))) {
                 PersonalizeCampaignFirstTouchJob::dispatch($fresh->id, 40);
             }

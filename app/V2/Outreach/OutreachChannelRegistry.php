@@ -201,6 +201,70 @@ class OutreachChannelRegistry
     }
 
     /**
+     * Map LLM / UI aliases onto the action keys each channel executor actually supports.
+     */
+    public static function normalizeAction(string $channel, string $action): string
+    {
+        $channel = strtolower(trim($channel));
+        $action = strtolower(trim(str_replace(['-', ' '], '_', $action)));
+
+        if ($action === '') {
+            return match ($channel) {
+                'email' => 'send_email',
+                'linkedin' => 'send_invite',
+                default => 'send_message',
+            };
+        }
+
+        $aliases = match ($channel) {
+            'linkedin' => [
+                'connect' => 'send_invite',
+                'connection' => 'send_invite',
+                'connection_request' => 'send_invite',
+                'send_connection' => 'send_invite',
+                'invite' => 'send_invite',
+                'invitation' => 'send_invite',
+                'send_invites' => 'send_invite',
+                'send_invitation' => 'send_invite',
+                'message' => 'send_message',
+                'dm' => 'send_message',
+                'chat' => 'send_message',
+                'visit' => 'visit_profile',
+                'view_profile' => 'visit_profile',
+                'profile_visit' => 'visit_profile',
+                'like' => 'like_post',
+                'endorse_skills' => 'endorse',
+            ],
+            'email' => [
+                'email' => 'send_email',
+                'mail' => 'send_email',
+                'send' => 'send_email',
+                'message' => 'send_email',
+            ],
+            'whatsapp', 'instagram', 'telegram', 'twitter' => [
+                'message' => 'send_message',
+                'dm' => 'send_message',
+                'chat' => 'send_message',
+                'send' => 'send_message',
+            ],
+            default => [],
+        };
+
+        $normalized = $aliases[$action] ?? $action;
+        $allowed = array_column(self::allActionsByChannel()[$channel] ?? [], 'key');
+
+        if ($allowed !== [] && ! in_array($normalized, $allowed, true)) {
+            return match ($channel) {
+                'email' => 'send_email',
+                'linkedin' => 'send_invite',
+                default => 'send_message',
+            };
+        }
+
+        return $normalized;
+    }
+
+    /**
      * @return array<string, array<int, array<string, string>>>
      */
     private static function allActionsByChannel(): array

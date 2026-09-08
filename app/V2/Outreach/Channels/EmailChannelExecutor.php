@@ -38,8 +38,28 @@ class EmailChannelExecutor implements ChannelExecutorInterface
         if ($email === '') {
             $email = trim((string) ($lead->meta['email'] ?? ''));
         }
+        if ($email === '') {
+            $email = trim((string) (app(\App\V2\Outreach\CampaignEmailEnrichmentWaveService::class)
+                ->refreshLeadEmail($lead) ?? ''));
+        }
 
         if ($email === '') {
+            // Still enriching or daily cap — retry later instead of permanently skipping.
+            $meta = is_array($campaign->meta) ? $campaign->meta : [];
+            $auto = is_array($meta['auto_email_enrich'] ?? null) ? $meta['auto_email_enrich'] : [];
+            if (! empty($auto['enabled']) || app(\App\V2\Outreach\CampaignEmailEnrichmentWaveService::class)->campaignNeedsEmail($campaign)) {
+                $resumeAt = ! empty($auto['deferred_until_tomorrow'])
+                    ? now()->addDay()->startOfDay()->addMinutes(random_int(10, 40))
+                    : now()->addMinutes(random_int(20, 45));
+
+                return [
+                    'status' => 'deferred',
+                    'error_message' => 'Waiting for email enrichment.',
+                    'next_run_at' => $resumeAt,
+                    'payload' => ['reason' => 'awaiting_email_enrichment'],
+                ];
+            }
+
             return ['status' => 'skipped', 'error_message' => 'Lead has no email address.'];
         }
 

@@ -3,11 +3,13 @@
 namespace App\V2\Ai\Services;
 
 use App\Models\V2OutreachCampaign;
+use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Support\Str;
 
 /**
  * Turns Alex plan sequence prose / structured steps into an executable outreach node_model.
  * Falls back to channel presets when the plan does not describe a usable sequence.
+ * Always maps actions onto OutreachChannelRegistry-supported keys (e.g. connect → send_invite).
  */
 class PlanSequenceNodeBuilder
 {
@@ -25,7 +27,7 @@ class PlanSequenceNodeBuilder
         if ($this->isValidNodeModel($payload['node_model'] ?? null)) {
             return [
                 'template_type' => 'custom',
-                'node_model' => $this->ensureEndNode(array_values($payload['node_model'])),
+                'node_model' => $this->ensureEndNode($this->normalizeNodes(array_values($payload['node_model']))),
                 'custom' => true,
             ];
         }
@@ -36,7 +38,7 @@ class PlanSequenceNodeBuilder
             if ($built !== []) {
                 return [
                     'template_type' => 'custom',
-                    'node_model' => $this->ensureEndNode($built),
+                    'node_model' => $this->ensureEndNode($this->normalizeNodes($built)),
                     'custom' => true,
                 ];
             }
@@ -48,7 +50,7 @@ class PlanSequenceNodeBuilder
             if (count($built) >= 2) {
                 return [
                     'template_type' => 'custom',
-                    'node_model' => $this->ensureEndNode($built),
+                    'node_model' => $this->ensureEndNode($this->normalizeNodes($built)),
                     'custom' => true,
                 ];
             }
@@ -95,10 +97,10 @@ class PlanSequenceNodeBuilder
             }
 
             $channel = Str::lower(trim((string) ($step['channel'] ?? $defaultChannel)));
-            $action = Str::lower(trim((string) ($step['action'] ?? '')));
-            if ($action === '') {
-                $action = $this->defaultActionForChannel($channel);
-            }
+            $action = OutreachChannelRegistry::normalizeAction(
+                $channel,
+                (string) ($step['action'] ?? ''),
+            );
 
             $config = [];
             if ($action === 'send_email') {
@@ -246,13 +248,35 @@ class PlanSequenceNodeBuilder
         return 'linkedin';
     }
 
-    private function defaultActionForChannel(string $channel): string
+    /**
+     * @param  list<array<string, mixed>>  $nodes
+     * @return list<array<string, mixed>>
+     */
+    private function normalizeNodes(array $nodes): array
     {
-        return match ($channel) {
-            'email' => 'send_email',
-            'linkedin' => 'send_message',
-            default => 'send_message',
-        };
+        foreach ($nodes as $i => $node) {
+            if (! is_array($node) || ($node['type'] ?? '') !== 'action') {
+                continue;
+            }
+
+            $channel = Str::lower(trim((string) ($node['channel'] ?? 'linkedin')));
+            $action = OutreachChannelRegistry::normalizeAction($channel, (string) ($node['action'] ?? ''));
+            $nodes[$i]['channel'] = $channel;
+            $nodes[$i]['action'] = $action;
+
+            $label = trim((string) ($node['label'] ?? ''));
+            if ($label === '' || preg_match('/connect/i', $label)) {
+                $nodes[$i]['label'] = match ($action) {
+                    'send_invite' => 'Send Invite',
+                    'send_message' => 'Send Message',
+                    'send_email' => 'Send Email',
+                    'visit_profile' => 'Visit Profile',
+                    default => Str::headline(str_replace('_', ' ', $action)),
+                };
+            }
+        }
+
+        return $nodes;
     }
 
     private function isValidNodeModel(mixed $nodes): bool

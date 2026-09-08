@@ -105,6 +105,8 @@ return [
     */
     'unipile_pacing' => [
         'daily_invites' => (int) env('UNIPILE_DAILY_INVITE_CAP', 40),
+        // LinkedIn typically allows ~5 connection invites WITH a personal note per day.
+        'daily_noted_invites' => (int) env('UNIPILE_DAILY_NOTED_INVITE_CAP', 5),
         'daily_new_chats' => (int) env('UNIPILE_DAILY_NEW_CHAT_CAP', 60),
         'daily_messages' => (int) env('UNIPILE_DAILY_MESSAGE_CAP', 200),
         // Bulk "start all chats": seconds between each queued chat + random jitter

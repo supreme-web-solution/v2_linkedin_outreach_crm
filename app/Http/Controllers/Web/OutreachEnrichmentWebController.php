@@ -44,22 +44,15 @@ class OutreachEnrichmentWebController extends Controller
         );
 
         $batches = $preview['email_fetch']['batches'] ?? [];
-        if ($batches === []) {
+        $fetchable = (int) ($preview['email_fetch']['fetchable'] ?? 0);
+        if ($batches === [] || $fetchable <= 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'No audience profiles are eligible for enrichment.',
+                'message' => 'No profiles are eligible for email enrichment.',
             ], 400);
         }
 
-        $allIds = [];
-        foreach ($batches as $batch) {
-            foreach ($batch['audience_list_ids'] as $id) {
-                $allIds[] = (int) $id;
-            }
-        }
-
-        $requested = count($allIds);
-        $capacity = $limiter->queueCapacity($user, $requested);
+        $capacity = $limiter->queueCapacity($user, min($fetchable, $limiter->batchSize()));
 
         if (! $capacity['allowed']) {
             return response()->json([
@@ -71,27 +64,47 @@ class OutreachEnrichmentWebController extends Controller
             ], $capacity['pending_jobs'] >= $limiter->batchSize() ? 429 : 400);
         }
 
-        $allowedIds = array_slice($allIds, 0, $capacity['max_queue_now']);
-        $allowedSet = array_flip($allowedIds);
+        $left = (int) ($capacity['max_queue_now'] ?? 0);
         $queued = 0;
 
         foreach ($batches as $batch) {
-            $ids = array_values(array_filter(
-                $batch['audience_list_ids'],
-                fn ($id) => isset($allowedSet[(int) $id]),
-            ));
-
-            if ($ids === []) {
+            if ($left <= 0) {
+                break;
+            }
+            $src = (string) ($batch['list_src'] ?? 'aud');
+            if ($src === 'sn') {
+                $ids = array_values(array_map('intval', $batch['sn_lead_ids'] ?? []));
+                $ids = array_slice($ids, 0, $left);
+                if ($ids === []) {
+                    continue;
+                }
+                \App\Models\SnLead::query()->whereIn('id', $ids)->update([
+                    'email_fetch_attempted_at' => now(),
+                    'email_fetch_status' => 'pending',
+                ]);
+                \App\Jobs\FetchSnEmailBatchJob::dispatchChunked($ids, $user->id, (string) ($batch['list_hash'] ?? ''));
+                $queued += count($ids);
+                $left -= count($ids);
                 continue;
             }
 
+            $ids = array_values(array_map('intval', $batch['audience_list_ids'] ?? []));
+            $ids = array_slice($ids, 0, $left);
+            if ($ids === []) {
+                continue;
+            }
+            \App\Models\AudienceList::query()->whereIn('id', $ids)->update([
+                'email_fetch_attempted_at' => now(),
+                'email_fetch_status' => 'pending',
+            ]);
             FetchAudienceEmailBatchJob::dispatchChunked($ids, $user->id);
             $queued += count($ids);
+            $left -= count($ids);
         }
 
-        $skipped = $requested - $queued;
+        $skipped = max(0, $fetchable - $queued);
         $message = $skipped > 0
-            ? "Queued {$queued} enrichment job(s). {$skipped} skipped due to today's daily limit — run again tomorrow."
+            ? "Queued {$queued} enrichment job(s) this wave. {$skipped} left for later waves / tomorrow (daily limit)."
             : "Queued {$queued} enrichment job(s). LinkedIn profile first, then FullEnrich when configured.";
 
         return response()->json([
