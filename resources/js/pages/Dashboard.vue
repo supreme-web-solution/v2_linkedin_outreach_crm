@@ -64,6 +64,7 @@ const props = defineProps<{
 }>();
 
 const executeBusy = ref(false);
+const executeError = ref('');
 
 const page = usePage();
 const user = computed(() => page.props.auth.user as User);
@@ -156,16 +157,25 @@ function xsrf(): string {
 
 async function letAiExecute(): Promise<void> {
     executeBusy.value = true;
+    executeError.value = '';
     try {
         const res = await fetch('/ai-employee/execute-plan', {
             method: 'POST',
             headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf() },
             credentials: 'same-origin',
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+
         if (data.redirect) {
             router.visit(data.redirect);
+            return;
         }
+
+        executeError.value = data.message
+            || (data.empty ? 'Nothing urgent to execute right now — open Command Center for a manual review.' : null)
+            || (!res.ok ? 'Could not stage a plan. Try again from Command Center.' : 'No plan was staged.');
+    } catch {
+        executeError.value = 'Could not reach Alex. Check your connection and try again.';
     } finally {
         executeBusy.value = false;
     }
@@ -310,6 +320,9 @@ async function letAiExecute(): Promise<void> {
                                 <AlexAvatar v-else size="xs" class="mr-1 inline-flex" />
                                 Stage plan
                             </Button>
+                            <p v-if="executeError" class="mt-2 text-xs text-red-600 dark:text-red-400">
+                                {{ executeError }}
+                            </p>
                         </div>
                     </div>
                 </div>

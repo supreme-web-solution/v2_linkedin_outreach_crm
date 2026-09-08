@@ -48,6 +48,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     Route::get('ai-employee/widget/bootstrap', [AiEmployeeWebController::class, 'widgetBootstrap'])->name('ai-employee.widget.bootstrap');
     Route::post('ai-employee/settings', [AiEmployeeWebController::class, 'updateSettings'])->name('ai-employee.settings.update');
     Route::post('ai-employee/chat', [AiEmployeeWebController::class, 'chat'])->name('ai-employee.chat');
+    Route::post('ai-employee/chat/clear', [AiEmployeeWebController::class, 'clearChat'])->name('ai-employee.chat.clear');
     Route::get('ai-employee/messages', [AiEmployeeWebController::class, 'messages'])->name('ai-employee.messages');
     Route::get('ai-employee/attention', [AiEmployeeWebController::class, 'attention'])->name('ai-employee.attention');
     Route::get('ai-employee/nurture', [AiEmployeeWebController::class, 'nurture'])->name('ai-employee.nurture');

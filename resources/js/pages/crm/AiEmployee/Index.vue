@@ -2,7 +2,7 @@
 import { Head, usePage } from '@inertiajs/vue3';
 import AlexAvatar from '@/components/crm/AlexAvatar.vue';
 import CommandCenterEmployeeSettings from '@/components/crm/CommandCenterEmployeeSettings.vue';
-import { Check, Bot, ChevronDown, History, Inbox, Link2, Loader2, MessageCircle, PauseCircle, RefreshCw, Rocket, Send, Undo2, X } from '@lucide/vue';
+import { Check, Bot, ChevronDown, Eraser, History, Inbox, Link2, Loader2, MessageCircle, PauseCircle, RefreshCw, Rocket, Send, Undo2, X } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -162,12 +162,14 @@ const {
     conversationId,
     sending,
     awaitingReply,
+    clearingChat,
     scrollEl,
     hasOlderMessages,
     loadingOlder,
     pendingApprovals: sharedPendingApprovals,
     hydrateFromPage,
     send: sharedSend,
+    clearChat,
     loadOlderMessages,
     onChatScroll,
     scrollBottom,
@@ -670,7 +672,7 @@ function startLinkPolling() {
     }, 3000);
 }
 
-const chatBusy = computed(() => sending.value || awaitingReply.value);
+const chatBusy = computed(() => sending.value || awaitingReply.value || clearingChat.value);
 
 watch(chatBusy, (isBusy, wasBusy) => {
     // After queued reply lands, refresh side panels.
@@ -777,6 +779,22 @@ async function disconnectWhatsApp() {
             </div>
 
             <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
+                <div class="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
+                    <span class="text-muted-foreground text-xs font-medium">Chat</span>
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        class="h-7 px-2 text-[11px] text-muted-foreground"
+                        :disabled="chatBusy || clearingChat"
+                        title="Archive this thread and start fresh. Pending Launch items stay."
+                        @click="clearChat"
+                    >
+                        <Loader2 v-if="clearingChat" class="mr-1 size-3 animate-spin" />
+                        <Eraser v-else class="mr-1 size-3" />
+                        Clear chat
+                    </Button>
+                </div>
                 <div
                     ref="scrollEl"
                     class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4"

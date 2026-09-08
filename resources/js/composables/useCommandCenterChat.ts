@@ -91,6 +91,7 @@ const pendingApprovalsCount = ref(0);
 const pendingApprovals = ref<ApprovalLite[]>([]);
 const sending = ref(false);
 const decidingApprovalId = ref<number | null>(null);
+const clearingChat = ref(false);
 const bootstrapping = ref(false);
 const bootstrapped = ref(false);
 const hasOlderMessages = ref(false);
@@ -583,6 +584,75 @@ async function decideApproval(approvalId: number, decision: 'approve' | 'reject'
     }
 }
 
+async function clearChat(): Promise<boolean> {
+    if (clearingChat.value || sending.value || awaitingReply.value) {
+        return false;
+    }
+
+    const confirmed = window.confirm(
+        'Clear chat and start a fresh thread?\n\n'
+            + 'This archives the current conversation (web + WhatsApp share it). '
+            + 'Pending Launch items stay in Review & Launch. Old messages are kept in the archive, not deleted.',
+    );
+
+    if (!confirmed) {
+        return false;
+    }
+
+    clearingChat.value = true;
+    stopPolling();
+
+    try {
+        const res = await fetch('/ai-employee/chat/clear', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'X-XSRF-TOKEN': xsrf(),
+            },
+            credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.message ?? 'Could not clear chat');
+        }
+
+        conversationId.value = data.conversation_id ?? null;
+        hasOlderMessages.value = Boolean(data.has_older_messages);
+        applyApprovals(data);
+
+        const messages = Array.isArray(data.messages) ? data.messages : [];
+        chat.value = messages.length
+            ? [...messages]
+            : [
+                  {
+                      role: 'assistant',
+                      content: `Hi — I'm ${settings.value.employee_name}, your SociFusion Command Center.\nFresh thread started.`,
+                  },
+              ];
+
+        draft.value = '';
+        bootstrapped.value = true;
+        await scrollBottom();
+        return true;
+    } catch {
+        chat.value = [
+            ...chat.value,
+            {
+                role: 'assistant',
+                content: 'Could not clear the chat. Try again in a moment.',
+                channel: 'web',
+                created_at: new Date().toISOString(),
+            },
+        ];
+        await scrollBottom();
+        return false;
+    } finally {
+        clearingChat.value = false;
+        sending.value = false;
+        awaitingReply.value = false;
+    }
+}
+
 /**
  * Shared Command Center chat API (widget + full page).
  * Always returns the same module-level refs so navigations stay non-blocking.
@@ -598,6 +668,7 @@ export function useCommandCenterChat() {
         sending,
         awaitingReply,
         decidingApprovalId,
+        clearingChat,
         bootstrapping,
         bootstrapped,
         hasOlderMessages,
@@ -606,6 +677,7 @@ export function useCommandCenterChat() {
         bootstrap,
         hydrateFromPage,
         send,
+        clearChat,
         decideApproval,
         approvalApproveLabel,
         approvalRejectLabel,

@@ -272,6 +272,25 @@ class AiEmployeeWebController extends Controller
         return response()->json($result, $status);
     }
 
+    public function clearChat(CommandCenterService $commandCenter): JsonResponse
+    {
+        $user = auth()->user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        abort_unless($orgId > 0, 403);
+
+        $result = $commandCenter->startFreshConversation($user, $orgId);
+        $pending = $commandCenter->pendingApprovals($user, $orgId);
+
+        return response()->json([
+            'conversation_id' => $result['conversation']->id,
+            'archived_conversation_id' => $result['archived_conversation_id'],
+            'messages' => [$result['welcome']],
+            'has_older_messages' => false,
+            'pending_approvals' => $commandCenter->serializeApprovals($pending),
+            'pending_approvals_count' => $pending->count(),
+        ]);
+    }
+
     public function messages(Request $request, CommandCenterService $commandCenter): JsonResponse
     {
         $user = auth()->user();
@@ -507,33 +526,40 @@ class AiEmployeeWebController extends Controller
         try {
             $result = $executor->stage($user, $orgId, $conversation, 'web');
         } catch (\Throwable $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
+            return response()->json([
+                'message' => $e->getMessage(),
+                'redirect' => url('/ai-employee'),
+            ], 422);
         }
 
         if ($result['blocked'] ?? false) {
-            return response()->json(['message' => $result['message'] ?? 'Blocked'], 403);
-        }
-
-        if ($result['empty'] ?? false) {
             return response()->json([
-                'empty' => true,
-                'card' => $result['card'] ?? '',
-            ]);
+                'message' => $result['message'] ?? 'Blocked',
+                'redirect' => url('/ai-employee'),
+            ], 403);
         }
 
-        if (! empty($result['approval_id'])) {
+        $card = trim((string) ($result['card'] ?? ''));
+        if ($card !== '') {
             \App\Models\AiMessage::query()->create([
                 'conversation_id' => $conversation->id,
                 'role' => 'assistant',
-                'content' => $result['card'] ?? '',
-                'meta' => ['channel' => 'web', 'tool' => 'let_ai_execute'],
+                'content' => $card,
+                'meta' => [
+                    'channel' => 'web',
+                    'tool' => 'let_ai_execute',
+                    'empty' => (bool) ($result['empty'] ?? false),
+                    'approval_id' => $result['approval_id'] ?? null,
+                ],
             ]);
         }
 
         return response()->json([
+            'empty' => (bool) ($result['empty'] ?? false),
             'approval_id' => $result['approval_id'] ?? null,
-            'card' => $result['card'] ?? '',
+            'card' => $card,
             'plan' => $result['plan'] ?? [],
+            'message' => $result['message'] ?? null,
             'pending_approvals' => $commandCenter->serializeApprovals(
                 $commandCenter->pendingApprovals($user, $orgId)
             ),

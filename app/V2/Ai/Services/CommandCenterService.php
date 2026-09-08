@@ -68,6 +68,81 @@ class CommandCenterService
     }
 
     /**
+     * Archive the open Command Center thread and open a blank one.
+     * Messages are kept on the archived conversation (not deleted).
+     * Pending Review & Launch approvals are untouched.
+     *
+     * @return array{
+     *     conversation: AiConversation,
+     *     archived_conversation_id: int|null,
+     *     welcome: array<string, mixed>
+     * }
+     */
+    public function startFreshConversation(User $user, int $organizationId): array
+    {
+        $open = AiConversation::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->where('status', 'open')
+            ->orderByDesc('id')
+            ->get();
+
+        $channelIdentityId = $open->first(fn (AiConversation $c) => $c->channel_identity_id)?->channel_identity_id;
+        $archivedId = $open->first()?->id;
+
+        foreach ($open as $conversation) {
+            $conversation->update([
+                'status' => 'archived',
+                'meta' => array_merge(
+                    is_array($conversation->meta) ? $conversation->meta : [],
+                    [
+                        'archived_at' => now()->toIso8601String(),
+                        'archived_reason' => 'clear_chat',
+                    ],
+                ),
+            ]);
+        }
+
+        $fresh = AiConversation::query()->create([
+            'organization_id' => $organizationId,
+            'user_id' => $user->id,
+            'channel' => 'command_center',
+            'channel_identity_id' => $channelIdentityId,
+            'status' => 'open',
+            'title' => 'Command Center',
+            'meta' => [
+                'started_from_clear' => true,
+                'previous_conversation_id' => $archivedId,
+            ],
+        ]);
+
+        $settings = app(AiEmployeeSettingsService::class)->for($user, $organizationId);
+        $name = $settings->employee_name ?: 'Alex';
+        $welcomeContent = "Hi — I'm {$name}, your SociFusion Command Center.\n"
+            ."Fresh thread started. Pending Launch items are still in Review & Launch.\n"
+            .'Tell me what you want to accomplish (same WhatsApp link still works).';
+
+        $welcome = AiMessage::query()->create([
+            'conversation_id' => $fresh->id,
+            'role' => 'assistant',
+            'content' => $welcomeContent,
+            'meta' => ['channel' => 'web', 'system' => 'clear_chat_welcome'],
+        ]);
+
+        return [
+            'conversation' => $fresh,
+            'archived_conversation_id' => $archivedId ? (int) $archivedId : null,
+            'welcome' => [
+                'id' => $welcome->id,
+                'role' => 'assistant',
+                'content' => $welcome->content,
+                'channel' => 'web',
+                'created_at' => $welcome->created_at?->toIso8601String(),
+            ],
+        ];
+    }
+
+    /**
      * Latest message window for Command Center chat (newest last).
      *
      * @return array{messages: Collection<int, AiMessage>, has_older: bool}

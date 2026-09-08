@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Loader2, Rocket, Send, X } from '@lucide/vue';
+import { Eraser, Loader2, Rocket, Send, X } from '@lucide/vue';
 import ChatTypingIndicator from '@/components/crm/ChatTypingIndicator.vue';
 import CommandCenterChannelLabel from '@/components/crm/CommandCenterChannelLabel.vue';
 import { Button } from '@/components/ui/button';
@@ -21,12 +21,14 @@ const {
     sending,
     awaitingReply,
     decidingApprovalId,
+    clearingChat,
     pendingApprovals,
     bootstrapping,
     hasOlderMessages,
     loadingOlder,
     scrollEl,
     send,
+    clearChat,
     decideApproval,
     approvalApproveLabel,
     approvalRejectLabel,
@@ -39,13 +41,32 @@ const {
     showChatDateDivider,
 } = props.chat;
 
-const chatBusy = computed(() => sending.value || awaitingReply.value || decidingApprovalId.value !== null);
+const chatBusy = computed(
+    () => sending.value || awaitingReply.value || decidingApprovalId.value !== null || clearingChat.value,
+);
 
 const actionableApprovals = computed(() => (pendingApprovals.value ?? []).slice(0, 3));
 </script>
 
 <template>
     <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div class="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2">
+            <span class="text-muted-foreground text-xs font-medium">Chat</span>
+            <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                class="h-7 px-2 text-[11px] text-muted-foreground"
+                :disabled="chatBusy || bootstrapping"
+                title="Archive this thread and start fresh. Pending Launch items stay."
+                @click="clearChat"
+            >
+                <Loader2 v-if="clearingChat" class="mr-1 size-3 animate-spin" />
+                <Eraser v-else class="mr-1 size-3" />
+                Clear chat
+            </Button>
+        </div>
+
         <div
             ref="scrollEl"
             class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3"
@@ -123,7 +144,7 @@ const actionableApprovals = computed(() => (pendingApprovals.value ?? []).slice(
                 </template>
 
                 <ChatTypingIndicator
-                    v-if="chatBusy"
+                    v-if="chatBusy && !clearingChat"
                     :name="settings.employee_name"
                     :show-label="!compact"
                 />

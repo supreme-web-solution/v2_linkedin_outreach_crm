@@ -200,6 +200,17 @@ async function connectChannel(conn: Connection): Promise<void> {
         });
         const data = await res.json();
 
+        if (!res.ok || data.kind === 'error') {
+            const hint = typeof data.hint === 'string' && data.hint.trim() !== ''
+                ? `\n\n${data.hint}`
+                : '';
+            chat.value.push({
+                role: 'assistant',
+                content: `Couldn't open **${conn.label}** connect right now. ${data.message ?? 'Unipile connection failed.'}${hint}`,
+            });
+            return;
+        }
+
         if (data.kind === 'whatsapp_command') {
             waLink.value = {
                 code: data.code,
@@ -219,12 +230,9 @@ async function connectChannel(conn: Connection): Promise<void> {
         }
 
         if (data.redirect_url) {
-            chat.value.push({
-                role: 'assistant',
-                content: `Opening **${conn.label}** in a new tab… come back here when done.`,
-            });
-            window.open(data.redirect_url, '_blank', 'noopener');
-            startPolling();
+            // Same as Integrations: leave this page for Unipile hosted auth (same window).
+            window.location.assign(data.redirect_url);
+            return;
         }
     } finally {
         busy.value = false;
@@ -349,10 +357,35 @@ onMounted(async () => {
 
     const params = new URLSearchParams(window.location.search);
     if (params.get('onboarding') === '1') {
-        if (params.get('connected')) {
+        const connectedKey = params.get('channel') || params.get('connected');
+        const erroredKey = params.get('error') || params.get('channel_error');
+        if (connectedKey && connectedKey !== '1') {
+            await refreshStatus();
+            const conn = status.value.connections.find((c) => c.key === connectedKey);
+            const label = conn?.label ?? connectedKey;
+            const isDone = Boolean(conn?.connected);
             chat.value.push({
                 role: 'assistant',
-                content: 'Nice — I detected your new connection. Keep going or open Command Center when ready.',
+                content: isDone
+                    ? `**${label}** is connected. Keep going with the checklist, or open Command Center when ready.`
+                    : `**${label}** connection finished on Unipile — if Done doesn't show yet, tap Refresh.`,
+            });
+            startPolling();
+        } else if (params.get('connected') === '1') {
+            await refreshStatus();
+            const channel = params.get('channel');
+            const conn = channel ? status.value.connections.find((c) => c.key === channel) : null;
+            chat.value.push({
+                role: 'assistant',
+                content: conn?.connected
+                    ? `**${conn.label}** is connected. Keep going with the checklist, or open Command Center when ready.`
+                    : 'Nice — connection saved. Keep going with the checklist.',
+            });
+            startPolling();
+        } else if (erroredKey && erroredKey !== '1') {
+            chat.value.push({
+                role: 'assistant',
+                content: `**${erroredKey}** connection didn't finish. Tap Connect again when you're ready.`,
             });
         }
         window.history.replaceState({}, '', '/dashboard');

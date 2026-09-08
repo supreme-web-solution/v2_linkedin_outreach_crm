@@ -114,6 +114,61 @@ class AiEmployeeWebChatQueueTest extends TestCase
         );
     }
 
+    public function test_clear_chat_archives_thread_and_starts_fresh(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $commandCenter = app(CommandCenterService::class);
+        $old = $commandCenter->conversation($user, $org->id);
+
+        AiMessage::query()->create([
+            'conversation_id' => $old->id,
+            'role' => 'user',
+            'content' => 'old message',
+            'meta' => ['channel' => 'web'],
+        ]);
+
+        $pending = \App\Models\AiActionApproval::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'conversation_id' => $old->id,
+            'tool' => 'propose_strategy',
+            'permission' => 'prepare',
+            'status' => 'pending',
+            'payload' => ['type' => 'strategy', 'goal' => 'Sell SociFusion'],
+        ]);
+
+        $response = $this->actingAs($user)->postJson('/ai-employee/chat/clear');
+
+        $response->assertOk()
+            ->assertJsonPath('has_older_messages', false)
+            ->assertJsonStructure(['conversation_id', 'archived_conversation_id', 'messages', 'pending_approvals']);
+
+        $this->assertNotSame($old->id, (int) $response->json('conversation_id'));
+        $this->assertSame($old->id, (int) $response->json('archived_conversation_id'));
+
+        $this->assertDatabaseHas('ai_conversations', [
+            'id' => $old->id,
+            'status' => 'archived',
+        ]);
+        $this->assertDatabaseHas('ai_conversations', [
+            'id' => $response->json('conversation_id'),
+            'status' => 'open',
+        ]);
+        $this->assertDatabaseHas('ai_messages', [
+            'conversation_id' => $old->id,
+            'content' => 'old message',
+        ]);
+        $this->assertDatabaseHas('ai_action_approvals', [
+            'id' => $pending->id,
+            'status' => 'pending',
+        ]);
+
+        $fresh = $commandCenter->conversation($user, $org->id);
+        $this->assertSame((int) $response->json('conversation_id'), $fresh->id);
+        $this->assertSame(1, count($response->json('messages')));
+        $this->assertSame('assistant', $response->json('messages.0.role'));
+    }
+
     /**
      * @return array{0:User, 1:V2Organization}
      */

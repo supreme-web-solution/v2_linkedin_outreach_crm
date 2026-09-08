@@ -292,8 +292,8 @@ class OnboardingWizardService
             $user,
             $channelKey,
             $request,
-            '/dashboard?onboarding=1&connected='.$channelKey,
-            '/dashboard?onboarding=1&error='.$channelKey,
+            '/dashboard?onboarding=1&connected=1&channel='.$channelKey,
+            '/dashboard?onboarding=1&error=1&channel='.$channelKey,
         );
 
         return [
