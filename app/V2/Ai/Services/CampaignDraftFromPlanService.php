@@ -39,11 +39,26 @@ class CampaignDraftFromPlanService
         $payload = $approval->payload ?? [];
         $orgId = (int) $approval->organization_id;
 
+        // Re-hydrate audience at launch so profile_url / one-shot cannot keep a wrong list.
+        $payload = $this->audienceResolver->enrichPlanWithAudience($user, $payload);
+
         $audience = $this->audienceResolver->resolve($user, $payload, strict: true);
         if ($audience === null) {
             throw new MissingProspectAudienceException(
                 'No prospect list is attached to this plan.',
                 $this->audienceResolver->nextSteps($payload),
+            );
+        }
+
+        $isOneShot = app(PlanSequenceNodeBuilder::class)->isOneShotIntent($payload);
+        if ($isOneShot && (int) ($audience['total_leads'] ?? 0) > 1) {
+            throw new MissingProspectAudienceException(
+                'This is a one-person send, but the attached list has '.$audience['total_leads']
+                .' leads. Provide the exact LinkedIn profile URL (or a 1-person list) so the wrong person is not messaged.',
+                [
+                    'Pass profile_url=https://www.linkedin.com/in/... into draft_campaign_plan',
+                    'Or confirm the single correct profile from sample_profiles before Launch',
+                ],
             );
         }
 
@@ -75,10 +90,13 @@ class CampaignDraftFromPlanService
                 'created_via' => 'command_center',
                 'ai_personalize_first_touch' => true,
                 'ai_custom_sequence' => $resolved['custom'],
+                'one_shot' => $isOneShot,
                 // Cap how many leads sync from a large source list when the plan asked for N.
-                'max_leads' => isset($payload['target_count'])
-                    ? max(1, min(500, (int) $payload['target_count']))
-                    : null,
+                'max_leads' => $isOneShot
+                    ? 1
+                    : (isset($payload['target_count'])
+                        ? max(1, min(500, (int) $payload['target_count']))
+                        : null),
                 'channel_inbox' => $this->defaultChannelInbox($nodeModel, $payload, $goal),
             ],
         ]);
@@ -130,6 +148,10 @@ class CampaignDraftFromPlanService
 
         if ($has('instagram') && ! $has('linkedin')) {
             return 'instagram_only';
+        }
+
+        if ($has('twitter') && ! $has('linkedin') && ! $has('instagram')) {
+            return 'twitter_only';
         }
 
         if ($has('telegram') && $has('linkedin')) {

@@ -37,6 +37,7 @@ class DiscoverProspectsService
         ?string $title = null,
         ?string $company = null,
         ?bool $openLink = null,
+        ?string $profileUrl = null,
     ): array {
         $limit = max(1, min(20, $limit));
         $query = trim($query);
@@ -44,7 +45,7 @@ class DiscoverProspectsService
         $targetCount = $targetCount !== null ? max(10, min(500, $targetCount)) : null;
 
         // Any explicit net-new size (or prefer_fresh) → LinkedIn search + SAVE, do not reuse engagers lists.
-        $forceFresh = $preferFresh || $targetCount !== null;
+        $forceFresh = $preferFresh || $targetCount !== null || ($profileUrl !== null && trim($profileUrl) !== '');
 
         $lists = $this->matchLeadLists($user, $query, $limit, includeWeakFallback: ! $forceFresh);
         $competitorAudiences = $forceFresh
@@ -61,13 +62,15 @@ class DiscoverProspectsService
             'goal' => $query,
             'icp_notes' => $query,
             'audience' => $query,
-            'target_count' => $targetCount ?? 100,
+            'target_count' => $profileUrl ? 1 : ($targetCount ?? 100),
             'prefer_fresh_audience' => $forceFresh,
             'geography' => $geography,
             'network_degree' => $networkDegree,
             'title' => $title,
             'current_company' => $company,
             'open_link' => $openLink,
+            'profile_url' => $profileUrl,
+            'linkedin_url' => $profileUrl,
         ], fn ($v) => $v !== null && $v !== '');
 
         // Only attach a saved list before search when it is a strong name match AND user did not ask for fresh N.
@@ -111,12 +114,15 @@ class DiscoverProspectsService
                 if (! empty($autoSourced['network_depths'])) {
                     $planProbe['network_depths'] = $autoSourced['network_depths'];
                 }
-                if (! empty($autoSourced['first_degree_only'])) {
-                    $planProbe['first_degree_only'] = true;
-                }
-                if (! empty($autoSourced['search_filters'])) {
-                    $planProbe['search_filters'] = $autoSourced['search_filters'];
-                }
+            if (! empty($autoSourced['first_degree_only'])) {
+                $planProbe['first_degree_only'] = true;
+            }
+            if (! empty($autoSourced['search_filters'])) {
+                $planProbe['search_filters'] = $autoSourced['search_filters'];
+            }
+            if (! empty($autoSourced['sample_profiles'])) {
+                $planProbe['sample_profiles'] = $autoSourced['sample_profiles'];
+            }
                 $resolved = $autoSourced;
                 $merged = $merged->prepend(array_merge($autoSourced, [
                     'origin' => 'linkedin_search',
@@ -161,6 +167,31 @@ class DiscoverProspectsService
                 $nextSteps[] = 'Network filter: '.implode(',', $autoSourced['network_depths'])
                     .' (F=1st connected, S=2nd, O=3rd+). Plan invites only when S/O (or mixed) — not for F-only.';
             }
+            $samples = $autoSourced['sample_profiles'] ?? [];
+            if (is_array($samples) && $samples !== []) {
+                $nextSteps[] = 'Matching profiles (share these links + details with the user to confirm):';
+                foreach (array_slice($samples, 0, 5) as $i => $profile) {
+                    if (! is_array($profile)) {
+                        continue;
+                    }
+                    $line = ($i + 1).'. '
+                        .($profile['name'] ?? 'Unknown')
+                        .(isset($profile['headline']) && $profile['headline'] ? ' — '.$profile['headline'] : '')
+                        .(isset($profile['company']) && $profile['company'] ? ' @ '.$profile['company'] : '')
+                        .(isset($profile['location']) && $profile['location'] ? ' ('.$profile['location'].')' : '')
+                        .(isset($profile['profile_url']) && $profile['profile_url'] ? ' | '.$profile['profile_url'] : '');
+                    $nextSteps[] = $line;
+                    if (! empty($profile['about'])) {
+                        $nextSteps[] = '   About: '.$profile['about'];
+                    }
+                }
+            }
+            if (! empty($autoSourced['profile_detail']) && is_array($autoSourced['profile_detail'])) {
+                $detail = $autoSourced['profile_detail'];
+                $nextSteps[] = 'Profile detail loaded for '.$($detail['name'] ?? 'this person')
+                    .(! empty($detail['headline']) ? ' — '.$detail['headline'] : '')
+                    .'. Use this when drafting a personalized one-shot.';
+            }
             if ($targetCount !== null && $found < $targetCount) {
                 $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Ask Alex to discover again to grow this same saved list (≤100 per run).";
             }
@@ -193,6 +224,8 @@ class DiscoverProspectsService
             'search_filters' => $searchFilters,
             'network_depths' => $autoSourced['network_depths'] ?? ($searchFilters['network_depths'] ?? null),
             'first_degree_only' => $firstDegree,
+            'sample_profiles' => $autoSourced['sample_profiles'] ?? [],
+            'profile_detail' => $autoSourced['profile_detail'] ?? null,
             'campaign_hint' => $firstDegree
                 ? '1st-degree list: plan LinkedIn DM sequence only (no send_invite / invite_accepted).'
                 : null,

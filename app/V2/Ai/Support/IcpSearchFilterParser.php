@@ -106,15 +106,21 @@ class IcpSearchFilterParser
             $variants[] = self::pack($primaryKeywords, null, $location, $limit, $audienceName, $targetMeetings, $icp, $extras);
         }
 
-        if (count($industries) >= 1) {
+        $personLookup = ! empty($explicit['skip_industry_fallbacks']) || self::looksLikePersonLookup($raw);
+
+        if (! $personLookup && count($industries) >= 1) {
             $broad = implode(' ', array_slice($industries, 0, 2));
             $variants[] = self::pack($broad, $titles[0] ?? null, $location, $limit, $audienceName, $targetMeetings, $icp, $extras);
             $variants[] = self::pack($broad, null, $location, $limit, $audienceName, $targetMeetings, $icp, $extras);
         }
 
-        foreach (['B2B SaaS', 'sales agency', 'lead generation', 'outbound sales'] as $fallbackKw) {
-            $variants[] = self::pack($fallbackKw, 'Founder', $location, $limit, $audienceName, $targetMeetings, $icp, $extras);
-            $variants[] = self::pack($fallbackKw, null, $location, $limit, $audienceName, $targetMeetings, $icp, $extras);
+        // Never expand a person-name / one-shot lookup into unrelated ICP keywords
+        // (that caused "Eleazar" searches to become B2B SaaS founders).
+        if (! $personLookup) {
+            foreach (['B2B SaaS', 'sales agency', 'lead generation', 'outbound sales'] as $fallbackKw) {
+                $variants[] = self::pack($fallbackKw, 'Founder', $location, $limit, $audienceName, $targetMeetings, $icp, $extras);
+                $variants[] = self::pack($fallbackKw, null, $location, $limit, $audienceName, $targetMeetings, $icp, $extras);
+            }
         }
 
         $seen = [];
@@ -129,9 +135,62 @@ class IcpSearchFilterParser
             $unique[] = $variant;
         }
 
-        return $unique !== [] ? $unique : [
+        if ($unique !== []) {
+            return $unique;
+        }
+
+        if ($personLookup) {
+            $nameKw = trim(preg_replace('/\s+/', ' ', $icp !== '' ? $icp : $raw) ?? '');
+            $nameKw = Str::limit($nameKw !== '' ? $nameKw : 'LinkedIn profile', 80, '');
+
+            return [
+                self::pack($nameKw, null, $location, max(1, min(25, $limit)), $audienceName, $targetMeetings, $icp, $extras),
+            ];
+        }
+
+        return [
             self::pack('B2B sales', 'Founder', $location, $limit, 'B2B sales leaders', $targetMeetings, $icp, $extras),
         ];
+    }
+
+    /**
+     * True when the query is "find this person" rather than an ICP / volume search.
+     */
+    public static function looksLikePersonLookup(string $query): bool
+    {
+        $raw = trim($query);
+        if ($raw === '') {
+            return false;
+        }
+
+        if (preg_match('#linkedin\.com/in/[\w%-]+#i', $raw)) {
+            return true;
+        }
+
+        $lower = Str::lower($raw);
+        if (preg_match('/\b(book|meetings?|founders?|owners?|saas|agency|outreach|campaign|prospects?|icp|pipeline|webinar)\b/i', $lower)) {
+            return false;
+        }
+
+        if (preg_match('/\b(profile|connection|message\s+(him|her|them)|greet(ing)?|send\s+(him|her|them)|exact\s+person|one\s+person|this\s+person)\b/i', $lower)) {
+            return true;
+        }
+
+        // Short name-like queries: "Eleazar Nzerem", "John Smith video editor"
+        $words = preg_split('/\s+/', preg_replace('/[^\p{L}\p{N}\s\-]/u', ' ', $raw) ?? '') ?: [];
+        $words = array_values(array_filter($words, fn ($w) => $w !== ''));
+        if (count($words) >= 1 && count($words) <= 6 && strlen($raw) <= 80) {
+            $nameLike = 0;
+            foreach ($words as $word) {
+                if (preg_match('/^[\p{L}][\p{L}\'\-]{1,}$/u', $word)) {
+                    $nameLike++;
+                }
+            }
+
+            return $nameLike >= max(1, count($words) - 2);
+        }
+
+        return false;
     }
 
     /**

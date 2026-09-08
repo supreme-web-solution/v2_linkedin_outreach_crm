@@ -190,6 +190,18 @@ class V2OutreachCampaign extends Model
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
                 ],
             ],
+            'twitter_only' => [
+                'label' => 'Twitter / X DM Sequence',
+                'description' => 'Twitter/X DMs. Import @handles via save_contacts or CSV, then prepare contacts before volume sends.',
+                'icon' => 'twitter',
+                'color' => 'sky',
+                'node_model' => [
+                    ['key' => 1, 'type' => 'action', 'channel' => 'twitter', 'action' => 'send_message', 'label' => 'Twitter Intro', 'config' => ['message' => 'Hey {{firstName}} — quick note for you.']],
+                    ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
+                    ['key' => 3, 'type' => 'action', 'channel' => 'twitter', 'action' => 'send_message', 'label' => 'Twitter Follow-up', 'config' => ['message' => 'Hi {{firstName}}, bumping this in case you missed it.']],
+                    ['key' => 99, 'type' => 'end', 'label' => 'End'],
+                ],
+            ],
             'telegram_only' => [
                 'label' => 'Telegram Sequence',
                 'description' => 'Direct Telegram outreach. Import phone or @handles via CSV, then Prepare contacts before launch.',

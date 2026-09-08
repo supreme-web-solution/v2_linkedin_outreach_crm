@@ -35,6 +35,7 @@ use App\Ai\Tools\MoveLeadToNurtureTool;
 use App\Ai\Tools\PrepareCallManagerLaunchTool;
 use App\Ai\Tools\PrepareLinkedInPostTool;
 use App\Ai\Tools\RescheduleContentPostsTool;
+use App\Ai\Tools\SaveContactsTool;
 use App\Ai\Tools\SendInboxReplyTool;
 use App\Ai\Tools\ProposeStrategyTool;
 use App\Ai\Tools\QualifyLeadTool;
@@ -105,13 +106,17 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\n- Maybe later / not now → move_lead_to_nurture (90-day default pause on outreach); due follow-ups → get_nurture_due_queue"
             ."\n- Integrations → check_integrations before Launch; Launch is blocked until required channels are connected"
             ."\n- Campaign inbox AI → configure_campaign_inbox_ai (pause_on_reply default ON; optional auto_reply + AI context per channel). Replies are handled in inbox — not as sequence action nodes"
-            ."\n- Import contacts → import_leads_csv (stage CSV → user Launch → attach list_hash to next campaign)"
+            ."\n- Import contacts → import_leads_csv (CSV) OR save_contacts (phones, emails, @handles, LinkedIn URLs from chat). Save FIRST, then draft_campaign_plan with list_hash"
             ."\n- Personalized outreach copy → draft_personalized_message (evidence-grounded)"
             ."\n- LinkedIn content → list_content_posts to see drafts/schedules; prepare_linkedin_post to create (pass schedule_at, generate_image:true, or use WhatsApp image+caption); reschedule_content_posts to bulk-move schedules (Autopilot+ applies immediately)"
             ."\n- WhatsApp image + caption → user attached an image; call prepare_linkedin_post using their caption (image is stored automatically). Image-only messages are ignored."
-            ."\n- Instagram DM campaign → draft_campaign_plan with channels \"Instagram\" or \"LinkedIn + Instagram\"; prepare_enrichment for @handles; Launch creates instagram_only or social_dm sequence"
-            ."\n- Telegram campaign → draft_campaign_plan with channels \"Telegram\" or \"LinkedIn + Telegram\"; prepare_enrichment for phone/@handle; Launch creates telegram_only or linkedin_telegram sequence"
-            ."\n- WhatsApp prospect outreach → draft_campaign_plan with channels \"WhatsApp\" (not Zernio Command Center); same Review & Launch flow"
+            ."\n- Phone → WhatsApp: save_contacts with phone → channels=WhatsApp → one_shot/sequence; check_integrations if blocked"
+            ."\n- Instagram / Telegram / Twitter handles → save_contacts → channels=that platform → one_shot or DM-all (no CreatorDB yet — user provides handles)"
+            ."\n- 'DM all these people' → save_contacts for the batch → draft_campaign_plan matching channels + list_hash → Launch"
+            ."\n- Autopilot+: save_contacts persists immediately. Copilot/Assisted: stage Import/Launch before saving"
+            ."\n- Instagram DM campaign → draft_campaign_plan with channels \"Instagram\" or \"LinkedIn + Instagram\"; save_contacts for @handles"
+            ."\n- Telegram campaign → draft_campaign_plan with channels \"Telegram\" or \"LinkedIn + Telegram\"; save_contacts for phone/@handle"
+            ."\n- WhatsApp prospect outreach → draft_campaign_plan with channels \"WhatsApp\" (not Zernio Command Center); save_contacts for phones"
             ."\n- Call Manager outreach → prepare_call_manager_launch (loads a list into /calls; LAUNCH queues LinkedIn chats)"
             ."\n- Sequence timing → adjust_follow_up with campaign_id"
             ."\n- CRM next step → set_next_best_action on a lead or conversation"
@@ -121,6 +126,12 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\n- Plan sequences thoughtfully per goal (Laravel AI decides; Launch builds nodes). Action keys: LinkedIn send_invite|send_message|visit_profile|like_post|endorse; Email send_email; other channels send_message. Conditions: LinkedIn invite_accepted|has_replied|no_reply; Email email_replied|no_reply|email_opened|email_bounced; messaging channels message_replied|no_reply"
             ."\n- LinkedIn: after send_invite ALWAYS use invite_accepted before DMs (accepted = messages; not_accepted = email/WA if those channels are planned). Never a second invite. Empty invite notes for volume unless user wants noted invites (~5/day)"
             ."\n- 1st-degree / already-connected lists: NO send_invite — plan LinkedIn DMs (+ pause_on_reply). 2nd/3rd+ or mixed: invites OK. Discover returns first_degree_only / campaign_hint — honor them"
+            ."\n- One-off greeting / single email / single DM: draft_campaign_plan with one_shot=true + message (+ subject for email) + list_hash or profile_url. Launch builds ONE action node only — never Wait 2/3 days / follow-ups. Still uses outreach queue for LinkedIn limits/tracking (cannot bypass queue from WhatsApp)"
+            ."\n- When discover returns multiple matches, ALWAYS paste sample_profiles (name, headline, about, links) for the user to confirm before messaging. Prefer profile_url once confirmed — never attach a multi-lead search list to a one-person greeting"
+            ."\n- When profile_url is known, pass it into discover_prospects / draft_campaign_plan so profile_detail loads (headline/about/company) and only that person is messaged"
+            ."\n- Email-only sends: channels=Email, attach CSV list_hash — do NOT LinkedIn-search the email address or webinar copy. Tell the user recipient TO address; sender = their connected Email integration"
+            ."\n- LinkedIn daily invite/message caps: if deferred, say so clearly (quota resumes later) — do not invent multi-day sequence waits as the explanation"
+            ."\n- Choose the path by intent (one person vs ICP volume vs email invite vs inbox replies) — do not hardcode every ask into a multi-day LinkedIn template"
             ."\n- Replies: default pause_on_reply — sequence stops so you reply in inbox chat context. Use has_replied/no_reply/message_replied ONLY when the graph must branch (bump if silent vs alternate path). Do not add an \"Alex reply\" sequence step"
             ."\n- Email in a campaign sequence: enrichment auto-runs in waves of 25 and respects the daily enrichment cap; leftovers continue the next day. Prefer prepare_enrichment only when the user asks to enrich a list before a campaign exists"
             ."\nNever invent CRM numbers; use tools. Never say you messaged prospects unless an execute tool succeeded.";
@@ -151,6 +162,7 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             new CheckIntegrationsTool($this->context),
             new ConfigureCampaignInboxAiTool($this->context),
             new ImportLeadsCsvTool($this->context),
+            new SaveContactsTool($this->context),
             new DiscoverProspectsTool($this->context),
             new FindProspectsTool($this->context),
             new AnalyzeCompetitorAudienceTool($this->context),

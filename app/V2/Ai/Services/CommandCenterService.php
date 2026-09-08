@@ -846,7 +846,7 @@ class CommandCenterService
             return $this->launchCampaignDelete($approval, $user);
         }
 
-        if ($tool === 'import_leads_csv' || $type === 'csv_import') {
+        if ($tool === 'import_leads_csv' || $tool === 'save_contacts' || $type === 'csv_import') {
             return $this->launchCsvImport($approval, $user);
         }
 

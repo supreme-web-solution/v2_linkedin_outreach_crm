@@ -3,6 +3,7 @@
 namespace Tests\Unit\V2\Ai;
 
 use App\V2\Ai\Support\IcpSearchFilterParser;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\TestCase;
 
 class IcpSearchFilterParserTest extends TestCase
@@ -78,5 +79,40 @@ class IcpSearchFilterParserTest extends TestCase
 
         $this->assertSame(['S', 'O'], $variants[0]['network_depths']);
         $this->assertSame('Canada', $variants[0]['location']);
+    }
+
+    public function test_person_name_lookup_does_not_fallback_to_b2b_saas(): void
+    {
+        $this->assertTrue(IcpSearchFilterParser::looksLikePersonLookup('Eleazar Nzerem'));
+        $this->assertTrue(IcpSearchFilterParser::looksLikePersonLookup(
+            'Eleazar Nzerem LinkedIn connection exact profile'
+        ));
+
+        $variants = IcpSearchFilterParser::searchVariants(
+            'Eleazar Nzerem LinkedIn connection exact profile',
+            null,
+            10,
+            ['network_depths' => ['F'], 'skip_industry_fallbacks' => true, 'audience_name' => 'eleazar (1)'],
+        );
+
+        $keywords = collect($variants)->pluck('keywords')->filter()->implode(' | ');
+        $this->assertStringNotContainsString('B2B SaaS', $keywords);
+        $this->assertStringNotContainsString('sales agency', $keywords);
+        $this->assertTrue(
+            collect($variants)->contains(fn (array $v) => str_contains(Str::lower((string) ($v['keywords'] ?? '')), 'eleazar'))
+        );
+    }
+
+    public function test_icp_volume_search_still_has_industry_fallbacks(): void
+    {
+        $variants = IcpSearchFilterParser::searchVariants(
+            'Fetch 40 fresh LinkedIn prospects for B2B SaaS founders',
+            null,
+            40,
+        );
+
+        $this->assertTrue(
+            collect($variants)->contains(fn (array $v) => ($v['keywords'] ?? '') === 'B2B SaaS')
+        );
     }
 }

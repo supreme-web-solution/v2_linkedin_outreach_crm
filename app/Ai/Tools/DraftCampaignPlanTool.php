@@ -58,6 +58,12 @@ class DraftCampaignPlanTool extends GatedTool
             'list_name' => $schema->string()->nullable(),
             'network_degree' => $schema->string()->nullable()->description('If audience is 1st/2nd/3rd degree — shapes sequence (1st = no invites).'),
             'first_degree_only' => $schema->boolean()->nullable()->description('true when list is connections-only; Launch builds DM-only LinkedIn sequence.'),
+            'one_shot' => $schema->boolean()->nullable()->description(
+                'true = single send only (one email OR one LinkedIn/WhatsApp DM). No Wait N days, no follow-up. Use for greetings and one-off invites.',
+            ),
+            'message' => $schema->string()->nullable()->description('Exact body for one_shot LinkedIn/WhatsApp/email sends.'),
+            'subject' => $schema->string()->nullable()->description('Email subject when one_shot + Email channel.'),
+            'profile_url' => $schema->string()->nullable()->description('Exact LinkedIn profile URL for a one-person send.'),
         ];
     }
 
@@ -70,28 +76,47 @@ class DraftCampaignPlanTool extends GatedTool
         $hasList = trim((string) ($request['list_hash'] ?? '')) !== '';
         $firstDegree = (bool) ($request['first_degree_only'] ?? false)
             || in_array(strtolower(trim((string) ($request['network_degree'] ?? ''))), ['1st', 'first', 'f', '1'], true);
+        $oneShot = (bool) ($request['one_shot'] ?? false)
+            || (bool) preg_match('/one[-\s]?time|one[-\s]?shot|greeting|just (a )?message|single (email|message)|message (him|her|them)/i', (string) $request['goal']);
+
+        $profileUrl = trim((string) ($request['profile_url'] ?? ''));
+        if ($profileUrl === '' || ! preg_match('#linkedin\.com/in/#i', $profileUrl)) {
+            $blob = (string) $request['goal'].' '.(string) $request['audience'].' '.(string) ($request['message'] ?? '');
+            if (preg_match('#https?://(?:www\.)?linkedin\.com/in/[\w%-]+/?#i', $blob, $m)) {
+                $profileUrl = $m[0];
+            }
+        }
+        if ($profileUrl !== '') {
+            $oneShot = true;
+        }
 
         $sequence = $request['sequence'] ?? null;
-        if (! is_array($sequence) || $sequence === []) {
-            $sequence = $firstDegree
-                ? [
-                    'LinkedIn message (already connected — no invite)',
-                    'Wait 3 days',
-                    'Value follow-up message',
-                    'Wait 5 days',
-                    'Professional close',
-                    'Pause on reply — handle in inbox',
-                ]
-                : [
-                    'Send Invite (empty note)',
-                    'After acceptance',
-                    'Diagnostic / first LinkedIn message',
-                    'Wait 3 days',
-                    'Value follow-up message',
-                    'Wait 5 days',
-                    'Professional close',
-                    'Pause on reply — handle in inbox',
-                ];
+        if (! is_array($sequence) || $sequence === [] || $oneShot) {
+            if ($oneShot) {
+                $sequence = str_contains(strtolower($channels), 'email') && ! str_contains(strtolower($channels), 'linkedin')
+                    ? ['One-time email — no follow-up']
+                    : ['One-time message — no invite, no wait, no follow-up'];
+            } else {
+                $sequence = $firstDegree
+                    ? [
+                        'LinkedIn message (already connected — no invite)',
+                        'Wait 3 days',
+                        'Value follow-up message',
+                        'Wait 5 days',
+                        'Professional close',
+                        'Pause on reply — handle in inbox',
+                    ]
+                    : [
+                        'Send Invite (empty note)',
+                        'After acceptance',
+                        'Diagnostic / first LinkedIn message',
+                        'Wait 3 days',
+                        'Value follow-up message',
+                        'Wait 5 days',
+                        'Professional close',
+                        'Pause on reply — handle in inbox',
+                    ];
+            }
         }
 
         $plan = [
@@ -99,12 +124,12 @@ class DraftCampaignPlanTool extends GatedTool
             'goal' => (string) $request['goal'],
             'audience' => (string) $request['audience'],
             'icp_notes' => (string) $request['audience'],
-            'target_count' => $count,
+            'target_count' => $oneShot ? 1 : $count,
             'preferred_channels' => $channels,
             'channels' => $channels,
-            'follow_up_days' => $days,
+            'follow_up_days' => $oneShot ? 1 : $days,
             'source' => $request['source'] ?? 'LinkedIn search + existing lists',
-            'prefer_fresh_audience' => $explicitTarget && ! $hasList,
+            'prefer_fresh_audience' => ($explicitTarget && ! $hasList && ! $oneShot) || ($oneShot && $profileUrl !== ''),
             'pause_on_reply' => array_key_exists('pause_on_reply', $request->all())
                 ? (bool) $request['pause_on_reply']
                 : true,
@@ -114,28 +139,43 @@ class DraftCampaignPlanTool extends GatedTool
             'ai_context' => trim((string) ($request['ai_context'] ?? '')),
             'network_degree' => $request['network_degree'] ?? null,
             'first_degree_only' => $firstDegree,
+            'one_shot' => $oneShot,
+            'one_time' => $oneShot,
+            'message' => trim((string) ($request['message'] ?? '')),
+            'subject' => trim((string) ($request['subject'] ?? '')),
+            'profile_url' => $profileUrl,
+            'linkedin_url' => $profileUrl,
             'sequence' => array_values(array_map('strval', $sequence)),
-            'sequence_steps' => is_array($request['sequence_steps'] ?? null) ? $request['sequence_steps'] : null,
-            'steps' => [
-                'Confirm audience: '.$request['audience'],
-                'Source prospects ('.$count.' est.)',
-                'Enrich contacts',
-                "Channel sequence: {$channels}",
-                $firstDegree
-                    ? '1st-degree: LinkedIn DMs only (no invites); pause on reply'
-                    : "Follow up for {$days} days; pause on reply and handle in inbox",
-                'Qualify interested prospects and book meetings',
-            ],
+            'sequence_steps' => $oneShot ? null : (is_array($request['sequence_steps'] ?? null) ? $request['sequence_steps'] : null),
+            'steps' => $oneShot
+                ? [
+                    'One recipient / one send only',
+                    'No Wait N days and no follow-up steps',
+                    'Deliver via outreach queue for limits + tracking',
+                ]
+                : [
+                    'Confirm audience: '.$request['audience'],
+                    'Source prospects ('.$count.' est.)',
+                    'Enrich contacts',
+                    "Channel sequence: {$channels}",
+                    $firstDegree
+                        ? '1st-degree: LinkedIn DMs only (no invites); pause on reply'
+                        : "Follow up for {$days} days; pause on reply and handle in inbox",
+                    'Qualify interested prospects and book meetings',
+                ],
             'status' => 'awaiting_review',
         ];
 
         $plan = app(PlanContentService::class)->enrichCampaign($plan);
-        $plan = PlanLeadList::merge(
-            $plan,
-            $request['list_hash'] ?? null,
-            $request['list_src'] ?? null,
-            $request['list_name'] ?? null,
-        );
+        // Prefer profile_url import over a stale multi-lead list for one-shots.
+        if (! ($oneShot && $profileUrl !== '')) {
+            $plan = PlanLeadList::merge(
+                $plan,
+                $request['list_hash'] ?? null,
+                $request['list_src'] ?? null,
+                $request['list_name'] ?? null,
+            );
+        }
         $plan = app(\App\V2\Ai\Services\ProspectAudienceResolverService::class)
             ->enrichPlanWithAudience($this->context->user, $plan);
         $plan = app(\App\V2\Ai\Services\PlanFunnelService::class)

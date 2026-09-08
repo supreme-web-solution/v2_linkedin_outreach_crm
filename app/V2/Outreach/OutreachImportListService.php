@@ -87,6 +87,128 @@ class OutreachImportListService
     }
 
     /**
+     * Create an import list from chat-provided contacts (phone, email, handles, LinkedIn URL).
+     *
+     * @param  list<array<string, mixed>>  $contacts
+     * @return array{list: array<string, mixed>, imported: int, skipped: int, suggested_channel: string|null}
+     */
+    public function createFromContactMaps(User $user, string $listName, array $contacts): array
+    {
+        $headers = $this->templateHeaders();
+        $rows = [];
+        $channelHints = [];
+
+        foreach ($contacts as $contact) {
+            if (! is_array($contact)) {
+                continue;
+            }
+
+            $map = $this->normalizeContactMap($contact);
+            if ($map === null) {
+                continue;
+            }
+
+            $row = [];
+            foreach ($headers as $header) {
+                $row[] = $map[$header] ?? '';
+            }
+            $rows[] = $row;
+
+            foreach (['phone' => 'whatsapp', 'email' => 'email', 'instagram' => 'instagram', 'telegram' => 'telegram', 'twitter' => 'twitter', 'linkedin_url' => 'linkedin'] as $field => $channel) {
+                if (trim((string) ($map[$field] ?? '')) !== '') {
+                    $channelHints[$channel] = ($channelHints[$channel] ?? 0) + 1;
+                }
+            }
+        }
+
+        if ($rows === []) {
+            throw new \InvalidArgumentException(
+                'No valid contacts. Provide at least one of: phone, email, linkedin_url, instagram, telegram, twitter.'
+            );
+        }
+
+        $result = $this->createFromRows($user, $listName, $headers, $rows);
+        arsort($channelHints);
+        $result['suggested_channel'] = $channelHints !== [] ? array_key_first($channelHints) : null;
+
+        return $result;
+    }
+
+    /**
+     * @param  array<string, mixed>  $contact
+     * @return array<string, string>|null
+     */
+    public function normalizeContactMap(array $contact): ?array
+    {
+        $name = trim((string) (
+            $contact['full_name']
+            ?? $contact['name']
+            ?? $contact['first_name']
+            ?? ''
+        ));
+        if ($name === '' && isset($contact['first_name'], $contact['last_name'])) {
+            $name = trim($contact['first_name'].' '.$contact['last_name']);
+        }
+
+        $email = trim((string) ($contact['email'] ?? ''));
+        $phone = trim((string) ($contact['phone'] ?? $contact['whatsapp'] ?? $contact['mobile'] ?? ''));
+        $linkedin = trim((string) ($contact['linkedin_url'] ?? $contact['profile_url'] ?? $contact['linkedin'] ?? ''));
+        $instagram = trim((string) ($contact['instagram'] ?? $contact['instagram_handle'] ?? $contact['ig'] ?? ''));
+        $telegram = trim((string) ($contact['telegram'] ?? $contact['telegram_handle'] ?? $contact['tg'] ?? ''));
+        $twitter = trim((string) ($contact['twitter'] ?? $contact['twitter_handle'] ?? $contact['x'] ?? ''));
+
+        // Allow a single "identifier" field: phone / email / @handle / URL
+        $identifier = trim((string) ($contact['identifier'] ?? $contact['value'] ?? $contact['contact'] ?? ''));
+        if ($identifier !== '') {
+            if (preg_match('/^[^\s@]+@[^\s@]+\.[^\s@]+$/', $identifier) && $email === '') {
+                $email = $identifier;
+            } elseif (preg_match('#linkedin\.com/in/#i', $identifier) && $linkedin === '') {
+                $linkedin = $identifier;
+            } elseif (preg_match('#instagram\.com/([\w.]+)#i', $identifier, $m) && $instagram === '') {
+                $instagram = $m[1];
+            } elseif (preg_match('/^\+?[\d\s\-().]{7,}$/', $identifier) && $phone === '') {
+                $phone = preg_replace('/[^\d+]/', '', $identifier) ?? $identifier;
+            } elseif (str_starts_with($identifier, '@') || preg_match('/^[\w.]{2,30}$/', $identifier)) {
+                $handle = ltrim($identifier, '@');
+                $hint = Str::lower((string) ($contact['platform'] ?? $contact['channel'] ?? ''));
+                if (str_contains($hint, 'telegram') && $telegram === '') {
+                    $telegram = $handle;
+                } elseif ((str_contains($hint, 'twitter') || str_contains($hint, 'x.com') || $hint === 'x') && $twitter === '') {
+                    $twitter = $handle;
+                } elseif ($instagram === '' && $telegram === '' && $twitter === '') {
+                    $instagram = $handle;
+                }
+            }
+        }
+
+        $instagram = ltrim($instagram, '@');
+        $telegram = ltrim($telegram, '@');
+        $twitter = ltrim($twitter, '@');
+
+        if ($name === '' && $email === '' && $phone === '' && $linkedin === '' && $instagram === '' && $telegram === '' && $twitter === '') {
+            return null;
+        }
+
+        if ($name === '') {
+            $name = $email !== '' ? Str::before($email, '@')
+                : ($instagram !== '' ? $instagram
+                    : ($telegram !== '' ? $telegram
+                        : ($twitter !== '' ? $twitter
+                            : ($phone !== '' ? 'Phone contact' : 'Contact'))));
+        }
+
+        return [
+            'full_name' => $name,
+            'email' => $email,
+            'phone' => $phone,
+            'linkedin_url' => $linkedin,
+            'instagram' => $instagram,
+            'telegram' => $telegram,
+            'twitter' => $twitter,
+        ];
+    }
+
+    /**
      * @param  array<int, string>  $headers
      * @param  array<int, array<int, mixed>>  $rows
      * @return array{list: array<string, mixed>, imported: int, skipped: int}

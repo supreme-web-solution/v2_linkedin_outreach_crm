@@ -130,4 +130,54 @@ class PlanSequenceActionNormalizeTest extends TestCase
         $this->assertContains('send_message', $actions);
         $this->assertNull(collect($resolved['node_model'])->firstWhere('condition', 'invite_accepted'));
     }
+
+    public function test_one_shot_email_has_no_waits_or_followups(): void
+    {
+        $resolved = app(PlanSequenceNodeBuilder::class)->resolve([
+            'channels' => 'Email',
+            'one_shot' => true,
+            'goal' => 'Send a one-time webinar invitation email',
+            'subject' => 'You are invited',
+            'message' => 'Hi, join our webinar.',
+        ]);
+
+        $types = collect($resolved['node_model'])->pluck('type')->all();
+        $this->assertSame(['action', 'end'], $types);
+        $this->assertSame('send_email', $resolved['node_model'][0]['action']);
+        $this->assertSame('You are invited', $resolved['node_model'][0]['config']['subject']);
+        $this->assertStringContainsString('webinar', $resolved['node_model'][0]['config']['body']);
+    }
+
+    public function test_one_shot_linkedin_greeting_is_single_dm(): void
+    {
+        $resolved = app(PlanSequenceNodeBuilder::class)->resolve([
+            'channels' => 'LinkedIn',
+            'goal' => 'Send a greeting message to Eleazar',
+            'message' => 'Hello Eleazar, good evening.',
+            'first_degree_only' => true,
+        ]);
+
+        $this->assertTrue(app(PlanSequenceNodeBuilder::class)->isOneShotIntent([
+            'goal' => 'Send a greeting message to Eleazar',
+        ]));
+        $actions = collect($resolved['node_model'])->where('type', 'action')->values();
+        $this->assertCount(1, $actions);
+        $this->assertSame('send_message', $actions[0]['action']);
+        $this->assertSame('Hello Eleazar, good evening.', $actions[0]['config']['message']);
+    }
+
+    public function test_one_time_greeting_goal_never_uses_wait_template(): void
+    {
+        $resolved = app(PlanSequenceNodeBuilder::class)->resolve([
+            'channels' => 'LinkedIn',
+            'goal' => 'Send a one-time greeting to Eleazar Nzerem at https://www.linkedin.com/in/eleazarnzerem',
+            'message' => 'Hello Eleazar, good evening.',
+            'first_degree_only' => true,
+            'profile_url' => 'https://www.linkedin.com/in/eleazarnzerem',
+        ]);
+
+        $types = collect($resolved['node_model'])->pluck('type')->all();
+        $this->assertSame(['action', 'end'], $types);
+        $this->assertFalse(collect($resolved['node_model'])->contains(fn ($n) => ($n['type'] ?? '') === 'delay'));
+    }
 }

@@ -23,6 +23,14 @@ class PlanSequenceNodeBuilder
      */
     public function resolve(array $payload): array
     {
+        if ($this->isOneShotIntent($payload)) {
+            return [
+                'template_type' => 'custom',
+                'node_model' => $this->ensureEndNode($this->rekeyNodes($this->buildOneShotNodes($payload))),
+                'custom' => true,
+            ];
+        }
+
         $fallbackType = app(CampaignDraftFromPlanService::class)->resolveTemplateType($payload);
         $templates = V2OutreachCampaign::templates();
         $fallbackNodes = $templates[$fallbackType]['node_model']
@@ -75,12 +83,95 @@ class PlanSequenceNodeBuilder
     }
 
     /**
+     * One greeting / one email / one DM — never inject Wait N days or follow-ups.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    public function isOneShotIntent(array $payload): bool
+    {
+        if (! empty($payload['one_shot']) || ! empty($payload['one_time']) || ($payload['sequence_mode'] ?? '') === 'one_shot') {
+            return true;
+        }
+
+        $blob = Str::lower(trim(implode(' ', array_filter([
+            (string) ($payload['goal'] ?? ''),
+            (string) ($payload['audience'] ?? ''),
+            (string) ($payload['message'] ?? ''),
+            is_array($payload['sequence'] ?? null) ? implode(' ', $payload['sequence']) : '',
+        ]))));
+
+        return (bool) preg_match(
+            '/\b(one[-\s]?time|one[-\s]?shot|single[-\s]?(email|message|dm|greeting|send)|just\s+(a\s+)?(greeting|hello|message|email)|greeting(\s+(message|only))?|hello[, ]+good\s+evening|message\s+(him|her|them)|send\s+(him|her|them)\s+a\s+(message|greeting|hello)|no\s+follow[-\s]?ups?|without\s+follow[-\s]?up)\b/i',
+            $blob,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return list<array<string, mixed>>
+     */
+    private function buildOneShotNodes(array $payload): array
+    {
+        $channel = $this->primaryChannel($payload);
+        $message = trim((string) (
+            $payload['message']
+            ?? $payload['draft_text']
+            ?? $payload['body']
+            ?? ''
+        ));
+        if ($message === '' && is_array($payload['sequence'] ?? null)) {
+            foreach ($payload['sequence'] as $line) {
+                $line = trim((string) $line);
+                if ($line !== '' && ! preg_match('/wait|pause|after accept|invite|follow/i', $line) && strlen($line) > 12) {
+                    $message = $line;
+                    break;
+                }
+            }
+        }
+        if ($message === '') {
+            $message = $channel === 'email'
+                ? 'Hi {{firstName}}, I wanted to reach out briefly.'
+                : 'Hello {{firstName}}, good evening.';
+        }
+
+        if ($channel === 'email') {
+            $subject = trim((string) ($payload['subject'] ?? 'Quick note'));
+            if ($subject === '') {
+                $subject = 'Quick note';
+            }
+
+            return [[
+                'type' => 'action',
+                'channel' => 'email',
+                'action' => 'send_email',
+                'label' => 'Send Email',
+                'config' => [
+                    'subject' => $subject,
+                    'body' => $message,
+                ],
+            ]];
+        }
+
+        return [[
+            'type' => 'action',
+            'channel' => $channel,
+            'action' => 'send_message',
+            'label' => $channel === 'linkedin' ? 'Send Message' : Str::headline($channel).' Message',
+            'config' => ['message' => $message],
+        ]];
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $nodes
      * @param  array<string, mixed>  $payload
      * @return list<array<string, mixed>>
      */
     private function finalizeNodes(array $nodes, array $payload): array
     {
+        if ($this->isOneShotIntent($payload)) {
+            return $this->ensureEndNode($this->rekeyNodes($this->buildOneShotNodes($payload)));
+        }
+
         $nodes = $this->applyInviteAcceptedIntelligence($nodes, $payload);
         $nodes = $this->applyFirstDegreeAudienceIntelligence($nodes, $payload);
 
@@ -575,14 +666,37 @@ class PlanSequenceNodeBuilder
      */
     private function primaryChannel(array $payload): string
     {
+        $explicit = Str::lower(trim((string) ($payload['primary_channel'] ?? $payload['send_channel'] ?? '')));
+        if (in_array($explicit, ['linkedin', 'email', 'whatsapp', 'telegram', 'instagram', 'twitter'], true)) {
+            return $explicit;
+        }
+
         $channels = Str::lower((string) ($payload['preferred_channels'] ?? $payload['channels'] ?? 'linkedin'));
-        foreach (['linkedin', 'email', 'whatsapp', 'telegram', 'instagram'] as $ch) {
-            if (str_contains($channels, $ch)) {
-                return $ch;
+        $oneShot = ! empty($payload['one_shot']) || ! empty($payload['one_time'])
+            || (($payload['sequence_mode'] ?? '') === 'one_shot');
+
+        // One-shot: prefer the messaging channel the user asked for (phone→WA, @→IG/TG),
+        // not LinkedIn just because it appears first in a combo string.
+        $priority = $oneShot
+            ? ['whatsapp', 'instagram', 'telegram', 'twitter', 'email', 'linkedin']
+            : ['linkedin', 'email', 'whatsapp', 'telegram', 'instagram', 'twitter'];
+
+        $mentioned = [];
+        foreach ($priority as $ch) {
+            if (str_contains($channels, $ch) || ($ch === 'twitter' && (str_contains($channels, ' x ') || str_ends_with($channels, ' x')))) {
+                $mentioned[] = $ch;
             }
         }
 
-        return 'linkedin';
+        if ($mentioned === []) {
+            return 'linkedin';
+        }
+
+        if ($oneShot && count($mentioned) === 1) {
+            return $mentioned[0];
+        }
+
+        return $mentioned[0];
     }
 
     /**

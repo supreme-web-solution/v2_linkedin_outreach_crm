@@ -83,7 +83,7 @@ final class ApprovalActionLabels
 
     private static function isCsvImport(string $tool, string $type): bool
     {
-        return $tool === 'import_leads_csv' || $type === 'csv_import';
+        return $tool === 'import_leads_csv' || $tool === 'save_contacts' || $type === 'csv_import';
     }
 
     private static function isEnrichment(string $tool, string $type): bool

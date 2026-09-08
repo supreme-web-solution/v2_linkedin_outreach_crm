@@ -36,8 +36,30 @@ class LinkedInAudienceBuilderService
      */
     public function tryBuildFromPlan(User $user, int $organizationId, array $plan): ?array
     {
-        $query = trim((string) ($plan['icp_notes'] ?? $plan['audience'] ?? $plan['goal'] ?? ''));
+        $query = trim(implode(' ', array_filter([
+            (string) ($plan['icp_notes'] ?? ''),
+            (string) ($plan['audience'] ?? ''),
+            (string) ($plan['goal'] ?? ''),
+            (string) ($plan['icp_summary'] ?? ''),
+            (string) ($plan['message'] ?? ''),
+        ])));
+        $profileUrl = $this->extractProfileUrl($plan, $query);
+
+        if ($profileUrl !== null) {
+            return $this->importSingleProfileUrl($user, $organizationId, $profileUrl, $plan);
+        }
+
         if ($query === '') {
+            return null;
+        }
+
+        // Never treat an email-only audience string as LinkedIn ICP keywords.
+        if (preg_match('/^[^\s@]+@[^\s@]+\.[^\s@]+$/', $query) || preg_match('/@gmail\.|@yahoo\.|@outlook\./i', $query)) {
+            Log::info('[Alex] LinkedIn audience search skipped — audience looks like email, not LinkedIn ICP', [
+                'user_id' => $user->id,
+                'query' => Str::limit($query, 120),
+            ]);
+
             return null;
         }
 
@@ -50,8 +72,16 @@ class LinkedInAudienceBuilderService
             return null;
         }
 
+        $oneShot = ! empty($plan['one_shot']) || ! empty($plan['one_time'])
+            || (($plan['sequence_mode'] ?? '') === 'one_shot');
+        $personLookup = $oneShot || IcpSearchFilterParser::looksLikePersonLookup($query);
         $targetCount = isset($plan['target_count']) ? (int) $plan['target_count'] : null;
-        $limit = $targetCount !== null ? max(10, min(100, $targetCount)) : null;
+        if ($personLookup && ($targetCount === null || $targetCount > 10)) {
+            $targetCount = min($targetCount ?? 10, 10);
+        }
+        $limit = $targetCount !== null
+            ? ($personLookup ? max(1, min(25, $targetCount)) : max(10, min(100, $targetCount)))
+            : null;
         $explicit = array_filter([
             'geography' => $plan['geography'] ?? null,
             'location' => $plan['location'] ?? null,
@@ -64,6 +94,7 @@ class LinkedInAudienceBuilderService
             'open_link' => $plan['open_link'] ?? null,
             'audience_name' => $plan['audience_name'] ?? $plan['list_name'] ?? null,
             'limit' => $limit,
+            'skip_industry_fallbacks' => $personLookup ? true : null,
         ], fn ($v) => $v !== null && $v !== '');
 
         $variants = IcpSearchFilterParser::searchVariants(
@@ -74,8 +105,9 @@ class LinkedInAudienceBuilderService
         );
 
         if ($targetCount !== null) {
+            $cap = $personLookup ? max(1, min(25, $targetCount)) : max(10, min(100, $targetCount));
             foreach ($variants as $i => $variant) {
-                $variants[$i]['limit'] = max(10, min(100, $targetCount));
+                $variants[$i]['limit'] = $cap;
                 $variants[$i]['audience_name'] = Str::limit(
                     ($variant['audience_name'] ?? 'LinkedIn Search').' ('.$targetCount.')',
                     80,
@@ -265,7 +297,248 @@ class LinkedInAudienceBuilderService
             'total_leads' => $stored,
             'match_score' => 95,
             'auto_sourced' => true,
+            'sample_profiles' => $this->sampleProfilesFromElements($elements, 5),
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     */
+    private function extractProfileUrl(array $plan, string $query): ?string
+    {
+        foreach (['linkedin_url', 'profile_url', 'linkedin_profile_url'] as $key) {
+            $url = trim((string) ($plan[$key] ?? ''));
+            if (preg_match('#linkedin\.com/in/[\w%-]+#i', $url)) {
+                return $url;
+            }
+        }
+
+        if (preg_match('#https?://(?:www\.)?linkedin\.com/in/[\w%-]+/?#i', $query, $m)) {
+            return $m[0];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     * @return array<string, mixed>|null
+     */
+    private function importSingleProfileUrl(User $user, int $organizationId, string $profileUrl, array $plan): ?array
+    {
+        $accountId = V2IntegrationAccount::activeUnipileAccountId($user->id);
+        if (! $accountId) {
+            return null;
+        }
+
+        try {
+            /** @var UnipileProvider $provider */
+            $provider = $this->providerManager->search($this->providerManager->defaultProvider());
+            $profile = $provider->getProfileByUrl($profileUrl, $accountId);
+        } catch (Throwable $e) {
+            Log::warning('[Alex] LinkedIn profile URL import failed', [
+                'user_id' => $user->id,
+                'url' => $profileUrl,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        $profileId = $this->resolveProfileId($profile);
+        if ($profileId === '') {
+            return null;
+        }
+
+        $fullName = trim((string) (
+            Arr::get($profile, 'full_name')
+            ?? Arr::get($profile, 'name')
+            ?? 'LinkedIn profile'
+        ));
+        $publicId = trim((string) (Arr::get($profile, 'public_identifier') ?? Arr::get($profile, 'publicIdentifier') ?? ''));
+        $listHash = 'profile-'.$user->id.'-'.now()->format('YmdHis').Str::lower(Str::random(4));
+        $listHash = Str::limit($listHash, 64, '');
+        $audienceName = Str::limit($fullName !== '' ? $fullName.' (1)' : 'Single LinkedIn profile', 80, '');
+
+        V2Lead::query()->updateOrCreate(
+            [
+                'user_id' => $user->id,
+                'provider' => 'linkedin',
+                'provider_profile_id' => $profileId,
+            ],
+            [
+                'public_identifier' => $publicId !== '' ? $publicId : null,
+                'full_name' => $fullName !== '' ? $fullName : null,
+                'headline' => Arr::get($profile, 'headline'),
+                'company_name' => Arr::get($profile, 'company_name', Arr::get($profile, 'current_company')),
+                'location' => Arr::get($profile, 'location'),
+                'email' => Arr::get($profile, 'email'),
+                'profile_data' => $profile,
+            ],
+        );
+
+        $lead = V2Lead::query()
+            ->where('user_id', $user->id)
+            ->where('provider_profile_id', $profileId)
+            ->first();
+
+        if (! $lead) {
+            return null;
+        }
+
+        V2LeadSource::query()->updateOrCreate(
+            [
+                'lead_id' => $lead->id,
+                'source_type' => 'sales_navigator',
+                'source_external_id' => $listHash,
+            ],
+            [
+                'source_payload' => [
+                    'source_name' => $audienceName,
+                    'imported_at' => now()->toIso8601String(),
+                    'auto_sourced_by' => 'alex',
+                    'profile_url' => $profileUrl,
+                ],
+            ],
+        );
+
+        $this->leadPipeline->syncV2LeadToSnList($user, $lead, $listHash, $audienceName);
+
+        $url = $publicId !== '' ? 'https://www.linkedin.com/in/'.$publicId : $profileUrl;
+        $detail = $this->summarizeProfileDetail($profile, $url);
+
+        return [
+            'list_hash' => $listHash,
+            'list_src' => 'sn',
+            'list_name' => $audienceName,
+            'total_leads' => 1,
+            'match_score' => 100,
+            'auto_sourced' => true,
+            'first_degree_only' => ! empty($plan['first_degree_only']) || (($plan['network_depths'] ?? null) === ['F']),
+            'profile_detail' => $detail,
+            'sample_profiles' => [[
+                'name' => $fullName,
+                'headline' => $detail['headline'] ?? Arr::get($profile, 'headline'),
+                'about' => $detail['about'] ?? null,
+                'location' => $detail['location'] ?? null,
+                'company' => $detail['company'] ?? null,
+                'profile_url' => $url,
+                'public_identifier' => $publicId !== '' ? $publicId : null,
+                'network_distance' => $detail['network_distance'] ?? null,
+            ]],
+        ];
+    }
+
+    /**
+     * Pull readable fields from a Unipile full-profile payload for Alex replies.
+     *
+     * @param  array<string, mixed>  $profile
+     * @return array<string, mixed>
+     */
+    public function summarizeProfileDetail(array $profile, ?string $fallbackUrl = null): array
+    {
+        $publicId = trim((string) (Arr::get($profile, 'public_identifier') ?? Arr::get($profile, 'publicIdentifier') ?? ''));
+        $about = trim((string) (
+            Arr::get($profile, 'summary')
+            ?? Arr::get($profile, 'about')
+            ?? Arr::get($profile, 'description')
+            ?? Arr::get($profile, 'bio')
+            ?? ''
+        ));
+        $location = trim((string) (
+            Arr::get($profile, 'location')
+            ?? Arr::get($profile, 'location_name')
+            ?? Arr::get($profile, 'geo_region')
+            ?? ''
+        ));
+        $company = trim((string) (
+            Arr::get($profile, 'company_name')
+            ?? Arr::get($profile, 'current_company')
+            ?? Arr::get($profile, 'company')
+            ?? ''
+        ));
+        $headline = trim((string) (Arr::get($profile, 'headline') ?? Arr::get($profile, 'occupation') ?? ''));
+
+        $experience = [];
+        $rawExp = Arr::get($profile, 'work_experience')
+            ?? Arr::get($profile, 'experiences')
+            ?? Arr::get($profile, 'positions')
+            ?? Arr::get($profile, 'experience')
+            ?? [];
+        if (is_array($rawExp)) {
+            foreach (array_slice($rawExp, 0, 3) as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $title = trim((string) (Arr::get($row, 'title') ?? Arr::get($row, 'position') ?? Arr::get($row, 'role') ?? ''));
+                $org = trim((string) (Arr::get($row, 'company') ?? Arr::get($row, 'company_name') ?? Arr::get($row, 'organization') ?? ''));
+                if ($title === '' && $org === '') {
+                    continue;
+                }
+                $experience[] = trim($title.($org !== '' ? ' @ '.$org : ''));
+                if ($company === '' && $org !== '') {
+                    $company = $org;
+                }
+            }
+        }
+
+        $network = Arr::get($profile, 'network_distance')
+            ?? Arr::get($profile, 'member_distance')
+            ?? Arr::get($profile, 'distance')
+            ?? null;
+
+        return array_filter([
+            'name' => trim((string) (Arr::get($profile, 'full_name') ?? Arr::get($profile, 'name') ?? '')),
+            'headline' => $headline !== '' ? $headline : null,
+            'about' => $about !== '' ? Str::limit($about, 500, '…') : null,
+            'location' => $location !== '' ? $location : null,
+            'company' => $company !== '' ? $company : null,
+            'experience' => $experience !== [] ? $experience : null,
+            'network_distance' => $network,
+            'profile_url' => $publicId !== ''
+                ? 'https://www.linkedin.com/in/'.$publicId
+                : ($fallbackUrl ?: (Arr::get($profile, 'profile_url') ?? null)),
+            'public_identifier' => $publicId !== '' ? $publicId : null,
+        ], fn ($v) => $v !== null && $v !== '' && $v !== []);
+    }
+
+    /**
+     * @param  list<mixed>  $elements
+     * @return list<array<string, mixed>>
+     */
+    private function sampleProfilesFromElements(array $elements, int $limit = 5): array
+    {
+        $samples = [];
+        foreach ($elements as $item) {
+            if (! is_array($item) || count($samples) >= $limit) {
+                break;
+            }
+            $publicId = trim((string) (
+                Arr::get($item, 'public_identifier')
+                ?? Arr::get($item, 'publicIdentifier')
+                ?? ''
+            ));
+            $name = trim((string) (Arr::get($item, 'full_name') ?? Arr::get($item, 'name') ?? ''));
+            if ($name === '' && $publicId === '') {
+                continue;
+            }
+            $url = $publicId !== ''
+                ? 'https://www.linkedin.com/in/'.$publicId
+                : (Arr::get($item, 'profile_url') ?? Arr::get($item, 'profileUrl'));
+            $detail = $this->summarizeProfileDetail($item, is_string($url) ? $url : null);
+            $samples[] = [
+                'name' => $name !== '' ? $name : $publicId,
+                'headline' => $detail['headline'] ?? Arr::get($item, 'headline'),
+                'about' => $detail['about'] ?? null,
+                'location' => $detail['location'] ?? Arr::get($item, 'location'),
+                'company' => $detail['company'] ?? null,
+                'profile_url' => $detail['profile_url'] ?? $url,
+                'public_identifier' => $publicId !== '' ? $publicId : null,
+                'network_distance' => $detail['network_distance'] ?? null,
+            ];
+        }
+
+        return $samples;
     }
 
     /**

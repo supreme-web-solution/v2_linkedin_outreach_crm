@@ -47,6 +47,9 @@ class DiscoverProspectsTool extends GatedTool
             'title' => $schema->string()->nullable()->description('Job title filter e.g. Founder, VP Sales'),
             'company' => $schema->string()->nullable()->description('Current company name filter'),
             'open_link' => $schema->boolean()->nullable()->description('Only Open Profile / open-to-connect profiles'),
+            'profile_url' => $schema->string()->nullable()->description(
+                'Exact linkedin.com/in/... URL — imports that one person (preferred when user confirms a profile)',
+            ),
             'limit' => $schema->integer()->min(1)->max(20)->nullable(),
         ];
     }
@@ -65,6 +68,7 @@ class DiscoverProspectsTool extends GatedTool
             title: isset($request['title']) ? (string) $request['title'] : null,
             company: isset($request['company']) ? (string) $request['company'] : null,
             openLink: array_key_exists('open_link', $request->all()) ? (bool) $request['open_link'] : null,
+            profileUrl: isset($request['profile_url']) ? (string) $request['profile_url'] : null,
         );
     }
 }

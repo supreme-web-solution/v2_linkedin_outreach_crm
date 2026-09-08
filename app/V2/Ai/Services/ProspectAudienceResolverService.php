@@ -67,12 +67,77 @@ class ProspectAudienceResolverService
      */
     public function enrichPlanWithAudience(User $user, array $plan): array
     {
+        $plan = $this->hydrateProfileUrlFromText($plan);
+        $oneShot = $this->isOneShotPlan($plan);
+        $profileUrl = trim((string) ($plan['profile_url'] ?? $plan['linkedin_url'] ?? ''));
+
+        // One-person profile URL always wins over a stale multi-lead list_hash.
+        if ($profileUrl !== '' && preg_match('#linkedin\.com/in/[\w%-]+#i', $profileUrl)) {
+            $orgId = (int) ($user->current_organization_id ?? 0);
+            $built = $orgId > 0
+                ? $this->linkedInAudience->tryBuildFromPlan($user, $orgId, array_merge($plan, [
+                    'one_shot' => true,
+                    'target_count' => 1,
+                    'profile_url' => $profileUrl,
+                ]))
+                : null;
+
+            if ($built !== null) {
+                $plan = PlanLeadList::merge(
+                    $plan,
+                    $built['list_hash'],
+                    $built['list_src'],
+                    $built['list_name'],
+                );
+                $plan['audience_status'] = 'attached';
+                $plan['audience_leads'] = 1;
+                $plan['audience_note'] = $built['list_name'].' (1 profile from LinkedIn URL)';
+                if ($oneShot) {
+                    $plan['one_shot'] = true;
+                    $plan['one_time'] = true;
+                }
+                $plan['target_count'] = 1;
+                if (! empty($built['profile_detail'])) {
+                    $plan['profile_detail'] = $built['profile_detail'];
+                }
+                if (! empty($built['sample_profiles'])) {
+                    $plan['sample_profiles'] = $built['sample_profiles'];
+                }
+                if (! empty($built['first_degree_only'])) {
+                    $plan['first_degree_only'] = true;
+                }
+
+                return $plan;
+            }
+        }
+
         $explicitHash = trim((string) ($plan['list_hash'] ?? $plan['lead_list_id'] ?? ''));
         $explicitSrc = trim((string) ($plan['list_src'] ?? $plan['lead_list_src'] ?? ''));
         $preferFresh = ! empty($plan['prefer_fresh_audience']);
 
+        // One-shot must not silently reuse a large unrelated list.
+        if ($oneShot && $explicitHash !== '' && $explicitSrc !== '') {
+            $resolvedExplicit = $this->resolve($user, $plan, strict: true);
+            $leads = (int) ($resolvedExplicit['total_leads'] ?? 0);
+            if ($leads > 1) {
+                unset($plan['list_hash'], $plan['list_src'], $plan['list_name'], $plan['lead_list_id'], $plan['lead_list_src']);
+                $explicitHash = '';
+                $explicitSrc = '';
+                $preferFresh = true;
+                $plan['prefer_fresh_audience'] = true;
+                $plan['target_count'] = 1;
+            }
+        }
+
         // Fresh N requested and no explicit list_hash → LinkedIn fetch+save, never silent engagers reuse.
         if ($preferFresh && $explicitHash === '') {
+            if (! $this->shouldAutoSearchLinkedIn($plan)) {
+                $plan['audience_status'] = 'missing';
+                $plan['audience_next_steps'] = $this->nextSteps($plan);
+
+                return $plan;
+            }
+
             $orgId = (int) ($user->current_organization_id ?? 0);
             $built = $orgId > 0
                 ? $this->linkedInAudience->tryBuildFromPlan($user, $orgId, $plan)
@@ -89,6 +154,12 @@ class ProspectAudienceResolverService
                 $plan['audience_leads'] = $built['total_leads'];
                 $plan['audience_note'] = $built['list_name'].' ('.$built['total_leads'].' leads, fetched from LinkedIn and saved)';
                 $plan['prefer_fresh_audience'] = true;
+                if (! empty($built['sample_profiles'])) {
+                    $plan['sample_profiles'] = $built['sample_profiles'];
+                }
+                if (! empty($built['profile_detail'])) {
+                    $plan['profile_detail'] = $built['profile_detail'];
+                }
 
                 return $plan;
             }
@@ -112,6 +183,13 @@ class ProspectAudienceResolverService
         }
 
         if ($match === null) {
+            if (! $this->shouldAutoSearchLinkedIn($plan)) {
+                $plan['audience_status'] = 'missing';
+                $plan['audience_next_steps'] = $this->nextSteps($plan);
+
+                return $plan;
+            }
+
             $orgId = (int) ($user->current_organization_id ?? 0);
             $built = $orgId > 0
                 ? $this->linkedInAudience->tryBuildFromPlan($user, $orgId, $plan)
@@ -250,6 +328,75 @@ class ProspectAudienceResolverService
             (int) $list['total_leads'],
             (int) $best['score'],
         );
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     */
+    private function isOneShotPlan(array $plan): bool
+    {
+        return app(PlanSequenceNodeBuilder::class)->isOneShotIntent($plan);
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     * @return array<string, mixed>
+     */
+    private function hydrateProfileUrlFromText(array $plan): array
+    {
+        $existing = trim((string) ($plan['profile_url'] ?? $plan['linkedin_url'] ?? ''));
+        if ($existing !== '' && preg_match('#linkedin\.com/in/[\w%-]+#i', $existing)) {
+            $plan['profile_url'] = $existing;
+
+            return $plan;
+        }
+
+        $blob = implode(' ', array_filter([
+            (string) ($plan['goal'] ?? ''),
+            (string) ($plan['audience'] ?? ''),
+            (string) ($plan['icp_notes'] ?? ''),
+            (string) ($plan['message'] ?? ''),
+            (string) ($plan['icp_summary'] ?? ''),
+        ]));
+
+        if (preg_match('#https?://(?:www\.)?linkedin\.com/in/[\w%-]+/?#i', $blob, $m)) {
+            $plan['profile_url'] = $m[0];
+            $plan['linkedin_url'] = $m[0];
+        }
+
+        return $plan;
+    }
+
+    /**
+     * Email/WhatsApp-only one-shots must not trigger LinkedIn people search
+     * (that produced garbage lists from webinar copy / email addresses).
+     *
+     * @param  array<string, mixed>  $plan
+     */
+    private function shouldAutoSearchLinkedIn(array $plan): bool
+    {
+        if (! empty($plan['linkedin_url']) || ! empty($plan['profile_url'])) {
+            return true;
+        }
+
+        $channels = Str::lower((string) ($plan['preferred_channels'] ?? $plan['channels'] ?? ''));
+        $mentionsLinkedIn = $channels === '' || str_contains($channels, 'linkedin');
+        $emailOnly = str_contains($channels, 'email') && ! $mentionsLinkedIn;
+        $whatsappOnly = str_contains($channels, 'whatsapp') && ! $mentionsLinkedIn && ! str_contains($channels, 'email');
+        $instagramOnly = str_contains($channels, 'instagram') && ! $mentionsLinkedIn;
+        $telegramOnly = str_contains($channels, 'telegram') && ! $mentionsLinkedIn;
+        $twitterOnly = (str_contains($channels, 'twitter') || preg_match('/\bx\b/', $channels)) && ! $mentionsLinkedIn;
+
+        if ($emailOnly || $whatsappOnly || $instagramOnly || $telegramOnly || $twitterOnly) {
+            return false;
+        }
+
+        $blob = (string) ($plan['audience'] ?? $plan['icp_notes'] ?? $plan['goal'] ?? '');
+        if (preg_match('/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i', $blob) && ! $mentionsLinkedIn) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
