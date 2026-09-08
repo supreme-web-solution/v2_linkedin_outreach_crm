@@ -538,6 +538,19 @@ class CommandCenterService
                     ->first();
             }
 
+            // Retry LAUNCH when approve succeeded but draft creation failed (still "approved", no campaign).
+            if (! $approval && $verb === 'LAUNCH') {
+                $candidate = AiActionApproval::query()
+                    ->where('id', $id)
+                    ->where('user_id', $user->id)
+                    ->where('organization_id', $organizationId)
+                    ->where('status', 'approved')
+                    ->first();
+                if ($candidate && empty(data_get($candidate->result, 'outreach_campaign_id'))) {
+                    $approval = $candidate;
+                }
+            }
+
             if (! $approval) {
                 return [
                     'handled' => true,
@@ -559,7 +572,9 @@ class CommandCenterService
                 ];
             }
 
-            if ($approval->status !== 'pending') {
+            if (! in_array($approval->status, ['pending', 'approved'], true)
+                || ($approval->status === 'approved' && ! empty(data_get($approval->result, 'outreach_campaign_id')))
+            ) {
                 return [
                     'handled' => true,
                     'reply' => $this->approvalNotPendingReply($user, $organizationId, $id, $verb),
@@ -614,13 +629,15 @@ class CommandCenterService
                 ];
             }
 
-            $this->approvals->approve($approval, $user);
-            $fresh = $approval->fresh();
+            if ($approval->status === 'pending') {
+                $this->approvals->approve($approval, $user);
+            }
+            $fresh = $approval->fresh() ?? $approval;
 
             return [
                 'handled' => true,
                 'reply' => $this->launchAcknowledged($fresh, $user),
-                'approval' => $fresh->fresh(),
+                'approval' => $fresh->fresh() ?? $fresh,
                 'decision' => 'approve',
             ];
         }
@@ -1174,6 +1191,29 @@ class CommandCenterService
             ));
         } catch (\Throwable $e) {
             report($e);
+            $conversation = $approval->conversation_id
+                ? AiConversation::query()->find($approval->conversation_id)
+                : null;
+            try {
+                app(AiErrorLogService::class)->capture(
+                    $e,
+                    'launch:'.Str::limit((string) $approval->tool, 48, ''),
+                    $user,
+                    (int) $approval->organization_id,
+                    $conversation,
+                    $conversation?->channel,
+                    null,
+                    [
+                        'approval_id' => $approval->id,
+                        'tool' => $approval->tool,
+                        'goal' => $approval->payload['goal'] ?? null,
+                        'list_hash' => $approval->payload['list_hash'] ?? null,
+                        'list_name' => $approval->payload['list_name'] ?? null,
+                    ],
+                );
+            } catch (\Throwable $logError) {
+                report($logError);
+            }
 
             return "Approved #{$approval->id}, but I couldn't create the outreach draft: ".$e->getMessage();
         }
@@ -1371,6 +1411,17 @@ class CommandCenterService
         }
 
         if (in_array($existing->status, ['approved', 'executed'], true)) {
+            if ($existing->status === 'approved'
+                && empty(data_get($existing->result, 'outreach_campaign_id'))
+                && $verb === 'LAUNCH'
+            ) {
+                return implode("\n", [
+                    "Plan #{$id} was approved but the outreach draft never finished.",
+                    '',
+                    "Send *LAUNCH {$id}* again to retry.",
+                ]);
+            }
+
             return implode("\n", array_filter([
                 "Plan #{$id} was already launched — there's nothing left to {$verb}.",
                 '',

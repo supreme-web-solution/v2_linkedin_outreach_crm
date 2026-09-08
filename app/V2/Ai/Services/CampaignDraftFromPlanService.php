@@ -168,6 +168,12 @@ class CampaignDraftFromPlanService
 
     private function attachList(V2OutreachCampaign $campaign, string $listHash, string $listSrc, ?string $listName): void
     {
+        $listHash = Str::limit(trim($listHash), 191, '');
+        $listName = $listName !== null ? Str::limit(trim($listName), 191, '') : null;
+        if ($listName !== null && preg_match('/after acceptance|diagnostic|follow-?up|connection invite/i', $listName)) {
+            $listName = 'LinkedIn audience';
+        }
+
         V2OutreachList::query()->firstOrCreate(
             [
                 'outreach_campaign_id' => $campaign->id,

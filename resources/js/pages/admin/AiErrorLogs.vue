@@ -103,7 +103,7 @@ function formatWhen(iso: string | null): string {
                     v-model="source"
                     type="text"
                     class="border-input bg-background h-9 rounded-md border px-3 text-sm"
-                    placeholder="agent_turn"
+                    placeholder="any (e.g. agent_turn, launch:…)"
                 />
             </label>
             <label class="flex w-32 flex-col gap-1 text-xs">
@@ -112,7 +112,7 @@ function formatWhen(iso: string | null): string {
                     v-model="channel"
                     type="text"
                     class="border-input bg-background h-9 rounded-md border px-3 text-sm"
-                    placeholder="web"
+                    placeholder="any (web, whatsapp)"
                 />
             </label>
             <AppToolbarButton type="submit" class="h-9">
@@ -126,7 +126,15 @@ function formatWhen(iso: string | null): string {
             class="border-border text-muted-foreground flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-16 text-sm"
         >
             <AlertTriangle class="size-8 opacity-40" />
-            No Alex errors logged yet.
+            <span>No Alex errors logged yet.</span>
+            <span
+                v-if="filters.source || filters.channel || filters.q"
+                class="text-xs opacity-80"
+            >
+                Clear Source/Channel filters — launch failures use source like
+                <code class="text-foreground">launch:…</code>, not only
+                <code class="text-foreground">agent_turn</code>.
+            </span>
         </div>
 
         <div v-else class="border-border overflow-hidden rounded-lg border">

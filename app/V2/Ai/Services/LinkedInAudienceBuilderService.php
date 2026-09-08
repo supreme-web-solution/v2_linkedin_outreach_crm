@@ -152,13 +152,17 @@ class LinkedInAudienceBuilderService
         }
 
         $audienceName = trim((string) ($filters['audience_name'] ?? 'LinkedIn Search'));
-        if ($audienceName === '') {
-            $audienceName = 'LinkedIn Search';
+        $audienceName = trim(preg_replace('/\s+/', ' ', $audienceName) ?? '');
+        // Never let sequence/copy prose become the list title.
+        if ($audienceName === '' || strlen($audienceName) > 80 || preg_match('/after acceptance|diagnostic|follow-?up|connection invite/i', $audienceName)) {
+            $audienceName = 'LinkedIn Search '.now()->format('M j, g:ia');
         }
+        $audienceName = Str::limit($audienceName, 80, '');
 
-        // Unique list per fetch so new campaigns don't collide with prior search hashes.
-        $slug = Str::slug(Str::limit($audienceName, 40, '')) ?: 'search';
-        $listHash = 'search-'.$user->id.'-'.$slug.'-'.now()->format('YmdHis');
+        // Keep hash short for DB columns (outreach lists were 50; SN lists 64).
+        // Human label lives in list_name / audience_name only.
+        $listHash = 'search-'.$user->id.'-'.now()->format('YmdHis').Str::lower(Str::random(4));
+        $listHash = Str::limit($listHash, 64, '');
         $stored = 0;
         $skippedNoId = 0;
 
