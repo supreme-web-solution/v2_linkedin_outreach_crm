@@ -146,35 +146,225 @@ class DeleteCampaignCommandCenterService
     }
 
     /**
-     * @return array{message:string, kind:string, resource_id?:string, campaign_id?:int}
+     * Stage one Confirm Delete for many resources (campaigns, lists, posts, etc.).
+     *
+     * @param  list<array{kind:string,resource_id:string|int,list_src?:string|null,platform?:string|null}>  $items
+     * @return array<string, mixed>
+     */
+    public function stageBulk(
+        User $user,
+        int $organizationId,
+        AiConversation $conversation,
+        array $items,
+        ?string $reason = null,
+        string $surface = 'web',
+        string $toolName = 'delete_resource',
+    ): array {
+        $settings = $this->settingsService->for($user, $organizationId);
+        if ($this->settingsService->isBlocked($settings)) {
+            return [
+                'blocked' => true,
+                'message' => 'AI Employee is currently disabled for this workspace.',
+            ];
+        }
+
+        if ($items === []) {
+            throw new \InvalidArgumentException('No items to delete.');
+        }
+
+        $normalizedItems = [];
+        $lines = [];
+        foreach ($items as $index => $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $kind = $this->normalizeKind((string) ($item['kind'] ?? 'outreach'));
+            $resourceId = trim((string) ($item['resource_id'] ?? $item['campaign_id'] ?? ''));
+            if ($resourceId === '') {
+                throw new \InvalidArgumentException('Item #'.($index + 1).' is missing resource_id.');
+            }
+            $listSrc = isset($item['list_src']) ? (string) $item['list_src'] : null;
+            $platform = isset($item['platform']) ? (string) $item['platform'] : null;
+            $preview = $this->preview($user, $organizationId, $kind, $resourceId, $listSrc, $platform);
+            $normalizedItems[] = [
+                'kind' => $kind,
+                'resource_id' => $resourceId,
+                'campaign_id' => in_array($kind, ['outreach', 'linkedin', 'outreach_template'], true)
+                    ? (int) $resourceId
+                    : null,
+                'list_src' => $preview['list_src'] ?? $listSrc,
+                'platform' => $preview['platform'] ?? $platform,
+                'resource_name' => $preview['name'],
+                'detail' => $preview['detail'],
+                'resource_url' => $preview['url'] ?? null,
+            ];
+            $lines[] = '• '.$kind.' #'.$resourceId.' — '.$preview['name']
+                .(! empty($preview['detail']) ? ' ('.$preview['detail'].')' : '');
+        }
+
+        if ($normalizedItems === []) {
+            throw new \InvalidArgumentException('No valid items to delete.');
+        }
+
+        $count = count($normalizedItems);
+        $plan = [
+            'type' => 'bulk_delete',
+            'kind' => 'bulk',
+            'items' => $normalizedItems,
+            'item_count' => $count,
+            'resource_id' => 'bulk-'.$count,
+            'resource_name' => $count.' resource'.($count === 1 ? '' : 's'),
+            'campaign_name' => $count.' resource'.($count === 1 ? '' : 's'),
+            'detail' => implode("\n", $lines),
+            'reason' => $reason,
+            'goal' => "Permanently delete {$count} item".($count === 1 ? '' : 's'),
+            'steps' => array_merge(
+                ['Confirm once to delete all of the following:'],
+                $lines,
+                ['Cannot be undone from Command Center.'],
+            ),
+            'destructive' => true,
+            'requires_explicit_approval' => true,
+            'status' => 'awaiting_review',
+        ];
+
+        $approval = $this->approvals->createPending(
+            $user,
+            $organizationId,
+            $toolName,
+            AiToolPermission::Prepare,
+            $plan,
+            $conversation,
+        );
+
+        return [
+            'approval_id' => $approval->id,
+            'plan' => $plan,
+            'card' => $this->commandCenter->formatPlanCard($plan, $approval->id, $surface),
+            'cta' => 'Reply Confirm Delete once to remove all '.$count.' item(s). Deletes never auto-run.',
+        ];
+    }
+
+    /**
+     * @return array{message:string, kind:string, resource_id?:string, campaign_id?:int, deleted?:list<array<string,mixed>>}
      */
     public function applyFromApproval(AiActionApproval $approval, User $user): array
     {
         $payload = $approval->payload ?? [];
-        $kind = $this->normalizeKind((string) ($payload['kind'] ?? 'outreach'));
         $orgId = (int) $approval->organization_id;
+
+        if (($payload['type'] ?? '') === 'bulk_delete' || ($payload['kind'] ?? '') === 'bulk') {
+            return $this->applyBulkItems($user, $orgId, is_array($payload['items'] ?? null) ? $payload['items'] : []);
+        }
+
+        $kind = $this->normalizeKind((string) ($payload['kind'] ?? 'outreach'));
         $resourceId = trim((string) ($payload['resource_id'] ?? $payload['campaign_id'] ?? ''));
 
         if ($resourceId === '') {
             throw new \RuntimeException('Missing resource_id on delete plan.');
         }
 
+        return $this->applySingle($user, $orgId, $kind, $resourceId, $payload);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $items
+     * @return array{message:string, kind:string, deleted:list<array<string,mixed>>}
+     */
+    public function applyBulkItems(User $user, int $organizationId, array $items): array
+    {
+        $deleted = [];
+        $errors = [];
+
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $kind = $this->normalizeKind((string) ($item['kind'] ?? 'outreach'));
+            $resourceId = trim((string) ($item['resource_id'] ?? $item['campaign_id'] ?? ''));
+            if ($resourceId === '') {
+                continue;
+            }
+            try {
+                $result = $this->applySingle($user, $organizationId, $kind, $resourceId, $item);
+                $deleted[] = [
+                    'kind' => $kind,
+                    'resource_id' => $resourceId,
+                    'message' => $result['message'],
+                ];
+            } catch (\Throwable $e) {
+                $errors[] = $kind.' #'.$resourceId.': '.$e->getMessage();
+            }
+        }
+
+        if ($deleted === [] && $errors !== []) {
+            throw new \RuntimeException('Bulk delete failed: '.implode('; ', $errors));
+        }
+
+        $lines = array_map(fn (array $row) => $row['message'], $deleted);
+        if ($errors !== []) {
+            $lines[] = 'Some items failed:';
+            $lines = array_merge($lines, $errors);
+        }
+
+        return [
+            'message' => implode("\n", $lines),
+            'kind' => 'bulk',
+            'deleted' => $deleted,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{message:string, kind:string, resource_id?:string, campaign_id?:int}
+     */
+    private function applySingle(
+        User $user,
+        int $organizationId,
+        string $kind,
+        string $resourceId,
+        array $payload = [],
+    ): array {
         return match ($kind) {
-            'linkedin' => $this->deleteLinkedInCampaign($user, $orgId, (int) $resourceId),
-            'outreach_template' => $this->deleteOutreachTemplate($user, $orgId, (int) $resourceId),
+            'linkedin' => $this->deleteLinkedInCampaign($user, $organizationId, (int) $resourceId),
+            'outreach_template' => $this->deleteOutreachTemplate($user, $organizationId, (int) $resourceId),
             'lead_list' => $this->deleteLeadList(
                 $user,
                 $resourceId,
                 (string) ($payload['list_src'] ?? 'aud'),
             ),
-            'content_post' => $this->deleteContentPost($user, $orgId, (int) $resourceId),
+            'content_post' => $this->deleteContentPost($user, $organizationId, (int) $resourceId),
             'inbox_conversation' => $this->deleteInboxConversation(
                 $user,
                 (string) ($payload['platform'] ?? ''),
                 (int) $resourceId,
             ),
-            default => $this->deleteOutreachCampaign($user, $orgId, (int) $resourceId),
+            default => $this->deleteOutreachCampaign($user, $organizationId, (int) $resourceId),
         };
+    }
+
+    /**
+     * List outreach campaigns eligible for bulk delete (excludes saved templates).
+     *
+     * @return list<array{kind:string,resource_id:string,name:string,status:string}>
+     */
+    public function listDeletableOutreachCampaigns(User $user, int $organizationId): array
+    {
+        return V2OutreachCampaign::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->where(function ($q) {
+                $q->whereNull('status')->orWhere('status', '!=', 'template');
+            })
+            ->orderByDesc('id')
+            ->get(['id', 'name', 'status'])
+            ->map(fn (V2OutreachCampaign $c) => [
+                'kind' => 'outreach',
+                'resource_id' => (string) $c->id,
+                'name' => (string) $c->name,
+                'status' => (string) ($c->status ?? ''),
+            ])
+            ->all();
     }
 
     public function normalizeKind(string $kind): string
@@ -188,6 +378,7 @@ class DeleteCampaignCommandCenterService
             'post', 'linkedin_post', 'content' => 'content_post',
             'conversation', 'inbox', 'thread' => 'inbox_conversation',
             'template', 'sequence_template' => 'outreach_template',
+            'bulk', 'bulk_delete' => 'bulk',
             default => $kind,
         };
     }

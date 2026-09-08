@@ -439,8 +439,11 @@ class CommandCenterService
             }
             $lines[] = '• Launch creates list_hash for draft_campaign_plan / propose_strategy';
         }
-        if (in_array(($plan['type'] ?? ''), ['campaign_delete', 'resource_delete'], true)) {
+        if (in_array(($plan['type'] ?? ''), ['campaign_delete', 'resource_delete', 'bulk_delete'], true)) {
             $lines[] = '• Delete: '.($plan['resource_name'] ?? $plan['campaign_name'] ?? '#'.($plan['resource_id'] ?? $plan['campaign_id'] ?? ''));
+            if (! empty($plan['item_count'])) {
+                $lines[] = '• Items: '.$plan['item_count'].' (one Confirm Delete removes all)';
+            }
             if (! empty($plan['kind'])) {
                 $lines[] = '• Kind: '.$plan['kind'];
             }
@@ -497,6 +500,11 @@ class CommandCenterService
     public function handleControlCommand(User $user, int $organizationId, string $text): ?array
     {
         $trimmed = trim($text);
+
+        // Confirm Delete → all pending destructive plans (or one bulk_delete plan).
+        if (preg_match('/^\s*confirm\s+delete(\s+all)?\s*$/i', $trimmed)) {
+            return $this->confirmPendingDeletes($user, $organizationId);
+        }
 
         if (preg_match('/^\s*(LAUNCH|APPROVE|REJECT|REVIEW|PUBLISH|SEND|SAVE|DISCARD|PREVIEW|IMPORT|ENRICH)\s*$/i', $trimmed, $bare)) {
             $verb = match (strtoupper($bare[1])) {
@@ -735,6 +743,11 @@ class CommandCenterService
             if ($pending->isNotEmpty()) {
                 $newest = $pending->first();
 
+                // Fuzzy "yes/go ahead" on a delete should confirm all pending deletes.
+                if ($this->isDeleteApproval($newest)) {
+                    return $this->confirmPendingDeletes($user, $organizationId);
+                }
+
                 if ($this->isOutreachPlanTool($newest)
                     && $this->audienceResolver->resolve($user, $newest->payload ?? [], strict: true) === null) {
                     $attached = $this->attachAutoAudience($user, $organizationId, $newest);
@@ -759,11 +772,84 @@ class CommandCenterService
         return null;
     }
 
+    /**
+     * Confirm Delete / yes on destructive plans: prefer one bulk_delete, else run every pending delete.
+     *
+     * @return array{handled:bool, reply:string, decision?:string, approval?:AiActionApproval}
+     */
+    public function confirmPendingDeletes(User $user, int $organizationId): array
+    {
+        $pendingDeletes = $this->pendingApprovals($user, $organizationId)
+            ->filter(fn (AiActionApproval $a) => $this->isDeleteApproval($a))
+            ->values();
+
+        if ($pendingDeletes->isEmpty()) {
+            return [
+                'handled' => true,
+                'reply' => 'No delete plans waiting. Tell me what to delete and I\'ll stage one Confirm Delete.',
+                'decision' => 'none',
+            ];
+        }
+
+        $bulk = $pendingDeletes->first(
+            fn (AiActionApproval $a) => ($a->payload['type'] ?? '') === 'bulk_delete'
+        );
+
+        if ($bulk) {
+            // Reject other single delete siblings so Confirm Delete is one clean action.
+            foreach ($pendingDeletes as $sibling) {
+                if ((int) $sibling->id === (int) $bulk->id) {
+                    continue;
+                }
+                $this->approvals->reject($sibling, $user);
+            }
+
+            return $this->handleControlCommand($user, $organizationId, 'LAUNCH '.$bulk->id)
+                ?? [
+                    'handled' => true,
+                    'reply' => 'Could not confirm bulk delete #'.$bulk->id.'.',
+                    'decision' => 'error',
+                ];
+        }
+
+        if ($pendingDeletes->count() === 1) {
+            return $this->handleControlCommand($user, $organizationId, 'LAUNCH '.$pendingDeletes->first()->id)
+                ?? [
+                    'handled' => true,
+                    'reply' => 'Could not confirm delete.',
+                    'decision' => 'error',
+                ];
+        }
+
+        $lines = ['Confirmed delete for '.$pendingDeletes->count().' staged plan(s):'];
+        $lastApproval = null;
+        foreach ($pendingDeletes->sortBy('id') as $approval) {
+            $launch = $this->handleControlCommand($user, $organizationId, 'LAUNCH '.$approval->id);
+            $lines[] = (string) ($launch['reply'] ?? ('Plan #'.$approval->id));
+            $lastApproval = $launch['approval'] ?? $approval;
+        }
+
+        return [
+            'handled' => true,
+            'reply' => implode("\n", $lines),
+            'decision' => 'approve',
+            'approval' => $lastApproval instanceof AiActionApproval ? $lastApproval : null,
+        ];
+    }
+
+    public function isDeleteApproval(AiActionApproval $approval): bool
+    {
+        return $approval->tool === 'delete_campaign'
+            || $approval->tool === 'delete_resource'
+            || in_array(($approval->payload['type'] ?? ''), ['campaign_delete', 'resource_delete', 'bulk_delete'], true)
+            || ($approval->payload['destructive'] ?? false) === true;
+    }
+
     private function isFuzzyLaunchConfirmation(string $text): bool
     {
         $lower = Str::lower(trim($text));
 
-        if (preg_match('/\b(go ahead|proceed|let\'?s go|start it|run it|do it now|sounds good|yes please|make it happen|ship it)\b/', $lower)) {
+        if (preg_match('/\b(go ahead|proceed|let\'?s go|start it|run it|do it now|sounds good|yes please|make it happen|ship it|confirm delete)\b/', $lower)) {
             return true;
         }
 
@@ -841,7 +927,7 @@ class CommandCenterService
 
         if ($tool === 'delete_campaign'
             || $tool === 'delete_resource'
-            || in_array($type, ['campaign_delete', 'resource_delete'], true)
+            || in_array($type, ['campaign_delete', 'resource_delete', 'bulk_delete'], true)
         ) {
             return $this->launchCampaignDelete($approval, $user);
         }
@@ -883,10 +969,14 @@ class CommandCenterService
             return "Approved #{$approval->id}, but delete failed: ".$e->getMessage();
         }
 
-        return implode("\n", [
-            "Confirmed delete plan #{$approval->id}.",
+        $count = is_array($result['deleted'] ?? null) ? count($result['deleted']) : 1;
+
+        return implode("\n", array_filter([
+            $count > 1
+                ? "Confirmed delete plan #{$approval->id} ({$count} items)."
+                : "Confirmed delete plan #{$approval->id}.",
             $result['message'],
-        ]);
+        ]));
     }
 
     private function launchCsvImport(AiActionApproval $approval, User $user): string
@@ -1313,7 +1403,7 @@ class CommandCenterService
         // Never auto-confirm destructive plans (deletes), even on Autopilot/Autonomous.
         if ($approval->tool === 'delete_campaign'
             || $approval->tool === 'delete_resource'
-            || in_array(($approval->payload['type'] ?? ''), ['campaign_delete', 'resource_delete'], true)
+            || in_array(($approval->payload['type'] ?? ''), ['campaign_delete', 'resource_delete', 'bulk_delete'], true)
             || ($approval->payload['destructive'] ?? false) === true
             || ($approval->payload['requires_explicit_approval'] ?? false) === true
         ) {

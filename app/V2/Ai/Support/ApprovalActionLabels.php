@@ -41,7 +41,7 @@ final class ApprovalActionLabels
         };
 
         $showPreview = self::isLinkedInPost($tool, $type)
-            || in_array($type, ['strategy', 'campaign', 'campaign_delete', 'resource_delete'], true)
+            || in_array($type, ['strategy', 'campaign', 'campaign_delete', 'resource_delete', 'bulk_delete'], true)
             || in_array($tool, ['propose_strategy', 'draft_campaign_plan', 'delete_campaign', 'delete_resource'], true);
 
         $summary = match (true) {
@@ -100,7 +100,7 @@ final class ApprovalActionLabels
     {
         return $tool === 'delete_campaign'
             || $tool === 'delete_resource'
-            || in_array($type, ['campaign_delete', 'resource_delete'], true)
+            || in_array($type, ['campaign_delete', 'resource_delete', 'bulk_delete'], true)
             || str_starts_with($tool, 'delete_');
     }
 }
