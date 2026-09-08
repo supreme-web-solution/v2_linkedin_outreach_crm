@@ -1023,6 +1023,13 @@ class LeadsWebController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Contact not found in this list.'], 404);
         }
 
+        if (! $readiness->importLeadRowNeedsEnrichment($row)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Enrichment needs a LinkedIn profile (or phone / other handles). Instagram-only leads cannot be email-enriched.',
+            ], 422);
+        }
+
         $result = app(OutreachContactEnrichmentService::class)->verifyContactsForRow($user, $row);
 
         return response()->json([
@@ -1074,7 +1081,7 @@ class LeadsWebController extends Controller
 
         foreach ($leadIds as $index => $leadId) {
             $row = $byId->get($leadId);
-            if (! is_array($row)) {
+            if (! is_array($row) || ! $readiness->importLeadRowNeedsEnrichment($row)) {
                 continue;
             }
 

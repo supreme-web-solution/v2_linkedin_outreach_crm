@@ -7,6 +7,8 @@ const props = defineProps<{
     contacts: LeadContacts;
     fetching?: boolean;
     canEnrich?: boolean;
+    /** LinkedIn URL/id present — required before Instagram enrich (FullEnrich cannot start from IG). */
+    hasLinkedIn?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -33,8 +35,15 @@ const needsEnrichment = computed(() => {
     return handles.some(([handleKey, providerKey]) => {
         const handle = contacts[handleKey];
         const provider = contacts[providerKey];
+        if (!handle || provider) {
+            return false;
+        }
+        // Instagram-only leads: hide Enrich unless LinkedIn is on the row.
+        if (handleKey === 'instagram_handle' && !props.hasLinkedIn) {
+            return false;
+        }
 
-        return Boolean(handle) && !provider;
+        return true;
     });
 });
 
@@ -55,7 +64,7 @@ const hasEnrichedData = computed(() => {
 const pendingHint = computed(() => {
     const { contacts } = props;
     const parts: string[] = [];
-    if (contacts.instagram_handle && !contacts.instagram_provider_id) parts.push('Instagram');
+    if (contacts.instagram_handle && !contacts.instagram_provider_id && props.hasLinkedIn) parts.push('Instagram');
     if (contacts.telegram_handle && !contacts.telegram_provider_id) parts.push('Telegram');
     if (contacts.twitter_handle && !contacts.twitter_provider_id) parts.push('X');
     if (contacts.phone && !contacts.whatsapp_provider_id) parts.push('WhatsApp');

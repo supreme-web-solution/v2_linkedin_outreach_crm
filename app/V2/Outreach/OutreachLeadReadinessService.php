@@ -68,12 +68,21 @@ class OutreachLeadReadinessService
                 foreach (OutreachChannelRegistry::enabledSocialHandleChannels() as $channel) {
                     $handleCol = "{$channel}_handle";
                     $providerCol = "{$channel}_provider_id";
-                    $q->orWhere(function ($handle) use ($handleCol, $providerCol) {
+                    $q->orWhere(function ($handle) use ($channel, $handleCol, $providerCol) {
                         $handle->whereNotNull($handleCol)
                             ->where($handleCol, '!=', '')
                             ->where(function ($provider) use ($providerCol) {
                                 $provider->whereNull($providerCol)->orWhere($providerCol, '');
                             });
+
+                        // Instagram-only leads cannot use FullEnrich — require LinkedIn first.
+                        if ($channel === 'instagram') {
+                            $handle->where(function ($li) {
+                                $li->where(function ($id) {
+                                    $id->whereNotNull('linkedin_id')->where('linkedin_id', '!=', '');
+                                })->orWhere('profile_url', 'like', '%linkedin.com/in/%');
+                            });
+                        }
                     });
                 }
             })
@@ -101,6 +110,20 @@ class OutreachLeadReadinessService
     /**
      * @param  array<string, mixed>  $row
      */
+    public function importLeadHasLinkedIn(array $row): bool
+    {
+        if (trim((string) ($row['linkedin_id'] ?? '')) !== '') {
+            return true;
+        }
+
+        $url = trim((string) ($row['profile_url'] ?? $row['linkedin_url'] ?? ''));
+
+        return $url !== '' && stripos($url, 'linkedin.com/in/') !== false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
     public function importLeadRowNeedsEnrichment(array $row): bool
     {
         $phone = trim((string) ($row['phone'] ?? ''));
@@ -108,11 +131,20 @@ class OutreachLeadReadinessService
             return true;
         }
 
+        $hasLinkedIn = $this->importLeadHasLinkedIn($row);
+
         foreach (OutreachChannelRegistry::enabledSocialHandleChannels() as $channel) {
             $handle = trim((string) ($row["{$channel}_handle"] ?? ''));
-            if ($handle !== '' && trim((string) ($row["{$channel}_provider_id"] ?? '')) === '') {
-                return true;
+            if ($handle === '' || trim((string) ($row["{$channel}_provider_id"] ?? '')) !== '') {
+                continue;
             }
+
+            // Hide Enrich for Instagram-only rows (no LinkedIn) — FullEnrich cannot start from IG.
+            if ($channel === 'instagram' && ! $hasLinkedIn) {
+                continue;
+            }
+
+            return true;
         }
 
         return false;

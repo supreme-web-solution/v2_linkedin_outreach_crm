@@ -89,7 +89,14 @@ class OutreachLeadReadinessAggregator
         foreach ($socialChannels as $channel) {
             $h = "{$channel}_handle";
             $p = "{$channel}_provider_id";
-            $handleCases[] = "CASE WHEN {$h} IS NOT NULL AND {$h} != '' AND ({$p} IS NULL OR {$p} = '') THEN 1 ELSE 0 END";
+            // Instagram unresolved only counts when LinkedIn is present (FullEnrich cannot start from IG).
+            if ($channel === 'instagram') {
+                $handleCases[] = "CASE WHEN {$h} IS NOT NULL AND {$h} != '' AND ({$p} IS NULL OR {$p} = '')"
+                    ." AND ((linkedin_id IS NOT NULL AND linkedin_id != '') OR profile_url LIKE '%linkedin.com/in/%')"
+                    .' THEN 1 ELSE 0 END';
+            } else {
+                $handleCases[] = "CASE WHEN {$h} IS NOT NULL AND {$h} != '' AND ({$p} IS NULL OR {$p} = '') THEN 1 ELSE 0 END";
+            }
         }
         $needsResolveExpr = $handleCases === [] ? '0' : '('.implode(' + ', $handleCases).')';
 

@@ -60,6 +60,11 @@ const allSelected = computed(() => props.leads.data.length > 0 && props.leads.da
 
 const canEnrichList = computed(() => (props.importEnrichmentStats?.fetchable ?? 0) > 0);
 
+function leadHasLinkedIn(lead: ImportLead): boolean {
+    const url = (lead.profile_url ?? '').toLowerCase();
+    return url.includes('linkedin.com/in/');
+}
+
 const bulkQueueNow = computed(() => {
     const fetchable = props.importEnrichmentStats?.fetchable ?? 0;
     if (fetchable <= 0) {
@@ -342,6 +347,7 @@ async function exportCsv() {
                             <ImportLeadEnrichmentField
                                 :contacts="lead.contacts"
                                 :fetching="enrichingIds.has(lead.id)"
+                                :has-linked-in="leadHasLinkedIn(lead)"
                                 @fetch="enrichLead(lead)"
                             />
                         </td>
