@@ -41,8 +41,8 @@ final class ApprovalActionLabels
         };
 
         $showPreview = self::isLinkedInPost($tool, $type)
-            || in_array($type, ['strategy', 'campaign', 'campaign_delete'], true)
-            || in_array($tool, ['propose_strategy', 'draft_campaign_plan', 'delete_campaign'], true);
+            || in_array($type, ['strategy', 'campaign', 'campaign_delete', 'resource_delete'], true)
+            || in_array($tool, ['propose_strategy', 'draft_campaign_plan', 'delete_campaign', 'delete_resource'], true);
 
         $summary = match (true) {
             self::isDelete($tool, $type) => 'Delete requires your confirmation',
@@ -99,7 +99,8 @@ final class ApprovalActionLabels
     private static function isDelete(string $tool, string $type): bool
     {
         return $tool === 'delete_campaign'
-            || $type === 'campaign_delete'
+            || $tool === 'delete_resource'
+            || in_array($type, ['campaign_delete', 'resource_delete'], true)
             || str_starts_with($tool, 'delete_');
     }
 }

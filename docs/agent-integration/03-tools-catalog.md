@@ -37,6 +37,7 @@ Tools are thin adapters. They call existing SociFusion services; they do not rei
 | `activate_outreach_campaign` | execute | Start outreach run | Wired |
 | `pause_outreach_campaign` | execute | Pause one or all | Wired |
 | `delete_campaign` | prepare | Delete outreach or LinkedIn campaign — **always** Confirm Delete (never auto) | Wired |
+| `delete_resource` | prepare | Delete campaigns, lead lists, content posts, inbox threads, templates — **always** Confirm Delete (never auto) | Wired |
 
 ## Phase 3 tools (AI Sales Execution)
 

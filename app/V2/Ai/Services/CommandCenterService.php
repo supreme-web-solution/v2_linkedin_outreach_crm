@@ -435,6 +435,15 @@ class CommandCenterService
             }
             $lines[] = '• Launch creates list_hash for draft_campaign_plan / propose_strategy';
         }
+        if (in_array(($plan['type'] ?? ''), ['campaign_delete', 'resource_delete'], true)) {
+            $lines[] = '• Delete: '.($plan['resource_name'] ?? $plan['campaign_name'] ?? '#'.($plan['resource_id'] ?? $plan['campaign_id'] ?? ''));
+            if (! empty($plan['kind'])) {
+                $lines[] = '• Kind: '.$plan['kind'];
+            }
+            if (! empty($plan['detail'])) {
+                $lines[] = '• Detail: '.$plan['detail'];
+            }
+        }
         if (! empty($plan['mode']) && ($plan['type'] ?? '') === 'enrichment') {
             $lines[] = '• Enrichment: '.$plan['mode'];
             if (isset($plan['email_eligible'])) {
@@ -809,7 +818,10 @@ class CommandCenterService
             return $this->launchCampaignInboxAi($approval, $user);
         }
 
-        if ($tool === 'delete_campaign' || $type === 'campaign_delete') {
+        if ($tool === 'delete_campaign'
+            || $tool === 'delete_resource'
+            || in_array($type, ['campaign_delete', 'resource_delete'], true)
+        ) {
             return $this->launchCampaignDelete($approval, $user);
         }
 
@@ -1256,7 +1268,8 @@ class CommandCenterService
     {
         // Never auto-confirm destructive plans (deletes), even on Autopilot/Autonomous.
         if ($approval->tool === 'delete_campaign'
-            || ($approval->payload['type'] ?? '') === 'campaign_delete'
+            || $approval->tool === 'delete_resource'
+            || in_array(($approval->payload['type'] ?? ''), ['campaign_delete', 'resource_delete'], true)
             || ($approval->payload['destructive'] ?? false) === true
             || ($approval->payload['requires_explicit_approval'] ?? false) === true
         ) {

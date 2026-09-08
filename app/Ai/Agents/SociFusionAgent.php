@@ -10,6 +10,7 @@ use App\Ai\Tools\BuildIcpTool;
 use App\Ai\Tools\ClassifyReplyTool;
 use App\Ai\Tools\DiscoverProspectsTool;
 use App\Ai\Tools\DeleteCampaignTool;
+use App\Ai\Tools\DeleteResourceTool;
 use App\Ai\Tools\DraftCampaignPlanTool;
 use App\Ai\Tools\DraftPersonalizedMessageTool;
 use App\Ai\Tools\DraftReplyTool;
@@ -116,7 +117,7 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\n- CRM next step → set_next_best_action on a lead or conversation"
             ."\n- Enrich a list → prepare_enrichment (list_hash + list_src)"
             ."\n- Start outreach → activate_outreach_campaign after draft exists"
-            ."\n- Delete a campaign → delete_campaign (kind=outreach|linkedin). ALWAYS stages Confirm Delete — never auto-deletes at any autonomy level"
+            ."\n- Delete something → delete_resource (kind=outreach|linkedin|lead_list|content_post|inbox_conversation|outreach_template). Campaigns can also use delete_campaign. ALWAYS stages Confirm Delete — never auto-deletes at any autonomy level. lead_list needs list_src; inbox_conversation needs platform"
             ."\nNever invent CRM numbers; use tools. Never say you messaged prospects unless an execute tool succeeded.";
     }
 
@@ -172,6 +173,7 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             new ActivateOutreachCampaignTool($this->context),
             new PauseOutreachCampaignTool($this->context),
             new DeleteCampaignTool($this->context),
+            new DeleteResourceTool($this->context),
         ];
     }
 }
