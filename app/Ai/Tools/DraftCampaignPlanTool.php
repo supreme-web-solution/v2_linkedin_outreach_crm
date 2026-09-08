@@ -38,16 +38,26 @@ class DraftCampaignPlanTool extends GatedTool
             'channels' => $schema->string()->nullable()->description('Default: LinkedIn + Email. When user asks: Instagram, Telegram, WhatsApp (or combos).'),
             'follow_up_days' => $schema->integer()->min(1)->max(90)->nullable(),
             'source' => $schema->string()->nullable()->description('e.g. competitor audiences, LinkedIn search'),
-            'sequence' => $schema->array()->nullable()->description('Ordered prose steps Alex should execute, e.g. ["Send Invite","Wait 3 days","Send Email","Wait 5 days","Follow-up"]. Launch builds a custom sequence from this when possible.'),
+            'pause_on_reply' => $schema->boolean()->nullable()->description('Default true. When a prospect replies, pause the sequence so Alex/human can reply in inbox chat context.'),
+            'auto_reply_enabled' => $schema->boolean()->nullable()->description('Default false. Only enable when the user wants campaign auto-replies from AI context without waiting for Alex.'),
+            'ai_context' => $schema->string()->nullable()->description('Short product/offer context for inbox AI replies on this campaign.'),
+            'sequence' => $schema->array()->nullable()->description(
+                'Ordered prose steps chosen for THIS goal. LinkedIn example: '
+                .'["Send Invite (empty note)","After acceptance","Diagnostic LinkedIn message","Wait 3 days","Value follow-up","Pause on reply — handle in inbox"]. '
+                .'Add has_replied/no_reply only when the graph must branch. Launch builds invite_accepted + pause_on_reply.',
+            ),
             'sequence_steps' => $schema->array()->nullable()->description(
-                'Optional structured steps. action MUST be a built-in key only: '
-                .'linkedin=visit_profile|send_invite|send_message|like_post|endorse; '
-                .'email=send_email; whatsapp/instagram/telegram/twitter=send_message (twitter also follow). '
-                .'Never use connect — use send_invite for connection requests.',
+                'Optional structured steps. Actions: linkedin=visit_profile|send_invite|send_message|like_post|endorse; '
+                .'email=send_email; whatsapp/instagram/telegram/twitter=send_message. Never use connect — use send_invite. '
+                .'Conditions (type=condition): linkedin invite_accepted|has_replied|no_reply; email email_replied|no_reply|email_opened|email_bounced; '
+                .'messaging message_replied|no_reply. Use branches.accepted / branches.not_accepted. '
+                .'Prefer invite_accepted after send_invite; prefer pause_on_reply over stuffing reply handling into the graph.',
             ),
             'list_hash' => $schema->string()->nullable(),
             'list_src' => $schema->string()->enum(['aud', 'sn', 'csv'])->nullable(),
             'list_name' => $schema->string()->nullable(),
+            'network_degree' => $schema->string()->nullable()->description('If audience is 1st/2nd/3rd degree — shapes sequence (1st = no invites).'),
+            'first_degree_only' => $schema->boolean()->nullable()->description('true when list is connections-only; Launch builds DM-only LinkedIn sequence.'),
         ];
     }
 
@@ -58,17 +68,30 @@ class DraftCampaignPlanTool extends GatedTool
         $explicitTarget = array_key_exists('target_count', $request->all());
         $count = (int) ($request['target_count'] ?? 500);
         $hasList = trim((string) ($request['list_hash'] ?? '')) !== '';
+        $firstDegree = (bool) ($request['first_degree_only'] ?? false)
+            || in_array(strtolower(trim((string) ($request['network_degree'] ?? ''))), ['1st', 'first', 'f', '1'], true);
 
         $sequence = $request['sequence'] ?? null;
         if (! is_array($sequence) || $sequence === []) {
-            $sequence = [
-                'Connection / first touch',
-                'Wait 3 days',
-                'Message / email',
-                'Wait 5 days',
-                'Follow-up',
-                'AI reply handling — stop on reply',
-            ];
+            $sequence = $firstDegree
+                ? [
+                    'LinkedIn message (already connected — no invite)',
+                    'Wait 3 days',
+                    'Value follow-up message',
+                    'Wait 5 days',
+                    'Professional close',
+                    'Pause on reply — handle in inbox',
+                ]
+                : [
+                    'Send Invite (empty note)',
+                    'After acceptance',
+                    'Diagnostic / first LinkedIn message',
+                    'Wait 3 days',
+                    'Value follow-up message',
+                    'Wait 5 days',
+                    'Professional close',
+                    'Pause on reply — handle in inbox',
+                ];
         }
 
         $plan = [
@@ -82,6 +105,15 @@ class DraftCampaignPlanTool extends GatedTool
             'follow_up_days' => $days,
             'source' => $request['source'] ?? 'LinkedIn search + existing lists',
             'prefer_fresh_audience' => $explicitTarget && ! $hasList,
+            'pause_on_reply' => array_key_exists('pause_on_reply', $request->all())
+                ? (bool) $request['pause_on_reply']
+                : true,
+            'auto_reply_enabled' => array_key_exists('auto_reply_enabled', $request->all())
+                ? (bool) $request['auto_reply_enabled']
+                : false,
+            'ai_context' => trim((string) ($request['ai_context'] ?? '')),
+            'network_degree' => $request['network_degree'] ?? null,
+            'first_degree_only' => $firstDegree,
             'sequence' => array_values(array_map('strval', $sequence)),
             'sequence_steps' => is_array($request['sequence_steps'] ?? null) ? $request['sequence_steps'] : null,
             'steps' => [
@@ -89,7 +121,9 @@ class DraftCampaignPlanTool extends GatedTool
                 'Source prospects ('.$count.' est.)',
                 'Enrich contacts',
                 "Channel sequence: {$channels}",
-                "Follow up for {$days} days; stop when they reply",
+                $firstDegree
+                    ? '1st-degree: LinkedIn DMs only (no invites); pause on reply'
+                    : "Follow up for {$days} days; pause on reply and handle in inbox",
                 'Qualify interested prospects and book meetings',
             ],
             'status' => 'awaiting_review',

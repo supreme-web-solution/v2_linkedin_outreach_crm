@@ -272,6 +272,10 @@ class CommandCenterService
         if (! empty($plan['follow_up_days'])) {
             $lines[] = '• Follow-up: '.$plan['follow_up_days'].' days';
         }
+        if (array_key_exists('pause_on_reply', $plan) || in_array(($plan['type'] ?? ''), ['campaign', 'strategy'], true)) {
+            $pause = array_key_exists('pause_on_reply', $plan) ? (bool) $plan['pause_on_reply'] : true;
+            $lines[] = '• Pause on reply: '.($pause ? 'Yes — Alex/you reply in inbox' : 'No');
+        }
         if (! empty($plan['list_name'] ?? null)) {
             $lines[] = '• Audience list: '.$plan['list_name'];
         } elseif (! empty($plan['audience_note'] ?? null)) {

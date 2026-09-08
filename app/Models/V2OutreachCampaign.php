@@ -59,15 +59,20 @@ class V2OutreachCampaign extends Model
         return [
             'linkedin_only' => [
                 'label' => 'LinkedIn Outreach',
-                'description' => 'Visit profile, connect, and message. Works immediately with any LinkedIn list.',
+                'description' => 'Invite, wait for accept, then message. Works with any LinkedIn list.',
                 'icon' => 'users',
                 'color' => 'blue',
                 'node_model' => [
-                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'visit_profile', 'label' => 'Visit Profile', 'config' => []],
-                    ['key' => 2, 'type' => 'delay', 'value' => 1, 'time' => 'days', 'label' => 'Wait 1 day'],
-                    ['key' => 3, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
-                    ['key' => 4, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
-                    ['key' => 5, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Send Message', 'config' => ['message' => 'Thanks for connecting, {{firstName}}!']],
+                    ['key' => 1, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_invite', 'label' => 'Send Invite', 'config' => ['message' => '']],
+                    ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
+                    ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
+                        'accepted' => [
+                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Send Message', 'config' => ['message' => 'Thanks for connecting, {{firstName}}!']],
+                            ['key' => 5, 'type' => 'delay', 'value' => 3, 'time' => 'days', 'label' => 'Wait 3 days'],
+                            ['key' => 6, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Follow-up Message', 'config' => ['message' => 'Hi {{firstName}}, just bumping this in case you missed it.']],
+                        ],
+                        'not_accepted' => [],
+                    ]],
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
                 ],
             ],

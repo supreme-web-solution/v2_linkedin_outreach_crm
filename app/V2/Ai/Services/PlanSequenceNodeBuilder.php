@@ -3,6 +3,7 @@
 namespace App\V2\Ai\Services;
 
 use App\Models\V2OutreachCampaign;
+use App\V2\Ai\Support\IcpSearchFilterParser;
 use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Support\Str;
 
@@ -10,6 +11,9 @@ use Illuminate\Support\Str;
  * Turns Alex plan sequence prose / structured steps into an executable outreach node_model.
  * Falls back to channel presets when the plan does not describe a usable sequence.
  * Always maps actions onto OutreachChannelRegistry-supported keys (e.g. connect → send_invite).
+ *
+ * LinkedIn: after send_invite, nest follow-up DMs under invite_accepted (never a second invite
+ * or blind waits pretending to mean “accepted”).
  */
 class PlanSequenceNodeBuilder
 {
@@ -25,9 +29,14 @@ class PlanSequenceNodeBuilder
             ?? $templates['linkedin_email']['node_model'];
 
         if ($this->isValidNodeModel($payload['node_model'] ?? null)) {
+            $nodes = $this->finalizeNodes(
+                $this->normalizeNodes(array_values($payload['node_model'])),
+                $payload,
+            );
+
             return [
                 'template_type' => 'custom',
-                'node_model' => $this->ensureEndNode($this->normalizeNodes(array_values($payload['node_model']))),
+                'node_model' => $nodes,
                 'custom' => true,
             ];
         }
@@ -38,7 +47,7 @@ class PlanSequenceNodeBuilder
             if ($built !== []) {
                 return [
                     'template_type' => 'custom',
-                    'node_model' => $this->ensureEndNode($this->normalizeNodes($built)),
+                    'node_model' => $this->finalizeNodes($this->normalizeNodes($built), $payload),
                     'custom' => true,
                 ];
             }
@@ -50,17 +59,32 @@ class PlanSequenceNodeBuilder
             if (count($built) >= 2) {
                 return [
                     'template_type' => 'custom',
-                    'node_model' => $this->ensureEndNode($this->normalizeNodes($built)),
+                    'node_model' => $this->finalizeNodes($this->normalizeNodes($built), $payload),
                     'custom' => true,
                 ];
             }
         }
+
+        $fallbackNodes = $this->maybeAdaptFallbackForFirstDegree($fallbackNodes, $payload);
 
         return [
             'template_type' => $fallbackType,
             'node_model' => $fallbackNodes,
             'custom' => false,
         ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $nodes
+     * @param  array<string, mixed>  $payload
+     * @return list<array<string, mixed>>
+     */
+    private function finalizeNodes(array $nodes, array $payload): array
+    {
+        $nodes = $this->applyInviteAcceptedIntelligence($nodes, $payload);
+        $nodes = $this->applyFirstDegreeAudienceIntelligence($nodes, $payload);
+
+        return $this->ensureEndNode($this->rekeyNodes($nodes));
     }
 
     /**
@@ -96,11 +120,43 @@ class PlanSequenceNodeBuilder
                 continue;
             }
 
+            if ($type === 'condition') {
+                $channel = Str::lower(trim((string) ($step['channel'] ?? 'linkedin')));
+                $condition = $this->normalizeConditionKey(
+                    $channel,
+                    (string) ($step['condition'] ?? $step['action'] ?? 'invite_accepted'),
+                );
+                $branches = is_array($step['branches'] ?? null) ? $step['branches'] : [];
+                $acceptedSrc = $branches['accepted'] ?? $step['accepted'] ?? [];
+                $notAcceptedSrc = $branches['not_accepted'] ?? $step['not_accepted'] ?? [];
+
+                $nodes[] = [
+                    'key' => $key++,
+                    'type' => 'condition',
+                    'channel' => $channel,
+                    'condition' => $condition,
+                    'label' => (string) ($step['label'] ?? 'Invite Accepted?'),
+                    'branches' => [
+                        'accepted' => $this->fromStructuredSteps(
+                            is_array($acceptedSrc) ? $acceptedSrc : [],
+                            $payload,
+                        ),
+                        'not_accepted' => $this->fromStructuredSteps(
+                            is_array($notAcceptedSrc) ? $notAcceptedSrc : [],
+                            $payload,
+                        ),
+                    ],
+                ];
+                continue;
+            }
+
             $channel = Str::lower(trim((string) ($step['channel'] ?? $defaultChannel)));
-            $action = OutreachChannelRegistry::normalizeAction(
-                $channel,
-                (string) ($step['action'] ?? ''),
-            );
+            $rawAction = (string) ($step['action'] ?? '');
+            // Empty linkedin action must not become send_invite when the step is clearly a message.
+            if ($rawAction === '' && isset($step['message']) && trim((string) $step['message']) !== '') {
+                $rawAction = $channel === 'email' ? 'send_email' : 'send_message';
+            }
+            $action = OutreachChannelRegistry::normalizeAction($channel, $rawAction);
 
             $config = [];
             if ($action === 'send_email') {
@@ -134,13 +190,19 @@ class PlanSequenceNodeBuilder
         $key = 1;
         $defaultChannel = $this->primaryChannel($payload);
         $channels = Str::lower((string) ($payload['preferred_channels'] ?? $payload['channels'] ?? $defaultChannel));
+        $sawInvite = false;
 
         foreach ($lines as $line) {
             if (! is_string($line) && ! is_numeric($line)) {
                 continue;
             }
             $text = trim((string) $line);
-            if ($text === '' || preg_match('/reply handling|stop on reply|ai reply/i', $text)) {
+            if ($text === '' || preg_match('/reply handling|stop on reply|ai reply|pause on reply|handle in inbox/i', $text)) {
+                continue;
+            }
+
+            // Acceptance gate — never another invite. Intelligence layer nests following DMs.
+            if ($this->isAcceptanceGateProse($text)) {
                 continue;
             }
 
@@ -162,7 +224,11 @@ class PlanSequenceNodeBuilder
             $label = $text;
             $config = ['message' => ''];
 
-            if (preg_match('/invite|connect|connection|first touch/i', $text)) {
+            if ($this->isInviteProse($text)) {
+                if ($sawInvite) {
+                    continue;
+                }
+                $sawInvite = true;
                 $channel = 'linkedin';
                 $action = 'send_invite';
                 $label = 'Send Invite';
@@ -195,7 +261,7 @@ class PlanSequenceNodeBuilder
                 $action = 'send_message';
                 $label = 'Instagram DM';
                 $config = ['message' => 'Hi {{firstName}},'];
-            } elseif (preg_match('/follow.?up|message|dm|touch/i', $text)) {
+            } elseif (preg_match('/follow.?up|message|dm|touch|diagnostic|value|close|question/i', $text)) {
                 if (str_contains($channels, 'email') && ! str_contains($channels, 'linkedin')) {
                     $channel = 'email';
                     $action = 'send_email';
@@ -233,6 +299,277 @@ class PlanSequenceNodeBuilder
         return $nodes;
     }
 
+    private function isAcceptanceGateProse(string $text): bool
+    {
+        return (bool) preg_match(
+            '/after\s+(the\s+)?(invite\s+)?accept|invite\s+accept|wait\s+(for\s+)?accept|once\s+(they\s+)?connect|connection\s+accept|has\s+accept|when\s+(they\s+)?accept/i',
+            $text,
+        );
+    }
+
+    private function isInviteProse(string $text): bool
+    {
+        if ($this->isAcceptanceGateProse($text)) {
+            return false;
+        }
+
+        // "Empty invite", "Send Invite", "Connection / first touch" — not "after acceptance".
+        return (bool) preg_match('/\b(invite|connect|connection request|first touch)\b/i', $text);
+    }
+
+    /**
+     * If the plan has LinkedIn invite + later LinkedIn DMs but no invite_accepted node,
+     * wrap DMs (and alt-channel backups) under the real condition branches.
+     *
+     * @param  list<array<string, mixed>>  $nodes
+     * @param  array<string, mixed>  $payload
+     * @return list<array<string, mixed>>
+     */
+    private function applyInviteAcceptedIntelligence(array $nodes, array $payload): array
+    {
+        $nodes = $this->dedupeTopLevelInvites($nodes);
+
+        if ($this->containsCondition($nodes, 'invite_accepted')) {
+            return $nodes;
+        }
+
+        $inviteIndex = null;
+        foreach ($nodes as $i => $node) {
+            if (($node['type'] ?? '') === 'action' && ($node['action'] ?? '') === 'send_invite') {
+                $inviteIndex = $i;
+                break;
+            }
+        }
+
+        if ($inviteIndex === null) {
+            return $nodes;
+        }
+
+        $before = array_slice($nodes, 0, $inviteIndex + 1);
+        $after = array_values(array_filter(
+            array_slice($nodes, $inviteIndex + 1),
+            fn (array $n) => ($n['type'] ?? '') !== 'end',
+        ));
+
+        $preConditionDelay = null;
+        $accepted = [];
+        $notAccepted = [];
+        $branching = false;
+
+        foreach ($after as $node) {
+            $type = (string) ($node['type'] ?? '');
+
+            if ($type === 'action' && ($node['action'] ?? '') === 'send_invite') {
+                continue;
+            }
+
+            if (! $branching && $type === 'delay' && $accepted === [] && $notAccepted === []) {
+                if ($preConditionDelay === null) {
+                    $preConditionDelay = $node;
+                }
+                continue;
+            }
+
+            $branching = true;
+            $channel = Str::lower((string) ($node['channel'] ?? 'linkedin'));
+
+            if ($type === 'delay') {
+                $accepted[] = $node;
+                continue;
+            }
+
+            if ($type === 'action' && $channel !== 'linkedin') {
+                $notAccepted[] = $node;
+                continue;
+            }
+
+            $accepted[] = $node;
+        }
+
+        if ($accepted === [] && $notAccepted === []) {
+            return $nodes;
+        }
+
+        // LinkedIn-only plans with no alt channel still get an empty not_accepted branch
+        // so the canvas shows the Yes path clearly (timeout ends the lead).
+        $out = $before;
+        if ($preConditionDelay !== null) {
+            $out[] = $preConditionDelay;
+        }
+        $out[] = [
+            'type' => 'condition',
+            'channel' => 'linkedin',
+            'condition' => 'invite_accepted',
+            'label' => 'Invite Accepted?',
+            'branches' => [
+                'accepted' => $accepted,
+                'not_accepted' => $notAccepted,
+            ],
+        ];
+
+        return $out;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $nodes
+     * @return list<array<string, mixed>>
+     */
+    private function dedupeTopLevelInvites(array $nodes): array
+    {
+        $seenInvite = false;
+        $out = [];
+        foreach ($nodes as $node) {
+            if (($node['type'] ?? '') === 'action' && ($node['action'] ?? '') === 'send_invite') {
+                if ($seenInvite) {
+                    continue;
+                }
+                $seenInvite = true;
+            }
+            $out[] = $node;
+        }
+
+        return $out;
+    }
+
+    /**
+     * 1st-degree audiences are already connected — strip invites / invite_accepted and keep DMs.
+     *
+     * @param  list<array<string, mixed>>  $nodes
+     * @param  array<string, mixed>  $payload
+     * @return list<array<string, mixed>>
+     */
+    private function applyFirstDegreeAudienceIntelligence(array $nodes, array $payload): array
+    {
+        if (! $this->isFirstDegreeAudience($payload)) {
+            return $nodes;
+        }
+
+        $out = [];
+        foreach ($nodes as $node) {
+            $type = (string) ($node['type'] ?? '');
+
+            if ($type === 'action' && ($node['action'] ?? '') === 'send_invite') {
+                continue;
+            }
+
+            if ($type === 'condition' && ($node['condition'] ?? '') === 'invite_accepted') {
+                foreach ($node['branches']['accepted'] ?? [] as $child) {
+                    if (is_array($child)) {
+                        $out[] = $child;
+                    }
+                }
+                foreach ($node['branches']['not_accepted'] ?? [] as $child) {
+                    if (is_array($child)) {
+                        $out[] = $child;
+                    }
+                }
+                continue;
+            }
+
+            $out[] = $node;
+        }
+
+        $hasMessage = collect($out)->contains(
+            fn ($n) => ($n['type'] ?? '') === 'action' && ($n['action'] ?? '') === 'send_message',
+        );
+        if (! $hasMessage) {
+            array_unshift($out, [
+                'type' => 'action',
+                'channel' => 'linkedin',
+                'action' => 'send_message',
+                'label' => 'Send Message',
+                'config' => ['message' => 'Hi {{firstName}}, quick question for you.'],
+            ]);
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function isFirstDegreeAudience(array $payload): bool
+    {
+        if (! empty($payload['first_degree_only'])) {
+            return true;
+        }
+
+        $depths = $payload['network_depths']
+            ?? data_get($payload, 'search_filters.network_depths')
+            ?? IcpSearchFilterParser::normalizeNetworkDepths(
+                $payload['network_degree'] ?? null,
+                (string) ($payload['audience'] ?? $payload['icp_notes'] ?? $payload['goal'] ?? ''),
+            );
+
+        return IcpSearchFilterParser::isFirstDegreeOnly(is_array($depths) ? $depths : null);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $nodes
+     * @param  array<string, mixed>  $payload
+     * @return list<array<string, mixed>>
+     */
+    private function maybeAdaptFallbackForFirstDegree(array $nodes, array $payload): array
+    {
+        if (! $this->isFirstDegreeAudience($payload)) {
+            return $nodes;
+        }
+
+        return $this->ensureEndNode(
+            $this->rekeyNodes(
+                $this->applyFirstDegreeAudienceIntelligence(
+                    $this->normalizeNodes($nodes),
+                    $payload,
+                ),
+            ),
+        );
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $nodes
+     */
+    private function containsCondition(array $nodes, string $condition): bool
+    {
+        foreach ($nodes as $node) {
+            if (($node['type'] ?? '') === 'condition' && ($node['condition'] ?? '') === $condition) {
+                return true;
+            }
+            foreach (['accepted', 'not_accepted'] as $branch) {
+                $kids = $node['branches'][$branch] ?? null;
+                if (is_array($kids) && $this->containsCondition($kids, $condition)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function normalizeConditionKey(string $channel, string $raw): string
+    {
+        $key = Str::lower(trim($raw));
+        $aliases = [
+            'accepted' => 'invite_accepted',
+            'has_accept' => 'invite_accepted',
+            'has_accepted' => 'invite_accepted',
+            'invite_accept' => 'invite_accepted',
+            'connection_accepted' => 'invite_accepted',
+            'replied' => $channel === 'email' ? 'email_replied' : ($channel === 'linkedin' ? 'has_replied' : 'message_replied'),
+            'has_reply' => $channel === 'linkedin' ? 'has_replied' : 'message_replied',
+            'reply' => $channel === 'email' ? 'email_replied' : ($channel === 'linkedin' ? 'has_replied' : 'message_replied'),
+            'no_response' => 'no_reply',
+            'silent' => 'no_reply',
+        ];
+        $key = $aliases[$key] ?? $key;
+
+        $allowed = array_column(OutreachChannelRegistry::conditionsByChannel()[$channel] ?? [], 'key');
+        if ($allowed !== [] && ! in_array($key, $allowed, true)) {
+            return $channel === 'linkedin' ? 'invite_accepted' : ($allowed[0] ?? $key);
+        }
+
+        return $key;
+    }
+
     /**
      * @param  array<string, mixed>  $payload
      */
@@ -255,7 +592,27 @@ class PlanSequenceNodeBuilder
     private function normalizeNodes(array $nodes): array
     {
         foreach ($nodes as $i => $node) {
-            if (! is_array($node) || ($node['type'] ?? '') !== 'action') {
+            if (! is_array($node)) {
+                continue;
+            }
+
+            if (($node['type'] ?? '') === 'condition') {
+                $channel = Str::lower(trim((string) ($node['channel'] ?? 'linkedin')));
+                $nodes[$i]['channel'] = $channel;
+                $nodes[$i]['condition'] = $this->normalizeConditionKey(
+                    $channel,
+                    (string) ($node['condition'] ?? 'invite_accepted'),
+                );
+                foreach (['accepted', 'not_accepted'] as $branch) {
+                    $kids = $node['branches'][$branch] ?? [];
+                    if (is_array($kids)) {
+                        $nodes[$i]['branches'][$branch] = $this->normalizeNodes(array_values($kids));
+                    }
+                }
+                continue;
+            }
+
+            if (($node['type'] ?? '') !== 'action') {
                 continue;
             }
 
@@ -279,24 +636,61 @@ class PlanSequenceNodeBuilder
         return $nodes;
     }
 
+    /**
+     * @param  list<array<string, mixed>>  $nodes
+     * @return list<array<string, mixed>>
+     */
+    private function rekeyNodes(array $nodes, int &$next = 1): array
+    {
+        foreach ($nodes as $i => $node) {
+            if (! is_array($node)) {
+                continue;
+            }
+            if (($node['type'] ?? '') !== 'end') {
+                $nodes[$i]['key'] = $next++;
+            }
+            foreach (['accepted', 'not_accepted'] as $branch) {
+                $kids = $node['branches'][$branch] ?? null;
+                if (is_array($kids) && $kids !== []) {
+                    $nodes[$i]['branches'][$branch] = $this->rekeyNodes(array_values($kids), $next);
+                }
+            }
+        }
+
+        return $nodes;
+    }
+
     private function isValidNodeModel(mixed $nodes): bool
     {
         if (! is_array($nodes) || $nodes === [] || ! array_is_list($nodes)) {
             return false;
         }
 
+        return $this->countActions($nodes) > 0;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $nodes
+     */
+    private function countActions(array $nodes): int
+    {
         $actions = 0;
         foreach ($nodes as $node) {
             if (! is_array($node)) {
-                return false;
+                continue;
             }
-            $type = (string) ($node['type'] ?? '');
-            if ($type === 'action') {
+            if (($node['type'] ?? '') === 'action') {
                 $actions++;
+            }
+            foreach (['accepted', 'not_accepted'] as $branch) {
+                $kids = $node['branches'][$branch] ?? null;
+                if (is_array($kids)) {
+                    $actions += $this->countActions($kids);
+                }
             }
         }
 
-        return $actions > 0;
+        return $actions;
     }
 
     /**

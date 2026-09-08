@@ -32,6 +32,11 @@ class DiscoverProspectsService
         int $limit = 10,
         ?int $targetCount = null,
         bool $preferFresh = false,
+        ?string $geography = null,
+        ?string $networkDegree = null,
+        ?string $title = null,
+        ?string $company = null,
+        ?bool $openLink = null,
     ): array {
         $limit = max(1, min(20, $limit));
         $query = trim($query);
@@ -52,13 +57,18 @@ class DiscoverProspectsService
             ? $best
             : null;
 
-        $planProbe = [
+        $planProbe = array_filter([
             'goal' => $query,
             'icp_notes' => $query,
             'audience' => $query,
             'target_count' => $targetCount ?? 100,
             'prefer_fresh_audience' => $forceFresh,
-        ];
+            'geography' => $geography,
+            'network_degree' => $networkDegree,
+            'title' => $title,
+            'current_company' => $company,
+            'open_link' => $openLink,
+        ], fn ($v) => $v !== null && $v !== '');
 
         // Only attach a saved list before search when it is a strong name match AND user did not ask for fresh N.
         if (! $forceFresh && $strongMatch) {
@@ -98,6 +108,15 @@ class DiscoverProspectsService
                     $autoSourced['list_src'],
                     $autoSourced['list_name'],
                 );
+                if (! empty($autoSourced['network_depths'])) {
+                    $planProbe['network_depths'] = $autoSourced['network_depths'];
+                }
+                if (! empty($autoSourced['first_degree_only'])) {
+                    $planProbe['first_degree_only'] = true;
+                }
+                if (! empty($autoSourced['search_filters'])) {
+                    $planProbe['search_filters'] = $autoSourced['search_filters'];
+                }
                 $resolved = $autoSourced;
                 $merged = $merged->prepend(array_merge($autoSourced, [
                     'origin' => 'linkedin_search',
@@ -136,6 +155,12 @@ class DiscoverProspectsService
                 'Fetched and saved audience: '.$resolved['list_name']." ({$found} profiles).",
                 'list_hash='.$resolved['list_hash'].' list_src='.$resolved['list_src'],
             ];
+            if (! empty($autoSourced['first_degree_only'])) {
+                $nextSteps[] = 'Audience is 1st-degree (already connected): draft_campaign_plan with LinkedIn messages only — do NOT use send_invite.';
+            } elseif (! empty($autoSourced['network_depths'])) {
+                $nextSteps[] = 'Network filter: '.implode(',', $autoSourced['network_depths'])
+                    .' (F=1st connected, S=2nd, O=3rd+). Plan invites only when S/O (or mixed) — not for F-only.';
+            }
             if ($targetCount !== null && $found < $targetCount) {
                 $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Ask Alex to discover again to grow this same saved list (≤100 per run).";
             }
@@ -152,6 +177,9 @@ class DiscoverProspectsService
             ];
         }
 
+        $searchFilters = is_array($autoSourced['search_filters'] ?? null) ? $autoSourced['search_filters'] : null;
+        $firstDegree = (bool) ($autoSourced['first_degree_only'] ?? false);
+
         return [
             'query' => $query,
             'lists' => $merged->take($limit)->values()->all(),
@@ -162,10 +190,17 @@ class DiscoverProspectsService
             'auto_sourced' => $autoSourced !== null,
             'fresh_fetch' => $forceFresh,
             'target_count' => $targetCount,
+            'search_filters' => $searchFilters,
+            'network_depths' => $autoSourced['network_depths'] ?? ($searchFilters['network_depths'] ?? null),
+            'first_degree_only' => $firstDegree,
+            'campaign_hint' => $firstDegree
+                ? '1st-degree list: plan LinkedIn DM sequence only (no send_invite / invite_accepted).'
+                : null,
             'next_steps' => $nextSteps,
             'limits' => [
                 'note' => 'When target_count / prefer_fresh is set, Alex ALWAYS fetches LinkedIn profiles and saves a new list. Saved engagers lists are only reused on a strong name match when you did not ask for a fresh count.',
                 'linkedin_search_cap' => 'Each LinkedIn fetch returns up to ~100 profiles and is saved under Leads. Repeat discover_prospects to grow the same list.',
+                'search_params' => 'Pass geography, network_degree (1st|2nd|3rd / F|S|O), title, company, open_link. Unipile classic people search.',
                 'competitor_harvest' => 'Optional: prepare_competitor_harvest for engagers from a competitor post/profile.',
             ],
         ];

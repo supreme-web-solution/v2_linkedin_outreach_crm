@@ -79,6 +79,7 @@ class CampaignDraftFromPlanService
                 'max_leads' => isset($payload['target_count'])
                     ? max(1, min(500, (int) $payload['target_count']))
                     : null,
+                'channel_inbox' => $this->defaultChannelInbox($nodeModel, $payload, $goal),
             ],
         ]);
 
@@ -182,5 +183,44 @@ class CampaignDraftFromPlanService
             ],
             ['list_name' => $listName]
         );
+    }
+
+    /**
+     * Seed pause-on-reply (and optional auto-reply context) for every channel in the sequence.
+     * Replies pause automation so Alex can handle prospects in inbox chat context.
+     *
+     * @param  list<array<string, mixed>>  $nodeModel
+     * @param  array<string, mixed>  $payload
+     * @return array<string, array<string, mixed>>
+     */
+    private function defaultChannelInbox(array $nodeModel, array $payload, string $goal): array
+    {
+        $channels = \App\V2\Outreach\OutreachChannelRegistry::requiredChannelsForNodes($nodeModel);
+        if ($channels === []) {
+            $channels = ['linkedin'];
+        }
+
+        $pause = array_key_exists('pause_on_reply', $payload)
+            ? (bool) $payload['pause_on_reply']
+            : true;
+        $autoReply = array_key_exists('auto_reply_enabled', $payload)
+            ? (bool) $payload['auto_reply_enabled']
+            : false;
+        $aiContext = trim((string) ($payload['ai_context'] ?? ''));
+        if ($aiContext === '') {
+            $aiContext = Str::limit('Campaign goal: '.$goal, 1500, '');
+        }
+
+        $inbox = [];
+        foreach ($channels as $channel) {
+            $inbox[$channel] = [
+                'ai_context' => $aiContext,
+                'auto_reply_enabled' => $autoReply,
+                'pause_on_reply' => $pause,
+            ];
+        }
+
+        return app(\App\V2\Services\OutreachChannelInboxSettingsService::class)
+            ->sanitizeChannelInboxPayload($inbox);
     }
 }

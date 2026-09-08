@@ -55,7 +55,28 @@ class IcpSearchFilterParserTest extends TestCase
 
         $this->assertGreaterThanOrEqual(3, count($variants));
         $this->assertSame(40, $variants[0]['limit']);
-        // At least one variant has no title (less strict).
         $this->assertTrue(collect($variants)->contains(fn (array $v) => empty($v['title'])));
+    }
+
+    public function test_parses_first_degree_and_nigeria(): void
+    {
+        $filters = IcpSearchFilterParser::fromGoal('Fetch 30 first degree SaaS founders in Nigeria');
+
+        $this->assertSame(['F'], $filters['network_depths']);
+        $this->assertSame('Nigeria', $filters['location']);
+        $this->assertTrue(IcpSearchFilterParser::isFirstDegreeOnly($filters['network_depths']));
+    }
+
+    public function test_explicit_network_degree_override(): void
+    {
+        $variants = IcpSearchFilterParser::searchVariants(
+            'B2B founders',
+            'Canada',
+            25,
+            ['network_degree' => '2nd,3rd'],
+        );
+
+        $this->assertSame(['S', 'O'], $variants[0]['network_depths']);
+        $this->assertSame('Canada', $variants[0]['location']);
     }
 }

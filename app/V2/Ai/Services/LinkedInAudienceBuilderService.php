@@ -52,10 +52,25 @@ class LinkedInAudienceBuilderService
 
         $targetCount = isset($plan['target_count']) ? (int) $plan['target_count'] : null;
         $limit = $targetCount !== null ? max(10, min(100, $targetCount)) : null;
+        $explicit = array_filter([
+            'geography' => $plan['geography'] ?? null,
+            'location' => $plan['location'] ?? null,
+            'network_depths' => $plan['network_depths'] ?? null,
+            'network_degree' => $plan['network_degree'] ?? null,
+            'title' => $plan['title'] ?? null,
+            'current_company' => $plan['current_company'] ?? $plan['company'] ?? null,
+            'past_company' => $plan['past_company'] ?? null,
+            'school' => $plan['school'] ?? null,
+            'open_link' => $plan['open_link'] ?? null,
+            'audience_name' => $plan['audience_name'] ?? $plan['list_name'] ?? null,
+            'limit' => $limit,
+        ], fn ($v) => $v !== null && $v !== '');
+
         $variants = IcpSearchFilterParser::searchVariants(
             $query,
             isset($plan['geography']) ? (string) $plan['geography'] : null,
             $limit,
+            $explicit,
         );
 
         if ($targetCount !== null) {
@@ -77,6 +92,7 @@ class LinkedInAudienceBuilderService
                 'keywords' => $filters['keywords'] ?? null,
                 'title' => $filters['title'] ?? null,
                 'location' => $filters['location'] ?? null,
+                'network_depths' => $filters['network_depths'] ?? null,
                 'stored' => $built['total_leads'] ?? 0,
             ];
 
@@ -91,6 +107,10 @@ class LinkedInAudienceBuilderService
 
                 $built['search_filters'] = $filters;
                 $built['search_attempts'] = $attempts;
+                $built['network_depths'] = $filters['network_depths'] ?? null;
+                $built['first_degree_only'] = IcpSearchFilterParser::isFirstDegreeOnly(
+                    is_array($filters['network_depths'] ?? null) ? $filters['network_depths'] : null,
+                );
 
                 return $built;
             }

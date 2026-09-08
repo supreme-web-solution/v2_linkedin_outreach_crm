@@ -78,7 +78,9 @@ class PlanContentService
         try {
             $payload = $this->openai->generateAgentJson(
                 'You are Alex, SociFusion AI Sales Command Center. Return JSON only. '
-                .'Default when unspecified: LinkedIn + Email. When the user asks for Instagram, Telegram, or WhatsApp, make that channel primary in preferred_channels.',
+                .'Default when unspecified: LinkedIn + Email. When the user asks for Instagram, Telegram, or WhatsApp, make that channel primary in preferred_channels. '
+                .'Prefer pause_on_reply for inbound replies (Alex handles them in inbox). '
+                .'LinkedIn campaigns should use invite_accepted before DMs.',
                 json_encode([
                     'task' => 'Refine a sales execution strategy plan',
                     'plan' => $base,
@@ -87,6 +89,7 @@ class PlanContentService
                         'preferred_channels' => 'string',
                         'target_count' => 'integer',
                         'follow_up_days' => 'integer',
+                        'pause_on_reply' => 'boolean',
                         'steps' => 'array of short action strings',
                         'risks' => 'array of strings',
                     ],
@@ -100,6 +103,9 @@ class PlanContentService
                     'preferred_channels' => $payload['preferred_channels'] ?? null,
                     'target_count' => isset($payload['target_count']) ? (int) $payload['target_count'] : null,
                     'follow_up_days' => isset($payload['follow_up_days']) ? (int) $payload['follow_up_days'] : null,
+                    'pause_on_reply' => array_key_exists('pause_on_reply', $payload)
+                        ? (bool) $payload['pause_on_reply']
+                        : null,
                     'steps' => $payload['steps'] ?? null,
                     'risks' => $payload['risks'] ?? null,
                 ], fn ($v) => $v !== null));
@@ -124,21 +130,32 @@ class PlanContentService
         try {
             $payload = $this->openai->generateAgentJson(
                 'You are Alex, SociFusion outreach architect. Return JSON only. '
-                .'Default when unspecified: LinkedIn + Email. Instagram/Telegram/WhatsApp are full sequence + inbox channels — use as primary when the user asks.',
+                .'Design the smartest sequence for this goal — choose channels and nodes deliberately. '
+                .'LinkedIn: empty send_invite, then After acceptance / invite_accepted before any DM; never a second invite. '
+                .'Put follow-up DMs after acceptance; put email/WhatsApp on not-accepted when those channels are used. '
+                .'Default reply handling is pause_on_reply (sequence stops; Alex replies in inbox) — include a sequence line like "Pause on reply — handle in inbox". '
+                .'Only add has_replied / no_reply / message_replied steps when the sequence must BRANCH on silence vs reply. '
+                .'Do not invent an Alex-reply action step. Prefer short high-converting sequences over long ones.',
                 json_encode([
-                    'task' => 'Refine a multi-channel outreach campaign plan',
+                    'task' => 'Refine a multi-channel outreach campaign plan with wise node choices',
                     'plan' => $base,
+                    'available_conditions' => [
+                        'linkedin' => ['invite_accepted', 'has_replied', 'no_reply'],
+                        'email' => ['email_replied', 'no_reply', 'email_opened', 'email_bounced'],
+                        'whatsapp_instagram_telegram' => ['message_replied', 'no_reply'],
+                    ],
                     'schema' => [
                         'audience' => 'string',
                         'preferred_channels' => 'string',
                         'channels' => 'string',
                         'target_count' => 'integer',
                         'follow_up_days' => 'integer',
-                        'sequence' => 'array of step labels',
+                        'pause_on_reply' => 'boolean (default true)',
+                        'sequence' => 'array of step labels including After acceptance / Pause on reply when appropriate',
                         'steps' => 'array of execution steps',
                     ],
                 ], JSON_THROW_ON_ERROR),
-                900,
+                1100,
             );
 
             if ($payload !== []) {
@@ -148,6 +165,9 @@ class PlanContentService
                     'channels' => $payload['channels'] ?? null,
                     'target_count' => isset($payload['target_count']) ? (int) $payload['target_count'] : null,
                     'follow_up_days' => isset($payload['follow_up_days']) ? (int) $payload['follow_up_days'] : null,
+                    'pause_on_reply' => array_key_exists('pause_on_reply', $payload)
+                        ? (bool) $payload['pause_on_reply']
+                        : null,
                     'sequence' => $payload['sequence'] ?? null,
                     'steps' => $payload['steps'] ?? null,
                 ], fn ($v) => $v !== null));
