@@ -66,6 +66,11 @@ class AiEmployeeSettingsService
 
     private function mayExecute(AiEmployeeSetting $settings, AiAutonomyLevel $level, string $toolName): bool
     {
+        // Destructive tools never auto-execute — always Review & Launch.
+        if ($this->isDestructiveTool($toolName)) {
+            return false;
+        }
+
         if ($level === AiAutonomyLevel::Copilot) {
             return false;
         }
@@ -79,12 +84,31 @@ class AiEmployeeSettingsService
             $allowlist = $this->defaultExecuteTools();
         }
 
+        $allowlist = $this->withoutDestructiveTools($allowlist);
+
         if ($level === AiAutonomyLevel::Autopilot) {
             return in_array($toolName, $allowlist, true);
         }
 
         // Autonomous: allowlisted tools auto; others still need approval elsewhere
         return in_array($toolName, $allowlist, true);
+    }
+
+    public function isDestructiveTool(string $toolName): bool
+    {
+        return $toolName === 'delete_campaign' || str_starts_with($toolName, 'delete_');
+    }
+
+    /**
+     * @param  list<string>  $tools
+     * @return list<string>
+     */
+    public function withoutDestructiveTools(array $tools): array
+    {
+        return array_values(array_filter(
+            $tools,
+            fn (string $tool) => ! $this->isDestructiveTool($tool),
+        ));
     }
 
     /**
@@ -143,10 +167,10 @@ class AiEmployeeSettingsService
         }
 
         if (array_key_exists('allowed_execute_tools', $data)) {
-            $row->allowed_execute_tools = array_values(array_unique(array_filter(
+            $row->allowed_execute_tools = $this->withoutDestructiveTools(array_values(array_unique(array_filter(
                 (array) $data['allowed_execute_tools'],
                 fn ($tool) => is_string($tool) && $tool !== '',
-            )));
+            ))));
         }
 
         $row->save();

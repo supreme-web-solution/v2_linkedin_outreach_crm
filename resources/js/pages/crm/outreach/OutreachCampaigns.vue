@@ -66,6 +66,13 @@ function duplicateCampaign(c: { id: number }) {
     actionId.value = c.id;
     router.post(`/outreach/${c.id}/duplicate`, {}, { preserveScroll: true, onFinish: () => { actionId.value = null; } });
 }
+
+function formatCreatedAt(iso: string | null | undefined): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 </script>
 
 <template>
@@ -154,7 +161,10 @@ function duplicateCampaign(c: { id: number }) {
                         <Link :href="`/outreach/${c.id}`" class="font-semibold hover:text-primary">{{ c.name }}</Link>
                         <span class="rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize" :class="statusColor(c.status)">{{ c.status }}</span>
                     </div>
-                    <p class="mt-1 text-xs text-muted-foreground">{{ c.outreach_leads_count }} leads · {{ c.outreach_lists_count }} lists</p>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                        {{ c.outreach_leads_count }} leads · {{ c.outreach_lists_count }} lists
+                        <span v-if="formatCreatedAt(c.created_at)"> · Created {{ formatCreatedAt(c.created_at) }}</span>
+                    </p>
                     <div class="mt-3 flex flex-wrap gap-2">
                         <button
                             v-if="c.status === 'running' || c.status === 'active'"

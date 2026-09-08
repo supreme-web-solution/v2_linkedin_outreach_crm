@@ -809,6 +809,10 @@ class CommandCenterService
             return $this->launchCampaignInboxAi($approval, $user);
         }
 
+        if ($tool === 'delete_campaign' || $type === 'campaign_delete') {
+            return $this->launchCampaignDelete($approval, $user);
+        }
+
         if ($tool === 'import_leads_csv' || $type === 'csv_import') {
             return $this->launchCsvImport($approval, $user);
         }
@@ -830,6 +834,25 @@ class CommandCenterService
             "Launched plan #{$approval->id}.",
             $result['message'],
             $result['campaign_url'],
+        ]);
+    }
+
+    private function launchCampaignDelete(AiActionApproval $approval, User $user): string
+    {
+        try {
+            $result = app(DeleteCampaignCommandCenterService::class)->applyFromApproval(
+                $approval->fresh() ?? $approval,
+                $user,
+            );
+        } catch (\Throwable $e) {
+            report($e);
+
+            return "Approved #{$approval->id}, but delete failed: ".$e->getMessage();
+        }
+
+        return implode("\n", [
+            "Confirmed delete plan #{$approval->id}.",
+            $result['message'],
         ]);
     }
 
@@ -1231,6 +1254,15 @@ class CommandCenterService
 
     public function isAutoLaunchApproval(AiActionApproval $approval): bool
     {
+        // Never auto-confirm destructive plans (deletes), even on Autopilot/Autonomous.
+        if ($approval->tool === 'delete_campaign'
+            || ($approval->payload['type'] ?? '') === 'campaign_delete'
+            || ($approval->payload['destructive'] ?? false) === true
+            || ($approval->payload['requires_explicit_approval'] ?? false) === true
+        ) {
+            return false;
+        }
+
         return $this->isOutreachPlanApproval($approval)
             || $this->isLinkedInPostApproval($approval)
             || $this->isCallManagerLaunchApproval($approval)

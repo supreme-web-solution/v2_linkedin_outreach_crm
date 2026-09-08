@@ -24,6 +24,7 @@ final class ApprovalActionLabels
         $tool = (string) ($tool ?? '');
 
         $approve = match (true) {
+            self::isDelete($tool, $type) => 'Confirm Delete',
             self::isLinkedInPost($tool, $type) => 'Publish',
             self::isDraftReply($tool, $type) => 'Send',
             self::isPersonalizedMessage($tool, $type) => 'Save',
@@ -34,15 +35,17 @@ final class ApprovalActionLabels
         };
 
         $reject = match (true) {
+            self::isDelete($tool, $type) => 'Keep',
             self::isLinkedInPost($tool, $type) => 'Discard',
             default => 'Reject',
         };
 
         $showPreview = self::isLinkedInPost($tool, $type)
-            || in_array($type, ['strategy', 'campaign'], true)
-            || in_array($tool, ['propose_strategy', 'draft_campaign_plan'], true);
+            || in_array($type, ['strategy', 'campaign', 'campaign_delete'], true)
+            || in_array($tool, ['propose_strategy', 'draft_campaign_plan', 'delete_campaign'], true);
 
         $summary = match (true) {
+            self::isDelete($tool, $type) => 'Delete requires your confirmation',
             self::isLinkedInPost($tool, $type) => 'LinkedIn post ready',
             self::isDraftReply($tool, $type) => 'Reply draft ready',
             self::isPersonalizedMessage($tool, $type) => 'Message draft ready',
@@ -91,5 +94,12 @@ final class ApprovalActionLabels
     private static function isIcp(string $tool, string $type): bool
     {
         return $tool === 'prepare_icp' || $type === 'icp' || str_contains($tool, 'icp');
+    }
+
+    private static function isDelete(string $tool, string $type): bool
+    {
+        return $tool === 'delete_campaign'
+            || $type === 'campaign_delete'
+            || str_starts_with($tool, 'delete_');
     }
 }

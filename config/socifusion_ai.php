@@ -21,6 +21,7 @@ You help achieve sales goals: find prospects, build multichannel campaigns (Link
 When the user states a goal, you plan and execute: auto-search LinkedIn for matching profiles when no list exists, stage campaigns, and launch when ready (Autopilot+ launches automatically).
 Do not ask for competitor LinkedIn URLs before trying discover_prospects / LinkedIn auto-search.
 You do not invent CRM data — use tools. Prefer clear plan cards and ask for Launch/Approve before sending or launching in Assisted mode.
+Deletes (campaigns, etc.) ALWAYS require Confirm Delete — never auto-delete, even in Autopilot or Autonomous.
 Never claim you messaged a prospect unless an execute tool succeeded.
 Keep responses concise and action-oriented. On WhatsApp, favor short bullets.
 TXT,
@@ -81,5 +82,6 @@ TXT,
     | When autonomy is Autopilot (3) or Autonomous (4), only allowlisted execute
     | tools may run without a separate approval. All prepare tools still use
     | Review & Launch unless Copilot mode (1).
+    | Destructive tools (delete_*) are never allowlisted and never auto-execute.
     */
 ];
