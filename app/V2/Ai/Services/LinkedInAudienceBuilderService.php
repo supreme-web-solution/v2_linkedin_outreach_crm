@@ -30,7 +30,8 @@ class LinkedInAudienceBuilderService
      *     list_name: string,
      *     total_leads: int,
      *     match_score: int,
-     *     auto_sourced: bool
+     *     auto_sourced: bool,
+     *     search_filters?: array<string, mixed>
      * }|null
      */
     public function tryBuildFromPlan(User $user, int $organizationId, array $plan): ?array
@@ -40,22 +41,68 @@ class LinkedInAudienceBuilderService
             return null;
         }
 
+        $accountId = V2IntegrationAccount::activeUnipileAccountId($user->id);
+        if (! $accountId) {
+            Log::warning('[Alex] LinkedIn audience search skipped — no connected Unipile LinkedIn account', [
+                'user_id' => $user->id,
+            ]);
+
+            return null;
+        }
+
         $targetCount = isset($plan['target_count']) ? (int) $plan['target_count'] : null;
-        // One search run ≤100 profiles — safer for LinkedIn/Unipile rate limits.
-        // Larger goals grow by repeating discover_prospects into the same list.
         $limit = $targetCount !== null ? max(10, min(100, $targetCount)) : null;
-        $filters = IcpSearchFilterParser::fromGoal(
+        $variants = IcpSearchFilterParser::searchVariants(
             $query,
             isset($plan['geography']) ? (string) $plan['geography'] : null,
             $limit,
         );
 
         if ($targetCount !== null) {
-            $filters['limit'] = max(10, min(100, $targetCount));
-            $filters['audience_name'] = Str::limit($query.' ('.$targetCount.')', 80, '');
+            foreach ($variants as $i => $variant) {
+                $variants[$i]['limit'] = max(10, min(100, $targetCount));
+                $variants[$i]['audience_name'] = Str::limit(
+                    ($variant['audience_name'] ?? 'LinkedIn Search').' ('.$targetCount.')',
+                    80,
+                    '',
+                );
+            }
         }
 
-        return $this->searchAndPersist($user, $organizationId, $filters);
+        $attempts = [];
+        foreach ($variants as $index => $filters) {
+            $built = $this->searchAndPersist($user, $organizationId, $filters);
+            $attempts[] = [
+                'attempt' => $index + 1,
+                'keywords' => $filters['keywords'] ?? null,
+                'title' => $filters['title'] ?? null,
+                'location' => $filters['location'] ?? null,
+                'stored' => $built['total_leads'] ?? 0,
+            ];
+
+            if ($built !== null) {
+                Log::info('[Alex] LinkedIn audience search succeeded', [
+                    'user_id' => $user->id,
+                    'attempt' => $index + 1,
+                    'filters' => $filters,
+                    'stored' => $built['total_leads'],
+                    'list_hash' => $built['list_hash'],
+                ]);
+
+                $built['search_filters'] = $filters;
+                $built['search_attempts'] = $attempts;
+
+                return $built;
+            }
+        }
+
+        Log::warning('[Alex] LinkedIn audience search returned no profiles after variants', [
+            'user_id' => $user->id,
+            'query' => Str::limit($query, 200),
+            'attempts' => $attempts,
+        ]);
+
+        return null;
     }
 
     /**
@@ -87,6 +134,7 @@ class LinkedInAudienceBuilderService
         } catch (Throwable $e) {
             Log::warning('[Alex] LinkedIn audience search failed', [
                 'user_id' => $user->id,
+                'filters' => $filters,
                 'error' => $e->getMessage(),
             ]);
 
@@ -95,6 +143,11 @@ class LinkedInAudienceBuilderService
 
         $elements = Arr::get($result, 'items', Arr::get($result, 'data.items', []));
         if (! is_array($elements) || $elements === []) {
+            Log::info('[Alex] LinkedIn search empty for filters', [
+                'user_id' => $user->id,
+                'filters' => $filters,
+            ]);
+
             return null;
         }
 
@@ -103,23 +156,21 @@ class LinkedInAudienceBuilderService
             $audienceName = 'LinkedIn Search';
         }
 
-        $slug = Str::slug(Str::limit($audienceName, 60, '')) ?: 'search';
-        $listHash = 'search-'.$user->id.'-'.$slug;
+        // Unique list per fetch so new campaigns don't collide with prior search hashes.
+        $slug = Str::slug(Str::limit($audienceName, 40, '')) ?: 'search';
+        $listHash = 'search-'.$user->id.'-'.$slug.'-'.now()->format('YmdHis');
         $stored = 0;
+        $skippedNoId = 0;
 
         foreach ($elements as $item) {
             if (! is_array($item)) {
                 continue;
             }
 
-            $profileId = (string) (
-                Arr::get($item, 'provider_id')
-                ?? Arr::get($item, 'id')
-                ?? Arr::get($item, 'public_identifier')
-                ?? ''
-            );
-
+            $profileId = $this->resolveProfileId($item);
             if ($profileId === '') {
+                $skippedNoId++;
+
                 continue;
             }
 
@@ -130,7 +181,7 @@ class LinkedInAudienceBuilderService
                     'provider_profile_id' => $profileId,
                 ],
                 [
-                    'public_identifier' => Arr::get($item, 'public_identifier'),
+                    'public_identifier' => Arr::get($item, 'public_identifier', Arr::get($item, 'publicIdentifier')),
                     'full_name' => Arr::get($item, 'full_name', Arr::get($item, 'name')),
                     'headline' => Arr::get($item, 'headline'),
                     'company_name' => Arr::get($item, 'company_name', Arr::get($item, 'current_company')),
@@ -157,6 +208,11 @@ class LinkedInAudienceBuilderService
                             'source_name' => $audienceName,
                             'imported_at' => now()->toIso8601String(),
                             'auto_sourced_by' => 'alex',
+                            'search_filters' => [
+                                'keywords' => $filters['keywords'] ?? null,
+                                'title' => $filters['title'] ?? null,
+                                'location' => $filters['location'] ?? null,
+                            ],
                         ],
                     ],
                 );
@@ -167,6 +223,14 @@ class LinkedInAudienceBuilderService
         }
 
         if ($stored === 0) {
+            Log::warning('[Alex] LinkedIn search returned items but none could be saved', [
+                'user_id' => $user->id,
+                'raw_count' => count($elements),
+                'skipped_no_id' => $skippedNoId,
+                'sample_keys' => array_keys(is_array($elements[0] ?? null) ? $elements[0] : []),
+                'filters' => $filters,
+            ]);
+
             return null;
         }
 
@@ -178,5 +242,28 @@ class LinkedInAudienceBuilderService
             'match_score' => 95,
             'auto_sourced' => true,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function resolveProfileId(array $item): string
+    {
+        foreach ([
+            'provider_id',
+            'id',
+            'public_identifier',
+            'publicIdentifier',
+            'member_urn',
+            'entity_urn',
+            'profile_id',
+        ] as $key) {
+            $value = trim((string) Arr::get($item, $key, ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 }

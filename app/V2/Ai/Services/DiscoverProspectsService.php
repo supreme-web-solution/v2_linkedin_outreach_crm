@@ -118,10 +118,17 @@ class DiscoverProspectsService
                 'Or share a competitor LinkedIn company URL to harvest engagers',
             ];
         } elseif ($resolved === null) {
+            $previewFilters = \App\V2\Ai\Support\IcpSearchFilterParser::fromGoal(
+                $query,
+                null,
+                $targetCount,
+            );
             $nextSteps = [
-                'Could not fetch new LinkedIn profiles for "'.$query.'" yet.',
-                'Confirm LinkedIn is connected, then ask again with a target count (e.g. 30).',
-                'Or pick a saved list by exact name and pass list_hash + list_src.',
+                'LinkedIn search did not return profiles yet.',
+                'Prepared filters: keywords="'.($previewFilters['keywords'] ?? '').'"'
+                    .' title='.($previewFilters['title'] ?? 'any')
+                    .' location='.($previewFilters['location'] ?? 'any'),
+                'Alex retries broader variants automatically — ask again, or check LinkedIn under Integrations.',
             ];
         } elseif ($autoSourced !== null) {
             $found = (int) ($resolved['total_leads'] ?? 0);

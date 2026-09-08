@@ -1319,14 +1319,34 @@ class CommandCenterService
     {
         $steps = $this->audienceResolver->nextSteps($approval->payload ?? []);
         $goal = $approval->payload['goal'] ?? 'this goal';
+        $icp = \App\V2\Ai\Support\IcpSearchFilterParser::extractIcpSegment((string) (
+            $approval->payload['icp_notes']
+            ?? $approval->payload['audience']
+            ?? $goal
+        ));
+        $filters = \App\V2\Ai\Support\IcpSearchFilterParser::fromGoal(
+            (string) ($approval->payload['icp_notes'] ?? $approval->payload['audience'] ?? $goal),
+            isset($approval->payload['geography']) ? (string) $approval->payload['geography'] : null,
+            isset($approval->payload['target_count']) ? (int) $approval->payload['target_count'] : null,
+        );
 
         return implode("\n", array_merge(
             [
-                "I won't create a campaign for plan #{$approval->id} until we have a prospect list for {$goal}.",
+                "I won't create a campaign for plan #{$approval->id} until LinkedIn returns a prospect list.",
+                '',
+                'I will search with prepared filters (not the full pitch):',
+                '• Keywords: '.($filters['keywords'] ?? '—'),
+                '• Title: '.($filters['title'] ?? 'any'),
+                '• Location: '.($filters['location'] ?? 'any'),
+                '• ICP focus: '.($icp !== '' ? $icp : '—'),
                 '',
                 'Next:',
             ],
             array_map(fn (string $step) => '• '.$step, $steps),
+            [
+                '',
+                'Say "fetch prospects" or "discover 40" again — Alex retries with broader LinkedIn search variants and saves the list.',
+            ],
         ));
     }
 
