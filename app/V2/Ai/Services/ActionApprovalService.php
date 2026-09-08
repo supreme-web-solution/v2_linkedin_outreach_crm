@@ -18,6 +18,9 @@ class ActionApprovalService
         array $payload,
         ?AiConversation $conversation = null,
     ): AiActionApproval {
+        // One active trigger at a time (web widget + WhatsApp) — newest replaces older.
+        $this->supersedePending($user, $organizationId);
+
         return AiActionApproval::query()->create([
             'organization_id' => $organizationId,
             'user_id' => $user->id,
@@ -27,6 +30,22 @@ class ActionApprovalService
             'payload' => $payload,
             'status' => 'pending',
         ]);
+    }
+
+    /**
+     * Reject all other pending approvals for this user/org so only the latest CTA remains.
+     */
+    public function supersedePending(User $user, int $organizationId): int
+    {
+        return AiActionApproval::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->where('status', 'pending')
+            ->update([
+                'status' => 'rejected',
+                'decided_at' => Carbon::now(),
+                'decided_by' => $user->id,
+            ]);
     }
 
     public function approve(AiActionApproval $approval, User $decider): AiActionApproval

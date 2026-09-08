@@ -22,33 +22,36 @@ class DiscoverProspectsTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Prospect discovery via LinkedIn classic search (keywords, title, location/country, company, school, '
-            .'network degree F/S/O, open_link) or saved lists. When target_count or prefer_fresh=true: ALWAYS fetch NEW '
-            .'profiles, SAVE them, return list_hash. Pass network_degree=1st for connections-only (campaigns should DM, not invite).';
+        return 'Prospect discovery. platform=linkedin (default): Unipile people search. platform=instagram: Mindcase '
+            .'KEYWORD search is primary (query + target_count → many profiles). @handle/profile_url only for exact person. '
+            .'SAVES csv list with instagram filled. Always save first, then draft_campaign_plan.';
     }
 
     public function schema(JsonSchema $schema): array
     {
         return [
-            'query' => $schema->string()->required()->description('ICP / industry / role keywords (not the full product pitch)'),
+            'query' => $schema->string()->required()->description(
+                'LinkedIn ICP keywords, or Instagram KEYWORD (e.g. "fitness coaches Lagos"). Use @handle only when looking up one known account',
+            ),
+            'platform' => $schema->string()->nullable()->description('linkedin (default) or instagram (Mindcase keyword search)'),
             'competitors' => $schema->string()->nullable()->description('Optional comma-separated competitor names'),
-            'target_count' => $schema->integer()->min(10)->max(500)->nullable()->description(
-                'Fetch and SAVE ~N NEW LinkedIn profiles (forces fresh search; do not reuse old lists)',
+            'target_count' => $schema->integer()->min(1)->max(500)->nullable()->description(
+                'Fetch and SAVE ~N NEW profiles (forces fresh search)',
             ),
             'prefer_fresh' => $schema->boolean()->nullable()->description(
-                'true = force LinkedIn fetch+save even without target_count',
+                'true = force fetch+save even without target_count',
             ),
             'geography' => $schema->string()->nullable()->description(
-                'Country or city for LinkedIn location filter (e.g. United States, Nigeria, London)',
+                'LinkedIn: country or city (e.g. United States, Nigeria, London)',
             ),
             'network_degree' => $schema->string()->nullable()->description(
-                'Connection degree: 1st|2nd|3rd|F|S|O or combos like "2nd,3rd". 1st = already connected.',
+                'LinkedIn: 1st|2nd|3rd|F|S|O or combos like "2nd,3rd"',
             ),
-            'title' => $schema->string()->nullable()->description('Job title filter e.g. Founder, VP Sales'),
-            'company' => $schema->string()->nullable()->description('Current company name filter'),
-            'open_link' => $schema->boolean()->nullable()->description('Only Open Profile / open-to-connect profiles'),
+            'title' => $schema->string()->nullable()->description('LinkedIn job title filter'),
+            'company' => $schema->string()->nullable()->description('LinkedIn current company filter'),
+            'open_link' => $schema->boolean()->nullable()->description('LinkedIn Open Profile only'),
             'profile_url' => $schema->string()->nullable()->description(
-                'Exact linkedin.com/in/... URL — imports that one person (preferred when user confirms a profile)',
+                'Exact linkedin.com/in/... or instagram.com/... URL',
             ),
             'limit' => $schema->integer()->min(1)->max(20)->nullable(),
         ];
@@ -69,6 +72,7 @@ class DiscoverProspectsTool extends GatedTool
             company: isset($request['company']) ? (string) $request['company'] : null,
             openLink: array_key_exists('open_link', $request->all()) ? (bool) $request['open_link'] : null,
             profileUrl: isset($request['profile_url']) ? (string) $request['profile_url'] : null,
+            platform: (string) ($request['platform'] ?? 'linkedin'),
         );
     }
 }

@@ -18,6 +18,7 @@ class DiscoverProspectsService
         private readonly LeadListService $leadLists,
         private readonly ProspectAudienceResolverService $audienceResolver,
         private readonly LinkedInAudienceBuilderService $linkedInAudience,
+        private readonly InstagramAudienceBuilderService $instagramAudience,
     ) {}
 
     /**
@@ -38,7 +39,18 @@ class DiscoverProspectsService
         ?string $company = null,
         ?bool $openLink = null,
         ?string $profileUrl = null,
+        string $platform = 'linkedin',
     ): array {
+        $platform = Str::lower(trim($platform));
+        if (in_array($platform, ['instagram', 'ig'], true)) {
+            return $this->discoverInstagram(
+                $user,
+                $query,
+                $targetCount ?? max(10, $limit),
+                $profileUrl,
+            );
+        }
+
         $limit = max(1, min(20, $limit));
         $query = trim($query);
         $competitorNames = array_values(array_filter(array_map('trim', explode(',', (string) $competitors))));
@@ -188,17 +200,17 @@ class DiscoverProspectsService
             }
             if (! empty($autoSourced['profile_detail']) && is_array($autoSourced['profile_detail'])) {
                 $detail = $autoSourced['profile_detail'];
-                $nextSteps[] = 'Profile detail loaded for '.$($detail['name'] ?? 'this person')
+                $nextSteps[] = 'Profile detail loaded for '.($detail['name'] ?? 'this person')
                     .(! empty($detail['headline']) ? ' — '.$detail['headline'] : '')
                     .'. Use this when drafting a personalized one-shot.';
             }
             if ($targetCount !== null && $found < $targetCount) {
-                $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Ask Alex to discover again to grow this same saved list (≤100 per run).";
+                $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Ask Alex to discover again to grow this same saved list (<=100 per run).";
             }
             $nextSteps = array_merge($nextSteps, [
-                '• propose_strategy or draft_campaign_plan USING this list_hash (do not swap to an old engagers list)',
-                '• prepare_enrichment if emails/phones are missing',
-                '• Launch when ready',
+                '- propose_strategy or draft_campaign_plan USING this list_hash (do not swap to an old engagers list)',
+                '- prepare_enrichment if emails/phones are missing',
+                '- Launch when ready',
             ]);
         } else {
             $nextSteps = [
@@ -236,6 +248,80 @@ class DiscoverProspectsService
                 'search_params' => 'Pass geography, network_degree (1st|2nd|3rd / F|S|O), title, company, open_link. Unipile classic people search.',
                 'competitor_harvest' => 'Optional: prepare_competitor_harvest for engagers from a competitor post/profile.',
             ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function discoverInstagram(
+        User $user,
+        string $query,
+        int $limit,
+        ?string $profileUrl,
+    ): array {
+        // Keyword is primary. Only force username lookup for @handle or profile URL.
+        $usernames = [];
+        if ($profileUrl && preg_match('#instagram\.com/([^/?#]+)#i', $profileUrl, $m)) {
+            $usernames[] = $m[1];
+        } elseif (preg_match('/^@[\w.]{2,30}$/', trim($query))) {
+            $usernames[] = ltrim(trim($query), '@');
+        } elseif (preg_match('#instagram\.com/([^/?#]+)#i', trim($query), $m)) {
+            $usernames[] = $m[1];
+        }
+
+        $built = $this->instagramAudience->searchAndPersist(
+            $user,
+            $query,
+            max(1, min(100, $limit)),
+            $usernames !== [] ? $usernames : null,
+        );
+
+        if ($built === null) {
+            return [
+                'query' => $query,
+                'platform' => 'instagram',
+                'lists' => [],
+                'best_match' => null,
+                'ready_for_campaign' => false,
+                'auto_sourced' => false,
+                'sample_profiles' => [],
+                'next_steps' => [
+                    'Instagram search needs MINDCASE_API_KEY from https://console.mindcase.co',
+                    'Or save_contacts with instagram=@handle, then draft_campaign_plan channels=Instagram.',
+                ],
+            ];
+        }
+
+        $samples = $built['sample_profiles'] ?? [];
+        $next = [
+            'Fetched Instagram audience: '.$built['list_name'].' ('.$built['total_leads'].').',
+            'list_hash='.$built['list_hash'].' list_src=csv',
+            'draft_campaign_plan with channels=Instagram + this list_hash (one_shot for a greeting).',
+        ];
+        if (is_array($samples) && $samples !== []) {
+            $next[] = 'Sample profiles:';
+            foreach (array_slice($samples, 0, 5) as $i => $p) {
+                if (! is_array($p)) {
+                    continue;
+                }
+                $next[] = ($i + 1).'. @'.($p['username'] ?? '').' — '.($p['name'] ?? '')
+                    .(isset($p['profile_url']) ? ' | '.$p['profile_url'] : '');
+            }
+        }
+
+        return [
+            'query' => $query,
+            'platform' => 'instagram',
+            'lists' => [$built],
+            'best_match' => $built,
+            'total_leads_in_matches' => $built['total_leads'],
+            'ready_for_campaign' => true,
+            'auto_sourced' => true,
+            'fresh_fetch' => true,
+            'sample_profiles' => $samples,
+            'campaign_hint' => 'Instagram list: plan Instagram DM / one_shot. Prepare contacts to resolve handles if needed.',
+            'next_steps' => $next,
         ];
     }
 

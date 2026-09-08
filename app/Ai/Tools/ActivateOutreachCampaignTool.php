@@ -22,24 +22,51 @@ class ActivateOutreachCampaignTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Start (activate) a draft outreach campaign after lists are attached. Queues lead sync then begins the run.';
+        return 'Start (activate) one or many draft outreach campaigns after lists are attached. Queues lead sync then begins the run.';
     }
 
     public function schema(JsonSchema $schema): array
     {
         return [
-            'campaign_id' => $schema->integer()->required(),
+            'campaign_id' => $schema->integer()->nullable()->description('Single campaign id'),
+            'campaign_ids' => $schema->array()->nullable()->description('Bulk: activate several campaigns in one call'),
         ];
     }
 
     protected function run(Request $request): array
     {
-        $result = app(OutreachCampaignCommandService::class)->activate(
+        $service = app(OutreachCampaignCommandService::class);
+        $ids = [];
+        if (is_array($request['campaign_ids'] ?? null)) {
+            foreach ($request['campaign_ids'] as $id) {
+                $n = (int) $id;
+                if ($n > 0) {
+                    $ids[] = $n;
+                }
+            }
+        }
+        if ($ids === [] && isset($request['campaign_id'])) {
+            $n = (int) $request['campaign_id'];
+            if ($n > 0) {
+                $ids[] = $n;
+            }
+        }
+        if ($ids === []) {
+            throw new \InvalidArgumentException('Provide campaign_id or campaign_ids.');
+        }
+
+        if (count($ids) > 1) {
+            return $service->activateMany(
+                $this->context->user,
+                $this->context->organizationId,
+                $ids,
+            );
+        }
+
+        return $service->activate(
             $this->context->user,
             $this->context->organizationId,
-            (int) $request['campaign_id'],
+            $ids[0],
         );
-
-        return $result;
     }
 }

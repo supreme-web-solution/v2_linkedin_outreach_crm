@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
 import AppSelectionCheckbox from '@/components/AppSelectionCheckbox.vue';
-import { Eye, FileSpreadsheet, Layers, Pencil, Plus, Search, Trash2, Upload, Users2, X } from '@lucide/vue';
+import { Eye, FileSpreadsheet, Layers, Link2, Pencil, Plus, Search, Trash2, Upload, Users2, X } from '@lucide/vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import ClientPagination from '@/components/crm/ClientPagination.vue';
 import LinkedInPageHeading from '@/components/crm/LinkedInPageHeading.vue';
@@ -51,6 +51,107 @@ const props = defineProps<{
 
 const activeTab = ref<'linkedin' | 'imported'>('linkedin');
 const importModalOpen = ref(false);
+const profileModalOpen = ref(false);
+const igSearchModalOpen = ref(false);
+const profileUrl = ref('');
+const profileListName = ref('');
+const profileBusy = ref(false);
+const profileError = ref('');
+const igQuery = ref('');
+const igLimit = ref(25);
+const igListName = ref('');
+const igBusy = ref(false);
+const igError = ref('');
+
+function xsrf(): string {
+    const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+}
+
+async function searchInstagram() {
+    igError.value = '';
+    const query = igQuery.value.trim();
+    if (!query) {
+        igError.value = 'Enter a keyword (e.g. fitness coaches Lagos).';
+        return;
+    }
+    const limit = Math.min(100, Math.max(1, Number(igLimit.value) || 25));
+    igBusy.value = true;
+    try {
+        const res = await fetch('/leads/search-instagram', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-XSRF-TOKEN': xsrf(),
+                Accept: 'application/json',
+            },
+            body: JSON.stringify({
+                query,
+                limit,
+                list_name: igListName.value.trim() || null,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+            igError.value = data.message || 'Instagram search failed.';
+            return;
+        }
+        igSearchModalOpen.value = false;
+        igQuery.value = '';
+        igListName.value = '';
+        igLimit.value = 25;
+        if (data.redirect) {
+            window.location.href = data.redirect;
+            return;
+        }
+        router.reload({ only: ['lists', 'importLists', 'stats'] });
+    } catch (e: any) {
+        igError.value = e?.message || 'Instagram search failed.';
+    } finally {
+        igBusy.value = false;
+    }
+}
+
+async function importProfile() {
+    profileError.value = '';
+    const url = profileUrl.value.trim();
+    if (!url) {
+        profileError.value = 'Paste a LinkedIn or Instagram profile URL.';
+        return;
+    }
+    profileBusy.value = true;
+    try {
+        const res = await fetch('/leads/import-profile', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-XSRF-TOKEN': xsrf(),
+                Accept: 'application/json',
+            },
+            body: JSON.stringify({
+                profile_url: url,
+                list_name: profileListName.value.trim() || null,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+            profileError.value = data.message || 'Import failed.';
+            return;
+        }
+        profileModalOpen.value = false;
+        profileUrl.value = '';
+        profileListName.value = '';
+        if (data.redirect) {
+            window.location.href = data.redirect;
+            return;
+        }
+        router.reload({ only: ['lists', 'importLists', 'stats'] });
+    } catch (e: any) {
+        profileError.value = e?.message || 'Import failed.';
+    } finally {
+        profileBusy.value = false;
+    }
+}
 
 onMounted(() => {
     if (new URLSearchParams(window.location.search).get('tab') === 'imported') {
@@ -192,11 +293,23 @@ const audienceListCount = computed(() => props.stats.audience_lists + props.stat
     <Head title="Leads" />
 
     <div class="flex flex-col gap-5 p-4">
-        <LinkedInPageHeading title="Leads" show-badge>
-            <template #subtitle>
-                LinkedIn audiences and spreadsheet imports — use imported lists for WhatsApp, email, and multi-channel outreach.
-            </template>
-        </LinkedInPageHeading>
+        <div class="flex flex-wrap items-start justify-between gap-3">
+            <LinkedInPageHeading title="Leads" show-badge>
+                <template #subtitle>
+                    LinkedIn audiences, Instagram keyword search, and spreadsheet imports.
+                </template>
+            </LinkedInPageHeading>
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+                <Button class="gap-2" @click="igSearchModalOpen = true">
+                    <Search class="h-4 w-4" />
+                    Find Instagram leads
+                </Button>
+                <Button variant="outline" class="gap-2" @click="profileModalOpen = true">
+                    <Link2 class="h-4 w-4" />
+                    Add from profile URL
+                </Button>
+            </div>
+        </div>
 
         <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
@@ -421,6 +534,82 @@ const audienceListCount = computed(() => props.stats.audience_lists + props.stat
                 </DialogDescription>
             </DialogHeader>
             <OutreachImportListPanel in-modal @imported="onListImported" />
+        </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="igSearchModalOpen">
+        <DialogContent class="sm:max-w-md">
+            <DialogHeader>
+                <DialogTitle>Find Instagram leads</DialogTitle>
+                <DialogDescription>
+                    Keyword search via Mindcase — returns many profiles. Instagram handle is filled; other channels stay empty until you enrich them.
+                </DialogDescription>
+            </DialogHeader>
+            <div class="flex flex-col gap-3">
+                <input
+                    v-model="igQuery"
+                    type="text"
+                    placeholder="e.g. fitness coaches Lagos, SaaS founders Nigeria"
+                    class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                    @keydown.enter.prevent="searchInstagram"
+                />
+                <div class="flex items-center gap-2">
+                    <label class="shrink-0 text-sm text-muted-foreground">How many</label>
+                    <input
+                        v-model.number="igLimit"
+                        type="number"
+                        min="1"
+                        max="100"
+                        class="w-24 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                    />
+                </div>
+                <input
+                    v-model="igListName"
+                    type="text"
+                    placeholder="Optional list name"
+                    class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                <p v-if="igError" class="text-xs text-red-500">{{ igError }}</p>
+                <div class="flex justify-end gap-2">
+                    <Button variant="outline" type="button" @click="igSearchModalOpen = false">Cancel</Button>
+                    <Button type="button" :disabled="igBusy" @click="searchInstagram">
+                        {{ igBusy ? 'Searching…' : 'Search & save' }}
+                    </Button>
+                </div>
+            </div>
+        </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="profileModalOpen">
+        <DialogContent class="sm:max-w-md">
+            <DialogHeader>
+                <DialogTitle>Add from profile URL</DialogTitle>
+                <DialogDescription>
+                    Exact person only. LinkedIn URL fills LinkedIn fields; Instagram URL/@handle fills Instagram. Prefer keyword search when you don’t know the profiles yet.
+                </DialogDescription>
+            </DialogHeader>
+            <div class="flex flex-col gap-3">
+                <input
+                    v-model="profileUrl"
+                    type="url"
+                    placeholder="https://www.linkedin.com/in/… or https://www.instagram.com/…"
+                    class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                    @keydown.enter.prevent="importProfile"
+                />
+                <input
+                    v-model="profileListName"
+                    type="text"
+                    placeholder="Optional list name"
+                    class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+                <p v-if="profileError" class="text-xs text-red-500">{{ profileError }}</p>
+                <div class="flex justify-end gap-2">
+                    <Button variant="outline" type="button" @click="profileModalOpen = false">Cancel</Button>
+                    <Button type="button" :disabled="profileBusy" @click="importProfile">
+                        {{ profileBusy ? 'Saving…' : 'Save lead list' }}
+                    </Button>
+                </div>
+            </div>
         </DialogContent>
     </Dialog>
 

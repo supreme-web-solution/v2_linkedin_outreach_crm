@@ -109,6 +109,8 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     $listHashPattern = '[a-zA-Z0-9\-_]+';
 
     Route::get('leads', [LeadsWebController::class, 'index'])->name('leads');
+    Route::post('leads/search-instagram', [LeadsWebController::class, 'searchInstagram'])->name('leads.search-instagram');
+    Route::post('leads/import-profile', [LeadsWebController::class, 'importFromProfile'])->name('leads.import-profile');
     Route::get('leads/daily-limit', [LeadsWebController::class, 'getDailyLimit'])->name('leads.daily-limit');
     Route::get('leads/pending-count', [LeadsWebController::class, 'getPendingCount'])->name('leads.pending-count');
     Route::put('leads/lists/{id}', [LeadsWebController::class, 'updateList'])->whereNumber('id')->name('leads.lists.update');

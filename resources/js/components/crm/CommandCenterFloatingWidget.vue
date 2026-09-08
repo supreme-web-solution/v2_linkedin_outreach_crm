@@ -45,6 +45,11 @@ function persistOpenState(value: boolean) {
 
 watch(open, (value) => {
     persistOpenState(value);
+    if (value) {
+        chat.startPendingSync();
+    } else {
+        chat.stopPendingSync();
+    }
 });
 
 async function toggleOpen() {
@@ -72,13 +77,16 @@ function handleLauncherPointerDown(event: PointerEvent) {
 watch(showWidget, (visible) => {
     if (!visible) {
         open.value = false;
+        chat.stopPendingSync();
     } else if (open.value) {
         void chat.bootstrap(true);
+        chat.startPendingSync();
     }
 });
 
 if (open.value && showWidget.value) {
     void chat.bootstrap();
+    chat.startPendingSync();
 }
 </script>
 

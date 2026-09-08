@@ -37,6 +37,7 @@ type ApprovalLite = {
 
 const POLL_MS = 1200;
 const POLL_TIMEOUT_MS = 3 * 60 * 1000;
+const PENDING_SYNC_MS = 4000;
 
 function xsrf(): string {
     return decodeURIComponent(
@@ -105,6 +106,9 @@ let pollDeadline = 0;
 let pollAfterId = 0;
 let pollGeneration = 0;
 let pollInFlight = false;
+let pendingSyncTimer: ReturnType<typeof setInterval> | null = null;
+let pendingSyncInFlight = false;
+let pendingSyncSubscribers = 0;
 
 function clearPollTimer() {
     if (pollTimer !== null) {
@@ -140,6 +144,73 @@ function applyApprovals(data: {
         pendingApprovalsCount.value = data.pending_approvals.length;
     } else if (typeof data.pending_approvals_count === 'number') {
         pendingApprovalsCount.value = data.pending_approvals_count;
+    }
+}
+
+/**
+ * Light refresh so WhatsApp Launch/Reject clears the web CTA without a full chat reload.
+ */
+async function refreshPendingApprovals(): Promise<void> {
+    if (pendingSyncInFlight || bootstrapping.value) {
+        return;
+    }
+
+    pendingSyncInFlight = true;
+    try {
+        if (conversationId.value) {
+            const maxId = maxMessageId(chat.value);
+            const params = new URLSearchParams({
+                conversation_id: String(conversationId.value),
+                after_id: String(Math.max(0, maxId)),
+            });
+            const res = await fetch(`/ai-employee/messages?${params.toString()}`, {
+                headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf() },
+                credentials: 'same-origin',
+            });
+            const data = await res.json();
+            if (res.ok) {
+                applyApprovals(data);
+                return;
+            }
+        }
+
+        const res = await fetch('/ai-employee/widget/bootstrap', {
+            headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf() },
+            credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (res.ok) {
+            applyApprovals(data);
+            if (data.conversation_id && !conversationId.value) {
+                conversationId.value = data.conversation_id;
+            }
+        }
+    } catch {
+        // ignore transient sync errors
+    } finally {
+        pendingSyncInFlight = false;
+    }
+}
+
+function startPendingSync(): void {
+    pendingSyncSubscribers += 1;
+    if (pendingSyncTimer !== null) {
+        return;
+    }
+    void refreshPendingApprovals();
+    pendingSyncTimer = setInterval(() => {
+        void refreshPendingApprovals();
+    }, PENDING_SYNC_MS);
+}
+
+function stopPendingSync(): void {
+    pendingSyncSubscribers = Math.max(0, pendingSyncSubscribers - 1);
+    if (pendingSyncSubscribers > 0) {
+        return;
+    }
+    if (pendingSyncTimer !== null) {
+        clearInterval(pendingSyncTimer);
+        pendingSyncTimer = null;
     }
 }
 
@@ -686,6 +757,9 @@ export function useCommandCenterChat() {
         onChatScroll,
         scrollBottom,
         stopPolling,
+        startPendingSync,
+        stopPendingSync,
+        refreshPendingApprovals,
         formatMessageHtml,
         formatChatDateDivider,
         formatChatMessageTime,

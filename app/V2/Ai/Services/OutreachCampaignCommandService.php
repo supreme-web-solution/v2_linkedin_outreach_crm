@@ -64,6 +64,64 @@ class OutreachCampaignCommandService
     }
 
     /**
+     * @param  list<int>  $campaignIds
+     * @return array{ok:bool, message:string, activated:list<int>, failed:list<string>}
+     */
+    public function activateMany(User $user, int $organizationId, array $campaignIds): array
+    {
+        $activated = [];
+        $failed = [];
+        foreach (array_unique(array_map('intval', $campaignIds)) as $id) {
+            if ($id <= 0) {
+                continue;
+            }
+            $result = $this->activate($user, $organizationId, $id);
+            if ($result['ok'] ?? false) {
+                $activated[] = $id;
+            } else {
+                $failed[] = '#'.$id.': '.($result['message'] ?? 'failed');
+            }
+        }
+
+        return [
+            'ok' => $activated !== [],
+            'message' => ($activated !== [] ? 'Activated '.count($activated).' campaign(s).' : 'No campaigns activated.')
+                .($failed !== [] ? ' Failed: '.implode('; ', $failed) : ''),
+            'activated' => $activated,
+            'failed' => $failed,
+        ];
+    }
+
+    /**
+     * @param  list<int>  $campaignIds
+     * @return array{ok:bool, message:string, paused:list<int>, failed:list<string>}
+     */
+    public function pauseMany(User $user, int $organizationId, array $campaignIds): array
+    {
+        $paused = [];
+        $failed = [];
+        foreach (array_unique(array_map('intval', $campaignIds)) as $id) {
+            if ($id <= 0) {
+                continue;
+            }
+            $result = $this->pause($user, $organizationId, $id);
+            if ($result['ok'] ?? false) {
+                $paused = array_merge($paused, $result['paused'] ?? [$id]);
+            } else {
+                $failed[] = '#'.$id.': '.($result['message'] ?? 'failed');
+            }
+        }
+
+        return [
+            'ok' => $paused !== [],
+            'message' => ($paused !== [] ? 'Paused '.count($paused).' campaign(s).' : 'No campaigns paused.')
+                .($failed !== [] ? ' Failed: '.implode('; ', $failed) : ''),
+            'paused' => $paused,
+            'failed' => $failed,
+        ];
+    }
+
+    /**
      * @return array{ok:bool, message:string, paused: list<int>}
      */
     public function pause(User $user, int $organizationId, ?int $campaignId = null): array

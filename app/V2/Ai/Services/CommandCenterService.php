@@ -224,13 +224,32 @@ class CommandCenterService
      */
     public function pendingApprovals(User $user, int $organizationId): Collection
     {
-        return AiActionApproval::query()
+        $pending = AiActionApproval::query()
             ->where('user_id', $user->id)
             ->where('organization_id', $organizationId)
             ->where('status', 'pending')
             ->orderByDesc('id')
             ->limit(20)
             ->get();
+
+        // Widget + WhatsApp show one CTA — drop older stacked pendings.
+        if ($pending->count() > 1) {
+            $keepId = (int) $pending->first()->id;
+            AiActionApproval::query()
+                ->where('user_id', $user->id)
+                ->where('organization_id', $organizationId)
+                ->where('status', 'pending')
+                ->where('id', '!=', $keepId)
+                ->update([
+                    'status' => 'rejected',
+                    'decided_at' => now(),
+                    'decided_by' => $user->id,
+                ]);
+
+            return $pending->take(1)->values();
+        }
+
+        return $pending;
     }
 
     public function formatPlanCard(array $plan, ?int $approvalId = null, string $surface = 'web', ?string $tool = null): string

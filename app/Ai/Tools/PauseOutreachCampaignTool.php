@@ -28,26 +28,52 @@ class PauseOutreachCampaignTool extends GatedTool
     public function schema(JsonSchema $schema): array
     {
         return [
-            'campaign_id' => $schema->integer()->nullable()->description('Omit to pause all active campaigns'),
+            'campaign_id' => $schema->integer()->nullable()->description('Single campaign id'),
+            'campaign_ids' => $schema->array()->nullable()->description('Bulk: pause several campaigns in one call'),
             'pause_all' => $schema->boolean()->nullable(),
         ];
     }
 
     protected function run(Request $request): array
     {
+        $service = app(OutreachCampaignCommandService::class);
         $pauseAll = (bool) ($request['pause_all'] ?? false);
-        $campaignId = $request['campaign_id'] ?? null;
-
-        if ($pauseAll) {
-            $campaignId = null;
+        $ids = [];
+        if (is_array($request['campaign_ids'] ?? null)) {
+            foreach ($request['campaign_ids'] as $id) {
+                $n = (int) $id;
+                if ($n > 0) {
+                    $ids[] = $n;
+                }
+            }
+        }
+        if ($ids === [] && isset($request['campaign_id'])) {
+            $n = (int) $request['campaign_id'];
+            if ($n > 0) {
+                $ids[] = $n;
+            }
         }
 
-        $result = app(OutreachCampaignCommandService::class)->pause(
+        if ($pauseAll || ($ids === [] && ! isset($request['campaign_id']))) {
+            return $service->pause(
+                $this->context->user,
+                $this->context->organizationId,
+                null,
+            );
+        }
+
+        if (count($ids) > 1) {
+            return $service->pauseMany(
+                $this->context->user,
+                $this->context->organizationId,
+                $ids,
+            );
+        }
+
+        return $service->pause(
             $this->context->user,
             $this->context->organizationId,
-            $campaignId !== null ? (int) $campaignId : null,
+            $ids[0] ?? null,
         );
-
-        return $result;
     }
 }

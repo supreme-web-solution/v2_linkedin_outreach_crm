@@ -175,6 +175,8 @@ const {
     onChatScroll,
     scrollBottom,
     formatMessageHtml,
+    startPendingSync,
+    stopPendingSync,
 } = sharedChat;
 
 hydrateFromPage({
@@ -628,6 +630,7 @@ async function decide(approvalId: number, decision: 'approve' | 'reject') {
             chat.value.push({ role: 'assistant', content: data.reply, channel: 'web' });
         }
         pending.value = Array.isArray(data.pending_approvals) ? data.pending_approvals : [];
+        sharedPendingApprovals.value = pending.value as typeof sharedPendingApprovals.value;
         delete draftEdits.value[approvalId];
         await refreshAttention();
         await refreshActionHistory();
@@ -687,9 +690,11 @@ watch(chatBusy, (isBusy, wasBusy) => {
 
 onBeforeUnmount(() => {
     stopLinkPolling();
+    stopPendingSync();
 });
 
 onMounted(() => {
+    startPendingSync();
     void scrollBottom();
 
     if ((attention.value.nurture_brief?.total ?? 0) > 0) {

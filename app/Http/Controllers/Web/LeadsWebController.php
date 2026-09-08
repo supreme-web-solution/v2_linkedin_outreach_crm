@@ -17,6 +17,9 @@ use App\Models\V2Lead;
 use App\Models\V2LeadSource;
 use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
+use App\V2\Ai\Services\InstagramAudienceBuilderService;
+use App\V2\Ai\Services\LinkedInAudienceBuilderService;
+use App\V2\Integrations\Mindcase\MindcaseClient;
 use App\V2\Outreach\OutreachImportListService;
 use App\V2\Outreach\OutreachContactEnrichmentService;
 use App\V2\Outreach\OutreachLeadContactResolver;
@@ -233,6 +236,150 @@ class LeadsWebController extends Controller
         $this->deleteOwnedList((string) Auth::id(), $listId, (string) $src);
 
         return redirect()->route('leads')->with('success', 'Lead list removed successfully.');
+    }
+
+    /**
+     * Keyword search Instagram profiles via Mindcase → save as import lead list.
+     */
+    public function searchInstagram(Request $request): RedirectResponse|JsonResponse
+    {
+        $data = $request->validate([
+            'query' => ['required', 'string', 'max:500'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'list_name' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        /** @var User $user */
+        $user = Auth::user();
+        $wantsJson = $request->expectsJson() || $request->ajax();
+        $query = trim($data['query']);
+        $limit = (int) ($data['limit'] ?? 25);
+
+        if (! app(MindcaseClient::class)->configured()) {
+            $msg = 'Add MINDCASE_API_KEY from https://console.mindcase.co to search Instagram.';
+            if ($wantsJson) {
+                return response()->json(['ok' => false, 'message' => $msg], 422);
+            }
+
+            return back()->with('error', $msg);
+        }
+
+        try {
+            $built = app(InstagramAudienceBuilderService::class)->searchAndPersist(
+                $user,
+                $query,
+                $limit,
+                null,
+                $data['list_name'] ?? null,
+            );
+            if ($built === null) {
+                throw new \RuntimeException('No Instagram profiles found for that keyword. Try a broader phrase.');
+            }
+        } catch (\Throwable $e) {
+            if ($wantsJson) {
+                return response()->json(['ok' => false, 'message' => $e->getMessage()], 422);
+            }
+
+            return back()->with('error', $e->getMessage());
+        }
+
+        $message = 'Saved Instagram keyword search into "'.$built['list_name'].'" ('.$built['total_leads'].' leads).';
+        $listHash = $built['list_hash'];
+        $src = 'csv';
+
+        if ($wantsJson) {
+            return response()->json([
+                'ok' => true,
+                'message' => $message,
+                'list_hash' => $listHash,
+                'list_src' => $src,
+                'total_leads' => $built['total_leads'],
+                'redirect' => url('/leads/'.urlencode($listHash).'?src='.$src),
+            ]);
+        }
+
+        return redirect()
+            ->to('/leads/'.urlencode($listHash).'?src='.$src)
+            ->with('success', $message);
+    }
+
+    /**
+     * Import a LinkedIn or Instagram profile URL into a new lead list.
+     * LinkedIn columns filled for LI URLs; Instagram handle filled for IG URLs.
+     */
+    public function importFromProfile(Request $request): RedirectResponse|JsonResponse
+    {
+        $data = $request->validate([
+            'profile_url' => ['required', 'string', 'max:2048'],
+            'list_name' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        $url = trim($data['profile_url']);
+        /** @var User $user */
+        $user = Auth::user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        $wantsJson = $request->expectsJson() || $request->ajax();
+
+        try {
+            if (preg_match('#linkedin\.com/in/#i', $url)) {
+                if ($orgId <= 0) {
+                    throw new \RuntimeException('No organization selected.');
+                }
+                $built = app(LinkedInAudienceBuilderService::class)->tryBuildFromPlan($user, $orgId, [
+                    'profile_url' => $url,
+                    'goal' => $data['list_name'] ?? 'LinkedIn profile',
+                    'audience' => $url,
+                    'one_shot' => true,
+                    'target_count' => 1,
+                ]);
+                if ($built === null) {
+                    throw new \RuntimeException('Could not fetch that LinkedIn profile. Connect LinkedIn under Integrations.');
+                }
+                $message = 'Saved LinkedIn profile into "'.$built['list_name'].'" ('.$built['total_leads'].' lead).';
+                $listHash = $built['list_hash'];
+                $src = $built['list_src'];
+            } elseif (preg_match('#instagram\.com/([^/?#]+)#i', $url, $ig) || preg_match('/^@?[\w.]{2,30}$/', $url)) {
+                $handle = isset($ig[1]) ? $ig[1] : ltrim($url, '@');
+                $built = app(InstagramAudienceBuilderService::class)->searchAndPersist(
+                    $user,
+                    $handle,
+                    1,
+                    [$handle],
+                    $data['list_name'] ?? null,
+                );
+                if ($built === null) {
+                    $hint = app(MindcaseClient::class)->configured()
+                        ? 'Mindcase returned no profile for that handle.'
+                        : 'Add MINDCASE_API_KEY from https://console.mindcase.co to fetch Instagram profiles.';
+                    throw new \RuntimeException($hint);
+                }
+                $message = 'Saved Instagram profile into "'.$built['list_name'].'" ('.$built['total_leads'].' lead).';
+                $listHash = $built['list_hash'];
+                $src = 'csv';
+            } else {
+                throw new \RuntimeException('Paste a linkedin.com/in/... or instagram.com/... URL (or @handle for Instagram).');
+            }
+        } catch (\Throwable $e) {
+            if ($wantsJson) {
+                return response()->json(['ok' => false, 'message' => $e->getMessage()], 422);
+            }
+
+            return back()->with('error', $e->getMessage());
+        }
+
+        if ($wantsJson) {
+            return response()->json([
+                'ok' => true,
+                'message' => $message,
+                'list_hash' => $listHash,
+                'list_src' => $src,
+                'redirect' => url('/leads/'.urlencode($listHash).'?src='.$src),
+            ]);
+        }
+
+        return redirect()
+            ->to('/leads/'.urlencode($listHash).'?src='.$src)
+            ->with('success', $message);
     }
 
     public function removeListsBulk(Request $request): RedirectResponse

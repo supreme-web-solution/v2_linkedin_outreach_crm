@@ -177,4 +177,17 @@ return [
         ],
     ],
 
+    /*
+    | Mindcase — Instagram (and other) public profile data for lead discovery.
+    | Get a key at https://console.mindcase.co — Bearer mk_live_...
+    | Docs: https://mindcase.co/api/instagram/profiles
+    */
+    'mindcase' => [
+        'api_key' => env('MINDCASE_API_KEY'),
+        'base_url' => env('MINDCASE_BASE_URL', 'https://api.mindcase.co'),
+        'timeout' => (int) env('MINDCASE_TIMEOUT', 90),
+        'poll_seconds' => (int) env('MINDCASE_POLL_SECONDS', 2),
+        'max_poll_attempts' => (int) env('MINDCASE_MAX_POLL_ATTEMPTS', 45),
+    ],
+
 ];

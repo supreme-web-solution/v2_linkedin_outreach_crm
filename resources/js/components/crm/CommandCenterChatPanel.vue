@@ -46,8 +46,13 @@ const chatBusy = computed(
     () => sending.value || awaitingReply.value || decidingApprovalId.value !== null || clearingChat.value,
 );
 
-const actionableApprovals = computed(() => (pendingApprovals.value ?? []).slice(0, 3));
-</script>
+const actionableApprovals = computed(() => (pendingApprovals.value ?? []).slice(0, 1));
+
+function approvalDetail(approval: { card_text?: string }): string {
+    const raw = (approval.card_text ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!raw) return '';
+    return raw.length > 120 ? raw.slice(0, 117) + '…' : raw;
+}</script>
 
 <template>
     <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -166,6 +171,12 @@ const actionableApprovals = computed(() => (pendingApprovals.value ?? []).slice(
             >
                 <p class="text-[11px] font-medium text-amber-950 dark:text-amber-100">
                     {{ approvalSummary(approval) }}
+                </p>
+                <p
+                    v-if="approvalDetail(approval)"
+                    class="line-clamp-2 text-[10px] leading-snug text-amber-900/80 dark:text-amber-100/70"
+                >
+                    {{ approvalDetail(approval) }}
                 </p>
                 <div class="flex gap-2">
                     <Button
