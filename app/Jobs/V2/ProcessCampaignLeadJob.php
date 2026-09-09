@@ -609,8 +609,25 @@ class ProcessCampaignLeadJob implements ShouldQueue
                     \App\V2\Services\UnipileTemporaryLimitGuard::ACTION_LINKEDIN,
                     $error,
                 );
-                $status = 'deferred';
+                $status = (string) ($result['status'] ?? 'deferred');
             }
+        }
+
+        if ($status === 'failed_temporary') {
+            $msg = (string) ($result['error_message'] ?? 'Provider temporarily unavailable');
+            $logger->log(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'failed',
+                "Paused \"{$nodeLabel}\" for {$lead->full_name}: {$msg}",
+                $result['payload'] ?? [],
+            );
+            $lead->update(['status' => 'error']);
+            $progress->update(['run_status' => 9, 'next_run_at' => null]);
+
+            return;
         }
 
         if ($status === 'deferred') {
@@ -618,8 +635,10 @@ class ProcessCampaignLeadJob implements ShouldQueue
             $reason = (string) ($result['payload']['reason'] ?? 'daily_limit');
             $isEscalated = ! empty($result['payload']['escalated']) || str_starts_with($reason, 'escalated_');
             $isTemp = str_starts_with($reason, 'temporary_');
+            $isOutage = str_contains($reason, 'provider_outage');
 
             $deferMessage = match (true) {
+                $isOutage => "LinkedIn provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                 $isEscalated => "LinkedIn still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your LinkedIn).',
                 $isTemp => "LinkedIn temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                 default => "Daily LinkedIn limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',

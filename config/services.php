@@ -133,6 +133,11 @@ return [
         'temp_limit_max_minutes' => (int) env('UNIPILE_TEMP_LIMIT_MAX_MINUTES', 90),
         // After N API 422 temp-limit hits the same day, pause until next day (stop hourly hammering).
         'temp_limit_escalate_after' => (int) env('UNIPILE_TEMP_LIMIT_ESCALATE_AFTER', 2),
+        // Provider 502/503/504: short retries, then longer backoff, then stop hammering.
+        'provider_outage_short_retries' => (int) env('UNIPILE_PROVIDER_OUTAGE_SHORT_RETRIES', 6),
+        'provider_outage_long_min_minutes' => (int) env('UNIPILE_PROVIDER_OUTAGE_LONG_MIN_MINUTES', 30),
+        'provider_outage_long_max_minutes' => (int) env('UNIPILE_PROVIDER_OUTAGE_LONG_MAX_MINUTES', 60),
+        'provider_outage_give_up_after' => (int) env('UNIPILE_PROVIDER_OUTAGE_GIVE_UP_AFTER', 12),
         // Lease TTL for in-flight slots — frees the counter if a worker dies mid-job.
         'inflight_lease_seconds' => (int) env('INFLIGHT_LEASE_SECONDS', 1800),
         // Lead readiness / Prepare contacts — same as EMAIL_ENRICHMENT_BATCH_SIZE unless overridden.

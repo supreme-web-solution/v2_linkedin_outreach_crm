@@ -250,6 +250,23 @@ class ProcessOutreachLeadJob implements ShouldQueue
             return;
         }
 
+        if ($status === 'failed_temporary') {
+            $msg = (string) ($result['error_message'] ?? 'Provider temporarily unavailable');
+            $logger->log(
+                $campaign->id,
+                $lead->id,
+                $run?->id,
+                $node,
+                'failed',
+                "Paused \"{$nodeLabel}\" for {$lead->full_name}: {$msg}",
+                $result['payload'] ?? [],
+            );
+            $lead->update(['status' => 'error']);
+            $progress->update(['run_status' => 9, 'next_run_at' => null]);
+
+            return;
+        }
+
         if ($status === 'deferred') {
             $runAt = $result['next_run_at'] ?? now()->addDay()->startOfDay()->addMinutes(10);
             $reason = (string) ($result['payload']['reason'] ?? 'daily_limit');
@@ -259,6 +276,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
             $platform = app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->platformLabel($channel);
 
             $deferMessage = match (true) {
+                str_contains($reason, 'provider_outage') => "{$platform} provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                 $isEscalated => "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).',
                 $isTemp => "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                 default => "Daily {$platform} limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
@@ -409,11 +427,30 @@ class ProcessOutreachLeadJob implements ShouldQueue
                 $channel,
                 $error,
             );
+
+            if (($deferred['status'] ?? '') === 'failed_temporary') {
+                $msg = (string) ($deferred['error_message'] ?? $error);
+                $logger->log(
+                    $campaign->id,
+                    $lead->id,
+                    $run?->id,
+                    $node,
+                    'failed',
+                    "Paused \"{$nodeLabel}\" for {$lead->full_name}: {$msg}",
+                    $deferred['payload'] ?? [],
+                );
+                $lead->update(['status' => 'error']);
+                $progress->update(['run_status' => 9, 'next_run_at' => null]);
+
+                return;
+            }
+
             $runAt = $deferred['next_run_at'];
             $escalated = ! empty($deferred['payload']['escalated']);
             $isOutage = ($deferred['payload']['reason'] ?? '') === 'temporary_provider_outage'
                 || $tempLimit->isProviderOutage($error);
             $platform = $tempLimit->platformLabel($channel);
+            $hits = (int) ($deferred['payload']['hits'] ?? 0);
             $logger->log(
                 $campaign->id,
                 $lead->id,
@@ -421,7 +458,8 @@ class ProcessOutreachLeadJob implements ShouldQueue
                 $node,
                 'scheduled',
                 match (true) {
-                    $isOutage => "{$platform} provider blip (temporary) — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                    $isOutage && $escalated => "{$platform} provider still unavailable (retry #{$hits}) — \"{$nodeLabel}\" for {$lead->full_name} waits ".$runAt->diffForHumans().'.',
+                    $isOutage => "{$platform} provider blip (retry #{$hits}) — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                     $escalated => "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).',
                     default => "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                 },

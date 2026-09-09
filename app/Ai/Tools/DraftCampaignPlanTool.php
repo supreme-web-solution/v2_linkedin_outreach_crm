@@ -32,7 +32,8 @@ class DraftCampaignPlanTool extends GatedTool
     public function schema(JsonSchema $schema): array
     {
         return [
-            'goal' => $schema->string()->required(),
+            'goal' => $schema->string()->required()->description('Full brief of what to achieve (kept in the plan). Not used as the campaign list title.'),
+            'campaign_name' => $schema->string()->nullable()->description('Short list title only (max ~50 chars). Example: "Annual event invite". Never paste emails or the full goal sentence.'),
             'audience' => $schema->string()->required(),
             'target_count' => $schema->integer()->min(1)->nullable(),
             'channels' => $schema->string()->nullable()->description('Default: LinkedIn + Email. When user asks: Instagram, Telegram, WhatsApp (or combos).'),
@@ -122,6 +123,7 @@ class DraftCampaignPlanTool extends GatedTool
         $plan = [
             'type' => 'campaign',
             'goal' => (string) $request['goal'],
+            'campaign_name' => trim((string) ($request['campaign_name'] ?? '')),
             'audience' => (string) $request['audience'],
             'icp_notes' => (string) $request['audience'],
             'target_count' => $oneShot ? 1 : $count,

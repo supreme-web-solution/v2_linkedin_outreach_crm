@@ -6,6 +6,7 @@ use App\Models\AiActionApproval;
 use App\Models\User;
 use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachList;
+use App\V2\Ai\Support\CampaignDisplayName;
 use App\V2\Ai\Support\PlanLeadList;
 use Illuminate\Support\Str;
 
@@ -74,7 +75,7 @@ class CampaignDraftFromPlanService
         $nodeModel = $resolved['node_model'];
 
         $goal = (string) ($payload['goal'] ?? 'AI Command Center campaign');
-        $name = Str::limit('AI: '.$goal, 180, '');
+        $name = CampaignDisplayName::fromPlan($goal, $payload);
 
         $campaign = V2OutreachCampaign::query()->create([
             'user_id' => $user->id,

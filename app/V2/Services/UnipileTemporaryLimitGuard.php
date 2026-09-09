@@ -137,6 +137,7 @@ class UnipileTemporaryLimitGuard
         $action = $this->normalizeAction($action);
         Cache::forget($this->hitsKey($userId, $action));
         Cache::forget($this->escalatedKey($userId, $action));
+        Cache::forget($this->outageHitsKey($userId, $action));
     }
 
     public function markLimited(int $userId, string $action = self::ACTION_LINKEDIN, ?CarbonInterface $until = null): CarbonInterface
@@ -155,7 +156,7 @@ class UnipileTemporaryLimitGuard
     /**
      * @return array{
      *     status: string,
-     *     next_run_at: CarbonInterface,
+     *     next_run_at: ?CarbonInterface,
      *     error_message: ?string,
      *     payload: array<string, mixed>
      * }
@@ -167,23 +168,9 @@ class UnipileTemporaryLimitGuard
         $providerOutage = $error !== null && $this->isProviderOutage($error);
 
         if ($fromApiFailure) {
-            // Gateway/provider blips: short retry, do not escalate to next-day pause.
+            // Gateway/provider blips: short retry → longer backoff → stop hammering.
             if ($providerOutage) {
-                $resumeAt = now()->addMinutes(random_int(2, 6));
-                Cache::put($this->key($userId, $action), $resumeAt->getTimestamp(), $resumeAt->copy()->addHour());
-
-                return [
-                    'status' => 'deferred',
-                    'next_run_at' => $resumeAt,
-                    'error_message' => null,
-                    'payload' => [
-                        'reason' => 'temporary_provider_outage',
-                        'escalated' => false,
-                        'hits' => 0,
-                        'channel' => $action,
-                        'resume_at' => $resumeAt->toIso8601String(),
-                    ],
-                ];
+                return $this->deferredProviderOutage($userId, $action);
             }
 
             $hits = $this->incrementFailureHits($userId, $action);
@@ -235,6 +222,62 @@ class UnipileTemporaryLimitGuard
 
     /**
      * @return array{
+     *     status: string,
+     *     next_run_at: ?CarbonInterface,
+     *     error_message: ?string,
+     *     payload: array<string, mixed>
+     * }
+     */
+    private function deferredProviderOutage(int $userId, string $action): array
+    {
+        $hits = $this->incrementOutageHits($userId, $action);
+        $shortRetries = max(1, (int) config('services.unipile_pacing.provider_outage_short_retries', 6));
+        $giveUpAfter = max($shortRetries + 1, (int) config('services.unipile_pacing.provider_outage_give_up_after', 12));
+        $label = $this->platformLabel($action);
+
+        if ($hits >= $giveUpAfter) {
+            Cache::forget($this->key($userId, $action));
+
+            return [
+                'status' => 'failed_temporary',
+                'next_run_at' => null,
+                'error_message' => "{$label} provider (Unipile) stayed unavailable after {$hits} retries. Resume the campaign when the provider is healthy — this is not a copy or list problem.",
+                'payload' => [
+                    'reason' => 'temporary_provider_outage_exhausted',
+                    'escalated' => true,
+                    'hits' => $hits,
+                    'channel' => $action,
+                ],
+            ];
+        }
+
+        if ($hits > $shortRetries) {
+            $resumeAt = now()->addMinutes(random_int(
+                max(15, (int) config('services.unipile_pacing.provider_outage_long_min_minutes', 30)),
+                max(20, (int) config('services.unipile_pacing.provider_outage_long_max_minutes', 60)),
+            ));
+        } else {
+            $resumeAt = now()->addMinutes(random_int(2, 6));
+        }
+
+        Cache::put($this->key($userId, $action), $resumeAt->getTimestamp(), $resumeAt->copy()->addHour());
+
+        return [
+            'status' => 'deferred',
+            'next_run_at' => $resumeAt,
+            'error_message' => null,
+            'payload' => [
+                'reason' => 'temporary_provider_outage',
+                'escalated' => $hits > $shortRetries,
+                'hits' => $hits,
+                'channel' => $action,
+                'resume_at' => $resumeAt->toIso8601String(),
+            ],
+        ];
+    }
+
+    /**
+     * @return array{
      *     active: bool,
      *     escalated: bool,
      *     resume_at: ?string,
@@ -260,8 +303,15 @@ class UnipileTemporaryLimitGuard
             $message = $label.' is still limiting sends on this account. Steps pause until '
                 .$resumeAt->format('g:i A').' to protect your account — this is '.$label.'’s rule.';
         } elseif ($active) {
-            $message = $label.' hit a temporary send limit. Remaining steps wait until '
-                .$resumeAt->format('g:i A').' and then continue automatically — expected pacing, not a bug.';
+            $outageHits = $this->outageHits($userId, $activeAction);
+            if ($outageHits > 0) {
+                $message = $label.' provider is temporarily unavailable (Unipile). We retry automatically'
+                    .($resumeAt ? ' around '.$resumeAt->format('g:i A') : '')
+                    .' — not a problem with your message or list.';
+            } else {
+                $message = $label.' hit a temporary send limit. Remaining steps wait until '
+                    .$resumeAt->format('g:i A').' and then continue automatically — expected pacing, not a bug.';
+            }
         }
 
         return [
@@ -384,6 +434,19 @@ class UnipileTemporaryLimitGuard
         return (int) Cache::increment($key);
     }
 
+    private function incrementOutageHits(int $userId, string $action): int
+    {
+        $key = $this->outageHitsKey($userId, $action);
+        Cache::add($key, 0, now()->addHours(6));
+
+        return (int) Cache::increment($key);
+    }
+
+    public function outageHits(int $userId, string $action = self::ACTION_LINKEDIN): int
+    {
+        return max(0, (int) Cache::get($this->outageHitsKey($userId, $this->normalizeAction($action)), 0));
+    }
+
     private function rememberEscalated(int $userId, string $action, bool $escalated, CarbonInterface $until): void
     {
         if ($escalated) {
@@ -403,6 +466,11 @@ class UnipileTemporaryLimitGuard
     private function hitsKey(int $userId, string $action): string
     {
         return 'unipile_temp_limit_hits:'.$userId.':'.$action.':'.now()->toDateString();
+    }
+
+    private function outageHitsKey(int $userId, string $action): string
+    {
+        return 'unipile_provider_outage_hits:'.$userId.':'.$action;
     }
 
     private function escalatedKey(int $userId, string $action): string
