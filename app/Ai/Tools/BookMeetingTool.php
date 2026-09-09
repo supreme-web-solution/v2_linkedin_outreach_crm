@@ -22,14 +22,18 @@ class BookMeetingTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Stage sending a calendar booking link to a hot inbox conversation (meeting-ready reply). Requires connected calendar.';
+        return 'Stage sending a calendar booking link to a hot inbox conversation (meeting-ready reply). Requires connected calendar. '
+            .'notes = optional guidance OR a finished recipient-facing message — NEVER paste operator plans like "Reply with… Thank them…".';
     }
 
     public function schema(JsonSchema $schema): array
     {
         return [
             'conversation_id' => $schema->integer()->required()->description('Unified inbox conversation id'),
-            'notes' => $schema->string()->nullable()->description('Optional custom message before the booking link'),
+            'notes' => $schema->string()->nullable()->description(
+                'Optional: finished message the prospect should read, OR short guidance for drafting. '
+                .'Do NOT put action-plan text here (e.g. "Reply with the event details… Thank them…").',
+            ),
         ];
     }
 

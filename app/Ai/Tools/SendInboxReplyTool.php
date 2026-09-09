@@ -23,15 +23,18 @@ class SendInboxReplyTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Draft and send an inbox reply immediately (Autopilot+). Use for hot leads when user approves sending.';
+        return 'Draft and send an inbox reply immediately (Autopilot+). Use for hot leads when user approves sending. '
+            .'message must be the final text the prospect reads — never an action plan or placeholders like [Your Name].';
     }
 
     public function schema(JsonSchema $schema): array
     {
         return [
             'conversation_id' => $schema->integer()->required()->description('Unified Inbox conversation id'),
-            'notes' => $schema->string()->nullable()->description('Optional guidance for the reply'),
-            'message' => $schema->string()->nullable()->description('Optional exact reply text; if omitted Alex drafts one'),
+            'notes' => $schema->string()->nullable()->description('Optional guidance for drafting (not sent verbatim)'),
+            'message' => $schema->string()->nullable()->description(
+                'Exact recipient-facing reply text. Never "Reply with…/Thank them…" plans or [Your Name]/{{…}} placeholders.',
+            ),
         ];
     }
 

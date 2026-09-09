@@ -186,7 +186,10 @@ class InboxCommandCenterService
             ->whereKey($v2ConversationId)
             ->firstOrFail();
 
-        $sent = app(UnifiedInboxReplyService::class)->sendApprovedReply($user, $v2Conversation, trim($message));
+        $message = trim($message);
+        \App\V2\Ai\Support\RecipientFacingCopyGuard::assertSendable($message);
+
+        $sent = app(UnifiedInboxReplyService::class)->sendApprovedReply($user, $v2Conversation, $message);
 
         return [
             'message' => 'Reply sent.',

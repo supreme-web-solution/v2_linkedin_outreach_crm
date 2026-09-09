@@ -5,6 +5,7 @@ namespace App\V2\Ai\Services;
 use App\Models\AiActionApproval;
 use App\Models\User;
 use App\Models\V2Conversation;
+use App\V2\Ai\Support\RecipientFacingCopyGuard;
 use App\V2\Services\UnifiedInboxReplyService;
 
 class ReplySendFromPlanService
@@ -30,6 +31,8 @@ class ReplySendFromPlanService
         if ($conversationId <= 0 || $draft === '') {
             throw new \InvalidArgumentException('Missing conversation or draft text in reply plan.');
         }
+
+        RecipientFacingCopyGuard::assertSendable($draft);
 
         $conversation = V2Conversation::query()
             ->where('user_id', $user->id)

@@ -286,7 +286,9 @@ PROMPT;
         }
 
         $channelLabel = ucfirst(str_replace('_', ' ', $channel));
-        $placeholders = 'You may use {{firstName}}, {{lastName}}, {{company}}, {{position}} as merge tags where natural.';
+        $placeholders = 'For multi-lead campaign templates you may use {{firstName}}, {{lastName}}, {{company}}, {{position}} as prospect merge tags. '
+            .'Never use bracket placeholders like [Your Name], [Company], or TBD. '
+            .'If a sender signature name is unknown, omit the name rather than inventing a placeholder.';
 
         if ($mode === 'paraphrase') {
             $prompt = <<<PROMPT
@@ -302,8 +304,8 @@ PROMPT;
 
         $fieldGuide = match ($field) {
             'subject' => 'Write a short email subject line (max 60 chars).',
-            'body' => 'Write the email body.',
-            default => 'Write the message text.',
+            'body' => 'Write the email body the recipient will read (not an action plan).',
+            default => 'Write the message text the recipient will read (not an action plan).',
         };
 
         $actionGuide = match ($action) {
@@ -317,6 +319,7 @@ Write outreach copy for a {$channelLabel} campaign step.
 Step type: {$actionGuide}
 Output: {$fieldGuide}
 {$placeholders}
+Never write operator instructions like "Reply with…", "Thank them…", or "Ask them…".
 
 User context / goal:
 {$context}
@@ -414,6 +417,18 @@ PROMPT;
             $systemLines[] = "Outreach campaign: {$campaignName}";
         }
 
+        $senderName = trim((string) ($options['sender_name'] ?? ''));
+        if ($senderName !== '') {
+            $systemLines[] = "Sign the message as: {$senderName}";
+        }
+
+        $agentNotes = trim((string) ($options['agent_notes'] ?? ''));
+        if ($agentNotes !== '') {
+            $systemLines[] = '';
+            $systemLines[] = 'Private guidance for you (NEVER paste this text to the prospect — convert it into a natural reply):';
+            $systemLines[] = $agentNotes;
+        }
+
         if ($threadSummary !== '') {
             $systemLines[] = '';
             $systemLines[] = 'Earlier conversation summary (before the last few messages):';
@@ -422,11 +437,14 @@ PROMPT;
 
         $systemLines[] = '';
         $systemLines[] = 'How to reply:';
+        $systemLines[] = '- Output ONLY the final message the prospect will read (email/DM body).';
+        $systemLines[] = '- NEVER write instructions to yourself or the operator (e.g. "Reply with…", "Thank them…", "Ask them…", "Explain that…").';
+        $systemLines[] = '- NEVER leave placeholders like [Your Name], {{firstName}}, TBD, or TODO.';
         $systemLines[] = '- Use the summary for background, then focus on the last few messages below.';
         $systemLines[] = '- Respond to what the lead actually said and what was already discussed.';
         $systemLines[] = '- Do not repeat the same pitch or question if it was already sent unless the lead asks again.';
         $systemLines[] = '- Match the channel tone (WhatsApp, Instagram, Telegram, X = casual; LinkedIn and email = slightly formal).';
-        $systemLines[] = '- Write ONE natural reply (1-4 sentences) with a sensible next step when appropriate.';
+        $systemLines[] = '- Write ONE natural reply (1-4 sentences for chat; short email paragraphs when email) with a sensible next step when appropriate.';
         $systemLines[] = '- Never mention that you are AI. Return only the reply text.';
 
         $chatMessages = [

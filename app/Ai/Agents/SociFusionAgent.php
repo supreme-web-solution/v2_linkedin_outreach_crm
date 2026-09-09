@@ -6,6 +6,7 @@ use App\Ai\Tools\ActivateOutreachCampaignTool;
 use App\Ai\Tools\AdjustFollowUpTool;
 use App\Ai\Tools\AnalyzeCompetitorAudienceTool;
 use App\Ai\Tools\BookMeetingTool;
+use App\Ai\Tools\UpdateSenderProfileTool;
 use App\Ai\Tools\BuildIcpTool;
 use App\Ai\Tools\ClassifyReplyTool;
 use App\Ai\Tools\DiscoverProspectsTool;
@@ -105,6 +106,8 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\n- Qualify a lead → qualify_lead; after a call → post_call_crm_update"
             ."\n- Upcoming call prep → get_meeting_brief"
             ."\n- Who needs attention → get_attention_queue (returns inbox_brief counts); classify → classify_reply; draft reply → draft_reply (Autopilot+ auto-sends); send now → send_inbox_reply; meeting-ready → book_meeting"
+            ."\n- Inbox reply / book_meeting / campaign DMs+email: ONLY recipient-facing copy may be sent on ANY channel (LinkedIn, Email, WhatsApp, Instagram, Telegram, X) — never action plans like \"Reply with… Thank them…\". Prefer draft_reply so the message is written for the prospect; notes are guidance only"
+            ."\n- Sender name on messages → update_sender_profile when the user says their signing name; never send [Your Name]"
             ."\n- Maybe later / not now → move_lead_to_nurture (90-day default pause on outreach); due follow-ups → get_nurture_due_queue"
             ."\n- Integrations → check_integrations before Launch; Launch is blocked until required channels are connected"
             ."\n- Campaign inbox AI → configure_campaign_inbox_ai (pause_on_reply default ON; optional auto_reply + AI context per channel). Replies are handled in inbox — not as sequence action nodes"
@@ -182,6 +185,7 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             new SendInboxReplyTool($this->context),
             new MoveLeadToNurtureTool($this->context),
             new BookMeetingTool($this->context),
+            new UpdateSenderProfileTool($this->context),
             new ClassifyReplyTool($this->context),
             new DraftPersonalizedMessageTool($this->context),
             new AdjustFollowUpTool($this->context),

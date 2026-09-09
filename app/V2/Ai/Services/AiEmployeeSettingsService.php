@@ -173,6 +173,17 @@ class AiEmployeeSettingsService
             ))));
         }
 
+        if (array_key_exists('sender_display_name', $data)) {
+            $meta = is_array($row->meta) ? $row->meta : (is_array($current->meta) ? $current->meta : []);
+            $sender = trim((string) $data['sender_display_name']);
+            if ($sender === '') {
+                unset($meta['sender_display_name']);
+            } else {
+                $meta['sender_display_name'] = $sender;
+            }
+            $row->meta = $meta;
+        }
+
         $row->save();
 
         return $row->fresh();

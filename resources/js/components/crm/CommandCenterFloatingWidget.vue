@@ -138,13 +138,27 @@ if (open.value && showWidget.value) {
 
             <button
                 type="button"
-                class="pointer-events-auto group relative touch-none overflow-hidden rounded-full shadow-lg ring-2 ring-white/80 transition hover:scale-[1.02] active:scale-[0.98] dark:ring-white/20"
-                :class="dragging ? 'cursor-grabbing scale-[1.02]' : 'cursor-grab'"
+                class="cc-launcher pointer-events-auto group relative touch-none overflow-visible rounded-full ring-2 ring-white/80 transition hover:scale-[1.02] active:scale-[0.98] dark:ring-white/20"
+                :class="[
+                    dragging ? 'cursor-grabbing scale-[1.02]' : 'cursor-grab',
+                    open ? 'cc-launcher--open' : 'cc-launcher--beep',
+                ]"
                 :aria-expanded="open"
                 aria-label="Open Command Center chat"
                 @pointerdown="handleLauncherPointerDown"
                 @click="toggleOpen"
             >
+                <span
+                    v-if="!open"
+                    class="cc-launcher-ring cc-launcher-ring--a pointer-events-none"
+                    aria-hidden="true"
+                />
+                <span
+                    v-if="!open"
+                    class="cc-launcher-ring cc-launcher-ring--b pointer-events-none"
+                    aria-hidden="true"
+                />
+
                 <span
                     class="absolute -right-1 top-1/2 z-10 flex -translate-y-1/2 items-center rounded-r-md bg-black/45 px-0.5 py-2 opacity-70 transition group-hover:opacity-100"
                     aria-hidden="true"
@@ -156,7 +170,7 @@ if (open.value && showWidget.value) {
 
                 <span
                     v-if="open"
-                    class="absolute inset-0 flex items-center justify-center bg-black/45 text-white"
+                    class="absolute inset-0 z-[1] flex items-center justify-center rounded-full bg-black/45 text-white"
                 >
                     <X class="size-6" />
                 </span>
@@ -179,3 +193,57 @@ if (open.value && showWidget.value) {
         </div>
     </Teleport>
 </template>
+
+<style scoped>
+.cc-launcher {
+    box-shadow:
+        0 4px 14px rgb(15 23 42 / 0.18),
+        0 10px 28px rgb(15 23 42 / 0.12);
+}
+
+.cc-launcher--open {
+    box-shadow:
+        0 6px 18px rgb(15 23 42 / 0.22),
+        0 12px 32px rgb(15 23 42 / 0.14);
+}
+
+.cc-launcher-ring {
+    position: absolute;
+    inset: -2px;
+    border-radius: 9999px;
+    border: 2px solid rgb(14 165 233 / 0.45);
+    opacity: 0;
+}
+
+.cc-launcher--beep .cc-launcher-ring--a {
+    animation: cc-launcher-beep 2.6s ease-out infinite;
+}
+
+.cc-launcher--beep .cc-launcher-ring--b {
+    animation: cc-launcher-beep 2.6s ease-out infinite 1.3s;
+}
+
+@keyframes cc-launcher-beep {
+    0% {
+        transform: scale(1);
+        opacity: 0.55;
+    }
+    70% {
+        transform: scale(1.55);
+        opacity: 0;
+    }
+    100% {
+        transform: scale(1.55);
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cc-launcher--beep .cc-launcher-ring--a,
+    .cc-launcher--beep .cc-launcher-ring--b {
+        animation: none;
+        opacity: 0.35;
+        transform: scale(1.12);
+    }
+}
+</style>

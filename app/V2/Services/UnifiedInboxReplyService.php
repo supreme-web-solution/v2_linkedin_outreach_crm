@@ -115,6 +115,8 @@ class UnifiedInboxReplyService
             throw new \RuntimeException('Reply text is empty.');
         }
 
+        \App\V2\Ai\Support\RecipientFacingCopyGuard::assertSendable($body);
+
         return $this->inbox->sendMessage($user, $conversation, $body);
     }
 
@@ -284,6 +286,10 @@ class UnifiedInboxReplyService
                     'campaign_name' => (string) ($campaign?->name ?? ''),
                     'lead_headline' => trim((string) ($lead?->headline ?? Arr::get($conversation->meta ?? [], 'prospect_headline', ''))) ?: null,
                     'thread_summary' => $context['summary'],
+                    'sender_name' => \App\V2\Ai\Support\SenderIdentity::displayName(
+                        $user,
+                        (int) ($user->current_organization_id ?? 0),
+                    ),
                 ],
             );
         } catch (\Throwable) {

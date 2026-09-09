@@ -58,6 +58,14 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
         $message = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
             ->resolveMessageText($lead, $message);
 
+        $block = \App\V2\Ai\Support\RecipientFacingCopyGuard::blockReason($message);
+        if ($block !== null) {
+            return [
+                'status' => 'failed',
+                'error_message' => 'Blocked unsafe '.$this->channelKey.' message: '.$block,
+            ];
+        }
+
         try {
             $providerKey = $this->providerManager->defaultProvider();
             $response = $this->providerManager->messaging($providerKey)->startChat([

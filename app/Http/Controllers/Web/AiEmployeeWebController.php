@@ -487,6 +487,7 @@ class AiEmployeeWebController extends Controller
         $data = $request->validate([
             'enabled' => ['sometimes', 'boolean'],
             'employee_name' => ['sometimes', 'string', 'max:40'],
+            'sender_display_name' => ['sometimes', 'nullable', 'string', 'max:120'],
             'autonomy_level' => ['sometimes', 'integer', 'in:1,2,3,4'],
         ]);
 
@@ -501,6 +502,8 @@ class AiEmployeeWebController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        $meta = is_array($updated->meta) ? $updated->meta : [];
+
         return response()->json([
             'settings' => [
                 'enabled' => (bool) $updated->enabled,
@@ -509,6 +512,7 @@ class AiEmployeeWebController extends Controller
                 'autonomy_label' => app(\App\V2\Ai\Services\AutonomyContextService::class)
                     ->label((int) $updated->autonomy_level),
                 'employee_name' => $updated->employee_name,
+                'sender_display_name' => $meta['sender_display_name'] ?? null,
             ],
         ]);
     }

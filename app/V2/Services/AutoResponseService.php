@@ -8,6 +8,7 @@ use App\Models\V2AutoResponse;
 use App\Models\V2Conversation;
 use App\Models\V2IntegrationAccount;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Log;
 
 class AutoResponseService
 {
@@ -84,6 +85,18 @@ class AutoResponseService
     ): void {
         $text = trim($text);
         if ($text === '' || ! $conversation->provider_chat_id) {
+            return;
+        }
+
+        try {
+            \App\V2\Ai\Support\RecipientFacingCopyGuard::assertSendable($text);
+        } catch (\InvalidArgumentException $e) {
+            Log::warning('[AutoResponse] Blocked non-recipient-facing copy', [
+                'conversation_id' => $conversation->id,
+                'provider' => $conversation->provider,
+                'reason' => $e->getMessage(),
+            ]);
+
             return;
         }
 

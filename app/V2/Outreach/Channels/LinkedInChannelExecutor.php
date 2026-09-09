@@ -42,6 +42,10 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
         if ($action === 'send_message') {
             $message = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
                 ->resolveMessageText($lead, $message);
+            $block = \App\V2\Ai\Support\RecipientFacingCopyGuard::blockReason($message);
+            if ($block !== null) {
+                return ['status' => 'failed', 'error_message' => 'Blocked unsafe LinkedIn message: '.$block];
+            }
         }
         $providerKey = $this->providerManager->defaultProvider();
         $action = \App\V2\Outreach\OutreachChannelRegistry::normalizeAction('linkedin', $action);
