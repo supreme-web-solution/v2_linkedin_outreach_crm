@@ -172,7 +172,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                     $detail = ': '.(string) $responseBody['type'];
                 }
             } elseif ($responseText) {
-                $detail = ': '.substr($responseText, 0, 200);
+                // Never dump nginx HTML error pages into activity logs.
+                $detail = $this->sanitizeHttpErrorDetail($responseText, $status);
             }
             throw new UnipileException(
                 'Messaging error (HTTP '.$status.')'.$detail,
@@ -265,9 +266,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
 
             $detail = '';
             if (is_array($responseBody)) {
-                $detail = ': '.($responseBody['message'] ?? $responseBody['error'] ?? json_encode($responseBody));
+                $detail = ': '.($responseBody['message'] ?? $responseBody['error'] ?? 'Invalid request');
             } elseif ($responseText) {
-                $detail = ': '.substr($responseText, 0, 200);
+                $detail = $this->sanitizeHttpErrorDetail($responseText, $status);
             }
 
             throw new UnipileException(
@@ -357,6 +358,18 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     /**
      * @param  array<string, mixed>  $responseBody
      */
+    private function sanitizeHttpErrorDetail(string $responseText, int $status): string
+    {
+        $plain = trim(strip_tags($responseText));
+        $plain = preg_replace('/\s+/', ' ', $plain) ?? $plain;
+
+        if ($status >= 500 || stripos($plain, 'bad gateway') !== false || stripos($plain, 'gateway timeout') !== false) {
+            return ': provider temporarily unavailable (HTTP '.$status.') — will retry';
+        }
+
+        return $plain !== '' ? ': '.substr($plain, 0, 200) : '';
+    }
+
     private function errorHint(array $responseBody, int $status): ?string
     {
         $type = (string) ($responseBody['type'] ?? '');
@@ -1339,7 +1352,10 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         } catch (RequestException $exception) {
             $status = $exception->response?->status() ?? 502;
             throw new UnipileException(
-                'Messaging error (HTTP '.$status.'): '.substr($exception->response?->body() ?? $exception->getMessage(), 0, 300),
+                'Messaging error (HTTP '.$status.')'.$this->sanitizeHttpErrorDetail(
+                    (string) ($exception->response?->body() ?? $exception->getMessage()),
+                    $status,
+                ),
                 $status
             );
         }

@@ -23,6 +23,7 @@ class UnipileTemporaryLimitGuard
     /** @var list<string> */
     public const PACED_CHANNELS = [
         'linkedin',
+        'email',
         'whatsapp',
         'instagram',
         'telegram',
@@ -48,7 +49,7 @@ class UnipileTemporaryLimitGuard
         }
 
         if ($error instanceof UnipileException) {
-            if ($error->statusCode === 429) {
+            if (in_array($error->statusCode, [429, 502, 503, 504], true)) {
                 return true;
             }
             $code = strtolower((string) ($error->context['error_code'] ?? ''));
@@ -60,6 +61,26 @@ class UnipileTemporaryLimitGuard
         $haystack = strtolower(is_string($error) ? $error : $error->getMessage());
 
         return $haystack !== '' && $this->matchesTemporaryHaystack($haystack);
+    }
+
+    /** Provider blip (502/nginx) — short retry, not a daily-limit escalation. */
+    public function isProviderOutage(Throwable|string|null $error): bool
+    {
+        if ($error instanceof UnipileException) {
+            return in_array($error->statusCode, [502, 503, 504], true);
+        }
+
+        $haystack = strtolower(is_string($error) ? $error : (string) ($error?->getMessage() ?? ''));
+
+        return $haystack !== '' && (
+            str_contains($haystack, 'http 502')
+            || str_contains($haystack, 'http 503')
+            || str_contains($haystack, 'http 504')
+            || str_contains($haystack, 'bad gateway')
+            || str_contains($haystack, 'gateway timeout')
+            || str_contains($haystack, 'service unavailable')
+            || str_contains($haystack, 'upstream')
+        );
     }
 
     public function isLimited(int $userId, string $action = self::ACTION_LINKEDIN): bool
@@ -143,8 +164,28 @@ class UnipileTemporaryLimitGuard
     {
         $action = $this->normalizeAction($action);
         $fromApiFailure = $error !== null && $this->isTemporaryLimit($error);
+        $providerOutage = $error !== null && $this->isProviderOutage($error);
 
         if ($fromApiFailure) {
+            // Gateway/provider blips: short retry, do not escalate to next-day pause.
+            if ($providerOutage) {
+                $resumeAt = now()->addMinutes(random_int(2, 6));
+                Cache::put($this->key($userId, $action), $resumeAt->getTimestamp(), $resumeAt->copy()->addHour());
+
+                return [
+                    'status' => 'deferred',
+                    'next_run_at' => $resumeAt,
+                    'error_message' => null,
+                    'payload' => [
+                        'reason' => 'temporary_provider_outage',
+                        'escalated' => false,
+                        'hits' => 0,
+                        'channel' => $action,
+                        'resume_at' => $resumeAt->toIso8601String(),
+                    ],
+                ];
+            }
+
             $hits = $this->incrementFailureHits($userId, $action);
             $escalateAfter = max(1, (int) config('services.unipile_pacing.temp_limit_escalate_after', 2));
             $escalated = $hits >= $escalateAfter;
@@ -287,6 +328,12 @@ class UnipileTemporaryLimitGuard
             || str_contains($haystack, 'rate_limit')
             || str_contains($haystack, 'slow down')
             || str_contains($haystack, 'http 429')
+            || str_contains($haystack, 'http 502')
+            || str_contains($haystack, 'http 503')
+            || str_contains($haystack, 'http 504')
+            || str_contains($haystack, 'bad gateway')
+            || str_contains($haystack, 'gateway timeout')
+            || str_contains($haystack, 'service unavailable')
             || str_contains($haystack, 'busy with another action');
     }
 

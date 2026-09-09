@@ -400,7 +400,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         $tempLimit = app(\App\V2\Services\UnipileTemporaryLimitGuard::class);
         if ($tempLimit->isTemporaryLimit($error)) {
-            $channel = (string) ($node['channel'] ?? 'linkedin');
+            $channel = strtolower(trim((string) ($node['channel'] ?? 'linkedin')));
             if (! \App\V2\Services\UnipileTemporaryLimitGuard::supportsChannel($channel)) {
                 $channel = 'linkedin';
             }
@@ -411,6 +411,8 @@ class ProcessOutreachLeadJob implements ShouldQueue
             );
             $runAt = $deferred['next_run_at'];
             $escalated = ! empty($deferred['payload']['escalated']);
+            $isOutage = ($deferred['payload']['reason'] ?? '') === 'temporary_provider_outage'
+                || $tempLimit->isProviderOutage($error);
             $platform = $tempLimit->platformLabel($channel);
             $logger->log(
                 $campaign->id,
@@ -418,9 +420,11 @@ class ProcessOutreachLeadJob implements ShouldQueue
                 $run?->id,
                 $node,
                 'scheduled',
-                $escalated
-                    ? "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).'
-                    : "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                match (true) {
+                    $isOutage => "{$platform} provider blip (temporary) — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                    $escalated => "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).',
+                    default => "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                },
                 $deferred['payload'] ?? [],
             );
             $lead->update(['status' => 'pending']);
