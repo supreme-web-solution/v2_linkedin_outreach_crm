@@ -134,6 +134,16 @@ class PlanSequenceNodeBuilder
                 : 'Hello {{firstName}}, good evening.';
         }
 
+        $senderName = \App\V2\Ai\Support\SenderIdentity::extractFromPlan($payload);
+        if ($senderName !== '') {
+            $message = preg_replace('/\[(?:Your\s+)?Name\]/iu', $senderName, $message) ?? $message;
+            $message = str_ireplace(
+                ['{{senderName}}', '{{sender_name}}', '{{yourName}}', '{{your_name}}'],
+                $senderName,
+                $message
+            );
+        }
+
         if ($channel === 'email') {
             $subject = trim((string) ($payload['subject'] ?? 'Quick note'));
             if ($subject === '') {

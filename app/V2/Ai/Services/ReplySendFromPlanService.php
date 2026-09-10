@@ -32,6 +32,10 @@ class ReplySendFromPlanService
             throw new \InvalidArgumentException('Missing conversation or draft text in reply plan.');
         }
 
+        $draft = RecipientFacingCopyGuard::prepareOutbound($draft, [
+            'user' => $user,
+            'organization_id' => (int) ($user->current_organization_id ?? 0),
+        ]);
         RecipientFacingCopyGuard::assertSendable($draft);
 
         $conversation = V2Conversation::query()

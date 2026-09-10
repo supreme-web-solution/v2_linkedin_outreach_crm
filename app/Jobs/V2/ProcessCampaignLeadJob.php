@@ -222,7 +222,8 @@ class ProcessCampaignLeadJob implements ShouldQueue
                 'No sequence steps configured for this campaign.',
             );
             $lead->update(['status' => 'error']);
-            $progress->update(['run_status' => 9]);
+            $progress->update(['run_status' => 9, 'next_run_at' => null]);
+            $completion->maybeFinish($campaign, $run);
 
             return;
         }
@@ -283,6 +284,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
                     $resolver,
                     $logger,
                     $profileService,
+                    $completion,
                 );
 
                 return;
@@ -351,7 +353,8 @@ class ProcessCampaignLeadJob implements ShouldQueue
             );
 
             $lead->update(['status' => 'error']);
-            $progress->update(['run_status' => 9]);
+            $progress->update(['run_status' => 9, 'next_run_at' => null]);
+            $completion->maybeFinish($campaign, $run);
         }
     }
 
@@ -447,6 +450,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
         CampaignSequenceResolver $resolver,
         CampaignActivityLogger $logger,
         CampaignLeadProfileService $profileService,
+        ?CampaignCompletionService $completion = null,
     ): void {
         $nodeLabel = $resolver->nodeLabel($node);
         // Refresh — avoid stale acceptance_status from a long-lived queue worker model instance.
@@ -537,7 +541,20 @@ class ProcessCampaignLeadJob implements ShouldQueue
 
         if ($nextKey !== null) {
             self::dispatch($campaign->id, $lead->id, $run?->id)->delay(now()->addSeconds(2));
+
+            return;
         }
+
+        $this->markSequenceComplete(
+            $campaign,
+            $lead,
+            $progress,
+            $run,
+            (int) ($node['key'] ?? 0),
+            $completed,
+            $logger,
+            $completion,
+        );
     }
 
     /**
@@ -626,6 +643,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
             );
             $lead->update(['status' => 'error']);
             $progress->update(['run_status' => 9, 'next_run_at' => null]);
+            $completion?->maybeFinish($campaign, $run);
 
             return;
         }
@@ -798,6 +816,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
 
         $lead->update(['status' => 'error']);
         $progress->update(['run_status' => 9, 'next_run_at' => null]);
+        $completion?->maybeFinish($campaign, $run);
     }
 
     /**

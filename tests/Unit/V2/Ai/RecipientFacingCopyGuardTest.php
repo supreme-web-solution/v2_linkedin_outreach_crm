@@ -29,4 +29,51 @@ class RecipientFacingCopyGuardTest extends TestCase
         $this->assertTrue(RecipientFacingCopyGuard::hasUnresolvedPlaceholders('Kind regards, [Your Name]'));
         $this->assertTrue(RecipientFacingCopyGuard::hasUnresolvedPlaceholders('Hi {{firstName}},'));
     }
+
+    public function test_prepare_outbound_fills_sender_from_user_name(): void
+    {
+        $user = new \App\Models\User(['name' => 'William Victor', 'email' => 'vicken408@gmail.com']);
+        $filled = RecipientFacingCopyGuard::prepareOutbound(
+            "Hi there,\n\nPlease join us.\n\nBest,\n[Your Name]",
+            ['user' => $user],
+        );
+
+        $this->assertStringContainsString('William Victor', $filled);
+        $this->assertStringNotContainsString('[Your Name]', $filled);
+        $this->assertSame([], RecipientFacingCopyGuard::problems($filled));
+    }
+
+    public function test_prepare_outbound_prefers_explicit_sender_over_profile(): void
+    {
+        $user = new \App\Models\User(['name' => 'Profile Name', 'email' => 'vicken408@gmail.com']);
+        $filled = RecipientFacingCopyGuard::prepareOutbound(
+            "Best,\n[Your Name]",
+            ['user' => $user, 'sender_name' => 'Custom Signer'],
+        );
+
+        $this->assertStringContainsString('Custom Signer', $filled);
+        $this->assertStringNotContainsString('Profile Name', $filled);
+        $this->assertStringNotContainsString('[Your Name]', $filled);
+    }
+
+    public function test_extract_sender_from_user_instruction(): void
+    {
+        $this->assertSame(
+            'William Victor',
+            \App\V2\Ai\Support\SenderIdentity::extractFromText(
+                'Invite them and sign as William Victor please'
+            ),
+        );
+    }
+
+    public function test_prepare_outbound_fills_first_name_tag(): void
+    {
+        $filled = RecipientFacingCopyGuard::prepareOutbound(
+            'Hi {{firstName}}, free to facilitate?',
+            ['first_name' => 'Vicken'],
+        );
+
+        $this->assertSame('Hi Vicken, free to facilitate?', $filled);
+        $this->assertFalse(RecipientFacingCopyGuard::hasUnresolvedPlaceholders($filled));
+    }
 }

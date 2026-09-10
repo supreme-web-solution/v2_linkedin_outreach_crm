@@ -187,6 +187,10 @@ class InboxCommandCenterService
             ->firstOrFail();
 
         $message = trim($message);
+        $message = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound($message, [
+            'user' => $user,
+            'organization_id' => $organizationId,
+        ]);
         \App\V2\Ai\Support\RecipientFacingCopyGuard::assertSendable($message);
 
         $sent = app(UnifiedInboxReplyService::class)->sendApprovedReply($user, $v2Conversation, $message);

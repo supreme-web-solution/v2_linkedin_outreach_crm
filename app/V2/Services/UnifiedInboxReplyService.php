@@ -115,6 +115,10 @@ class UnifiedInboxReplyService
             throw new \RuntimeException('Reply text is empty.');
         }
 
+        $body = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound($body, [
+            'user' => $user,
+            'organization_id' => (int) ($user->current_organization_id ?? $conversation->organization_id ?? 0),
+        ]);
         \App\V2\Ai\Support\RecipientFacingCopyGuard::assertSendable($body);
 
         return $this->inbox->sendMessage($user, $conversation, $body);

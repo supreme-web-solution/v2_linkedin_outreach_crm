@@ -156,7 +156,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
         $run = $this->outreachRunId ? V2OutreachRun::query()->find($this->outreachRunId) : null;
         $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
 
-        if ($this->resolvePendingSendTimeout($campaign, $lead, $progress, $nodes, $resolver, $logger, $run)) {
+        if ($this->resolvePendingSendTimeout($campaign, $lead, $progress, $nodes, $resolver, $logger, $run, $completion)) {
             return;
         }
 
@@ -175,7 +175,8 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         if (! $node) {
             $lead->update(['status' => 'error']);
-            $progress->update(['run_status' => 9]);
+            $progress->update(['run_status' => 9, 'next_run_at' => null]);
+            $completion->maybeFinish($campaign, $run);
 
             return;
         }
@@ -188,7 +189,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         try {
             if ($stepType === 'condition') {
-                $this->handleCondition($campaign, $lead, $progress, $run, $node, $nodes, $resolver, $logger, $conditionEvaluator);
+                $this->handleCondition($campaign, $lead, $progress, $run, $node, $nodes, $resolver, $logger, $conditionEvaluator, $completion);
 
                 return;
             }
@@ -213,7 +214,8 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
             $logger->log($campaign->id, $lead->id, $run?->id, $node, 'failed', "Failed \"{$nodeLabel}\": {$e->getMessage()}");
             $lead->update(['status' => 'error']);
-            $progress->update(['run_status' => 9]);
+            $progress->update(['run_status' => 9, 'next_run_at' => null]);
+            $completion->maybeFinish($campaign, $run);
         }
     }
 
@@ -263,6 +265,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
             );
             $lead->update(['status' => 'error']);
             $progress->update(['run_status' => 9, 'next_run_at' => null]);
+            $completion->maybeFinish($campaign, $run);
 
             return;
         }
@@ -312,6 +315,8 @@ class ProcessOutreachLeadJob implements ShouldQueue
             ]);
             if ($nextKey !== null) {
                 self::dispatch($campaign->id, $lead->id, $run?->id)->delay($runAt);
+            } else {
+                $this->markComplete($campaign, $lead, $progress, $run, $node, $logger, $completion, $completed);
             }
 
             return;
@@ -340,6 +345,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
             if (OutreachSendProof::nodeIsOutboundSend($node)) {
                 $lead->update(['status' => 'skipped']);
                 $progress->update(['run_status' => 9, 'next_run_at' => null]);
+                $completion->maybeFinish($campaign, $run);
 
                 return;
             }
@@ -441,6 +447,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
                 );
                 $lead->update(['status' => 'error']);
                 $progress->update(['run_status' => 9, 'next_run_at' => null]);
+                $completion->maybeFinish($campaign, $run);
 
                 return;
             }
@@ -475,6 +482,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
         $logger->log($campaign->id, $lead->id, $run?->id, $node, 'failed', "Failed \"{$nodeLabel}\": {$error}");
         $lead->update(['status' => 'error']);
         $progress->update(['run_status' => 9, 'next_run_at' => null]);
+        $completion->maybeFinish($campaign, $run);
     }
 
     /**
@@ -617,6 +625,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
         OutreachSequenceResolver $resolver,
         OutreachActivityLogger $logger,
         ?V2OutreachRun $run,
+        OutreachCompletionService $completion,
     ): bool {
         $nodeKey = (int) $progress->next_node_key;
         if ($nodeKey <= 0 || $nodeKey === self::SEQUENCE_COMPLETE_KEY) {
@@ -650,6 +659,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
         );
         $lead->update(['status' => 'error']);
         $progress->update(['run_status' => 9, 'next_run_at' => null]);
+        $completion->maybeFinish($campaign, $run);
 
         return true;
     }
@@ -668,6 +678,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
         OutreachSequenceResolver $resolver,
         OutreachActivityLogger $logger,
         OutreachConditionEvaluator $conditionEvaluator,
+        OutreachCompletionService $completion,
     ): void {
         $acceptance = $conditionEvaluator->evaluate($progress, $node);
 
@@ -748,6 +759,14 @@ class ProcessOutreachLeadJob implements ShouldQueue
                     'paused',
                     sprintf('%s replied — sequence complete after condition.', $lead->full_name ?? 'Lead'),
                 );
+                $progress->update([
+                    'next_node_key' => self::SEQUENCE_COMPLETE_KEY,
+                    'run_status' => 4,
+                    'next_run_at' => null,
+                ]);
+                $completion->maybeFinish($campaign, $run);
+
+                return;
             } elseif ($lead->status === 'replied') {
                 // Only reopen when we ourselves deferred pause for this reply condition.
                 $lead->forceFill(['status' => 'running'])->save();
@@ -756,7 +775,12 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         if ($nextKey !== null) {
             self::dispatch($campaign->id, $lead->id, $run?->id)->delay(now()->addSeconds(2));
+
+            return;
         }
+
+        // No further nodes on this branch — end the lead sequence (any channel).
+        $this->markComplete($campaign, $lead, $progress, $run, $node, $logger, $completion, $completed);
     }
 
     /**

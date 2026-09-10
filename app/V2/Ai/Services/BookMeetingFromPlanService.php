@@ -34,6 +34,10 @@ class BookMeetingFromPlanService
             throw new \InvalidArgumentException('Missing conversation or booking message.');
         }
 
+        $draft = RecipientFacingCopyGuard::prepareOutbound($draft, [
+            'user' => $user,
+            'organization_id' => (int) ($user->current_organization_id ?? 0),
+        ]);
         RecipientFacingCopyGuard::assertSendable($draft);
 
         $conversation = V2Conversation::query()

@@ -88,8 +88,18 @@ class CampaignFirstTouchPersonalizationService
         $lines = [
             'Write a short first-touch outreach message (max 350 chars) grounded ONLY in the evidence.',
             'Do not invent employers, metrics, or prior conversations.',
+            'Never use placeholders like [Your Name] or {{firstName}} — use real names from evidence/sender.',
             'Goal: '.$goal,
         ];
+
+        $owner = \App\Models\User::query()->find((int) $campaign->user_id);
+        if ($owner) {
+            $sender = \App\V2\Ai\Support\SenderIdentity::displayName($owner, (int) $campaign->organization_id, $campaign);
+            if ($sender !== '') {
+                $lines[] = 'Sender name (sign as this person — user-specified name beats profile name): '.$sender;
+            }
+        }
+
         foreach ($evidence as $key => $value) {
             $lines[] = Str::headline(str_replace('_', ' ', (string) $key)).': '.$value;
         }
@@ -105,6 +115,13 @@ class CampaignFirstTouchPersonalizationService
         if ($draft === '') {
             return false;
         }
+
+        $draft = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound($draft, [
+            'user' => $owner,
+            'organization_id' => (int) $campaign->organization_id,
+            'lead' => $lead,
+            'campaign' => $campaign,
+        ]);
 
         $meta['ai_personalized_draft'] = [
             'text' => $draft,

@@ -72,6 +72,28 @@ class EmailChannelExecutor implements ChannelExecutorInterface
         $content['body'] = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
             ->resolveMessageText($lead, $content['body'] ?: 'Hi there,');
 
+        $owner = \App\Models\User::query()->find((int) $campaign->user_id);
+        $content['subject'] = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound(
+            (string) ($content['subject'] ?? ''),
+            [
+                'user' => $owner,
+                'organization_id' => (int) $campaign->organization_id,
+                'lead' => $lead,
+                'first_name' => $firstName,
+                'campaign' => $campaign,
+            ],
+        );
+        $content['body'] = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound(
+            (string) ($content['body'] ?? ''),
+            [
+                'user' => $owner,
+                'organization_id' => (int) $campaign->organization_id,
+                'lead' => $lead,
+                'first_name' => $firstName,
+                'campaign' => $campaign,
+            ],
+        );
+
         $block = \App\V2\Ai\Support\RecipientFacingCopyGuard::blockReason($content['body'] ?? '');
         if ($block !== null) {
             return ['status' => 'failed', 'error_message' => 'Blocked unsafe outbound email: '.$block];

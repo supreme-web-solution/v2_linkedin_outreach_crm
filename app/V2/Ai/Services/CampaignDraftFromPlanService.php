@@ -8,6 +8,7 @@ use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachList;
 use App\V2\Ai\Support\CampaignDisplayName;
 use App\V2\Ai\Support\PlanLeadList;
+use App\V2\Ai\Support\SenderIdentity;
 use Illuminate\Support\Str;
 
 class CampaignDraftFromPlanService
@@ -76,6 +77,28 @@ class CampaignDraftFromPlanService
 
         $goal = (string) ($payload['goal'] ?? 'AI Command Center campaign');
         $name = CampaignDisplayName::fromPlan($goal, $payload);
+        $senderName = SenderIdentity::extractFromPlan($payload);
+
+        $meta = [
+            'source' => 'socifusion_ai',
+            'ai_approval_id' => $approval->id,
+            'ai_plan' => $payload,
+            'created_via' => 'command_center',
+            'ai_personalize_first_touch' => true,
+            'ai_custom_sequence' => $resolved['custom'],
+            'one_shot' => $isOneShot,
+            // Cap how many leads sync from a large source list when the plan asked for N.
+            'max_leads' => $isOneShot
+                ? 1
+                : (isset($payload['target_count'])
+                    ? max(1, min(500, (int) $payload['target_count']))
+                    : null),
+            'channel_inbox' => $this->defaultChannelInbox($nodeModel, $payload, $goal),
+        ];
+        if ($senderName !== '') {
+            $meta['sender_display_name'] = $senderName;
+            $meta['sender_name'] = $senderName;
+        }
 
         $campaign = V2OutreachCampaign::query()->create([
             'user_id' => $user->id,
@@ -84,23 +107,16 @@ class CampaignDraftFromPlanService
             'template_type' => $templateType,
             'node_model' => $nodeModel,
             'status' => 'draft',
-            'meta' => [
-                'source' => 'socifusion_ai',
-                'ai_approval_id' => $approval->id,
-                'ai_plan' => $payload,
-                'created_via' => 'command_center',
-                'ai_personalize_first_touch' => true,
-                'ai_custom_sequence' => $resolved['custom'],
-                'one_shot' => $isOneShot,
-                // Cap how many leads sync from a large source list when the plan asked for N.
-                'max_leads' => $isOneShot
-                    ? 1
-                    : (isset($payload['target_count'])
-                        ? max(1, min(500, (int) $payload['target_count']))
-                        : null),
-                'channel_inbox' => $this->defaultChannelInbox($nodeModel, $payload, $goal),
-            ],
+            'meta' => $meta,
         ]);
+
+        if ($senderName !== '') {
+            $settings = app(\App\V2\Ai\Services\AiEmployeeSettingsService::class)->for($user, $orgId);
+            $existingPreferred = trim((string) (data_get($settings->meta, 'sender_display_name') ?? ''));
+            if ($existingPreferred === '') {
+                SenderIdentity::setPreferredName($settings, $senderName);
+            }
+        }
 
         $attached = 0;
         $this->attachList(

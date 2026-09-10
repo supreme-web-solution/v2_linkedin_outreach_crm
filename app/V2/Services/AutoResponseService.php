@@ -89,6 +89,11 @@ class AutoResponseService
         }
 
         try {
+            $owner = User::query()->find($userId);
+            $text = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound($text, [
+                'user' => $owner,
+                'organization_id' => $organizationId,
+            ]);
             \App\V2\Ai\Support\RecipientFacingCopyGuard::assertSendable($text);
         } catch (\InvalidArgumentException $e) {
             Log::warning('[AutoResponse] Blocked non-recipient-facing copy', [

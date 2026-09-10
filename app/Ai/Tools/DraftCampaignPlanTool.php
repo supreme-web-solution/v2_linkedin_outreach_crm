@@ -34,6 +34,11 @@ class DraftCampaignPlanTool extends GatedTool
         return [
             'goal' => $schema->string()->required()->description('Full brief of what to achieve (kept in the plan). Not used as the campaign list title.'),
             'campaign_name' => $schema->string()->nullable()->description('Short list title only (max ~50 chars). Example: "Annual event invite". Never paste emails or the full goal sentence.'),
+            'sender_name' => $schema->string()->nullable()->description(
+                'Exact name to sign THIS campaign with when the user specified one (e.g. "William Victor", "Dr. Ada"). '
+                .'Must obey the user — do not substitute their profile name if they gave a different signing name. '
+                .'Also call update_sender_profile to remember it for later.'
+            ),
             'audience' => $schema->string()->required(),
             'target_count' => $schema->integer()->min(1)->nullable(),
             'channels' => $schema->string()->nullable()->description('Default: LinkedIn + Email. When user asks: Instagram, Telegram, WhatsApp (or combos).'),
@@ -124,6 +129,10 @@ class DraftCampaignPlanTool extends GatedTool
             'type' => 'campaign',
             'goal' => (string) $request['goal'],
             'campaign_name' => trim((string) ($request['campaign_name'] ?? '')),
+            'sender_name' => trim((string) ($request['sender_name'] ?? ''))
+                ?: \App\V2\Ai\Support\SenderIdentity::extractFromText(
+                    trim((string) $request['goal'].' '.(string) ($request['message'] ?? '').' '.(string) ($request['ai_context'] ?? ''))
+                ),
             'audience' => (string) $request['audience'],
             'icp_notes' => (string) $request['audience'],
             'target_count' => $oneShot ? 1 : $count,
