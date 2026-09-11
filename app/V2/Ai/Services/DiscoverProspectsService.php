@@ -591,15 +591,21 @@ class DiscoverProspectsService
     {
         $platform = Str::lower(trim($platform));
 
-        if (in_array($platform, ['all', 'parallel', 'multi', 'multichannel', 'auto', 'default'], true)) {
+        if (in_array($platform, ['all', 'parallel', 'multi', 'multichannel'], true)) {
             return true;
         }
 
-        if (in_array($platform, ['instagram', 'ig'], true)) {
+        // Explicit single-channel requests must never fan out to Instagram/LinkedIn together.
+        if (in_array($platform, ['linkedin', 'li', 'instagram', 'ig'], true)) {
             return false;
         }
 
-        return count($this->parallelDiscoveryChannels($user)) >= 2;
+        if (in_array($platform, ['auto', 'default', ''], true)) {
+            // Auto parallel only when both are connected AND caller did not force single-channel.
+            return count($this->parallelDiscoveryChannels($user)) >= 2;
+        }
+
+        return false;
     }
 
     /**

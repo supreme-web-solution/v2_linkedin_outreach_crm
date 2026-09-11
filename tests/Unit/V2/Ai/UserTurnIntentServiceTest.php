@@ -76,6 +76,17 @@ class UserTurnIntentServiceTest extends TestCase
         $this->assertTrue($intent->isDiscoveryOnly('find people at Acme Digital in Lagos'));
     }
 
+    public function test_find_prospect_details_is_linkedin_only_discovery_not_outreach(): void
+    {
+        $intent = app(UserTurnIntentService::class);
+
+        $this->assertFalse($intent->isOutreachCommand('find prospect details'));
+        $this->assertTrue($intent->prefersLinkedInOnlyDiscovery('find prospect details'));
+        $this->assertFalse($intent->wantsInstagramDiscovery('find prospect details'));
+        $this->assertTrue($intent->wantsInstagramDiscovery('find Instagram leads for coffee brands'));
+        $this->assertTrue($intent->wantsInstagramDiscovery('search all channels for SaaS founders'));
+    }
+
     public function test_what_do_we_have_today_returns_sync_brief_without_agent(): void
     {
         $user = User::factory()->create();

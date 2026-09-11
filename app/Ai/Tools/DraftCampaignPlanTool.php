@@ -26,7 +26,8 @@ class DraftCampaignPlanTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Draft a full outreach campaign plan (audience, channels, sequence, follow-up) for Review & Launch. Does not send messages yet.';
+        return 'Draft a full outreach campaign plan (audience, channels, sequence, follow-up) for Review & Launch. '
+            .'ONLY when the user explicitly wants outreach/messaging/campaigns. Never for find/save-only asks.';
     }
 
     public function schema(JsonSchema $schema): array
@@ -83,6 +84,17 @@ class DraftCampaignPlanTool extends GatedTool
                 'do_not_draft_again' => true,
                 'report' => $ledger->report(),
                 'instruction' => 'Campaigns for this request already exist — one per platform from the planned split. Do not create another campaign and do not search again.',
+            ];
+        }
+
+        $intent = app(\App\V2\Ai\Services\UserTurnIntentService::class);
+        $userMessage = $this->latestUserMessage();
+        $intentSource = $userMessage !== '' ? $userMessage : (string) ($request['goal'] ?? '');
+        if ($intent->isDiscoveryOnly($intentSource)) {
+            return [
+                'blocked' => true,
+                'discovery_only' => true,
+                'instruction' => 'User asked to find/save prospects only — do NOT draft a campaign. Use discover_prospects and report saved leads.',
             ];
         }
 
@@ -264,5 +276,21 @@ class DraftCampaignPlanTool extends GatedTool
         }
 
         return $result;
+    }
+
+    private function latestUserMessage(): string
+    {
+        $conversation = $this->context->conversation;
+        if (! $conversation?->id) {
+            return '';
+        }
+
+        $message = \App\Models\AiMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', 'user')
+            ->orderByDesc('id')
+            ->value('content');
+
+        return trim((string) $message);
     }
 }

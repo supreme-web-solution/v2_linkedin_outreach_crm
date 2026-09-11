@@ -17,7 +17,7 @@ class DiscoverProspectsParallelDefaultTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_should_use_parallel_when_linkedin_and_instagram_connected(): void
+    public function test_should_use_parallel_only_for_auto_or_all_when_both_connected(): void
     {
         $user = User::factory()->make(['id' => 1]);
 
@@ -34,8 +34,11 @@ class DiscoverProspectsParallelDefaultTest extends TestCase
         $method = new \ReflectionMethod(DiscoverProspectsService::class, 'shouldUseParallelDiscovery');
         $method->setAccessible(true);
 
-        $this->assertTrue($method->invoke(app(DiscoverProspectsService::class), $user, 'linkedin'));
-        $this->assertFalse($method->invoke(app(DiscoverProspectsService::class), $user, 'instagram'));
+        $service = app(DiscoverProspectsService::class);
+        $this->assertFalse($method->invoke($service, $user, 'linkedin'));
+        $this->assertFalse($method->invoke($service, $user, 'instagram'));
+        $this->assertTrue($method->invoke($service, $user, 'auto'));
+        $this->assertTrue($method->invoke($service, $user, 'all'));
     }
 
     public function test_target_count_honors_five_not_minimum_ten(): void

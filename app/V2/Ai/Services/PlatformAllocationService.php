@@ -12,7 +12,8 @@ use App\V2\Outreach\OutreachChannelGuard;
  */
 class PlatformAllocationService
 {
-    public const DEFAULT_TOTAL = 50;
+    /** Used only when the user did not specify a count — keep small so Soci does not invent "50". */
+    public const DEFAULT_TOTAL = 10;
 
     public function __construct(
         private readonly OutreachChannelGuard $channelGuard,
@@ -172,10 +173,15 @@ class PlatformAllocationService
         }
 
         $lead = $usedDefault
-            ? 'No count was given, so I planned about '.array_sum($allocation).' prospects'
+            ? 'No count was given, so I used a small default of '.array_sum($allocation).' prospects'
             : 'You asked for '.(int) $requestedTotal;
 
-        return $lead.'. Split across connected searchable platforms: '.implode(', ', $parts)
-            .'. Email and WhatsApp are not searched unless you provide addresses or phone numbers. One campaign per platform.';
+        $campaignNote = count($allocation) > 1
+            ? ' If you ask for outreach later, one campaign is created per platform.'
+            : '';
+
+        return $lead.'. Searching connected platforms: '.implode(', ', $parts)
+            .'. Email and WhatsApp are not searched unless you provide addresses or phone numbers.'
+            .$campaignNote;
     }
 }

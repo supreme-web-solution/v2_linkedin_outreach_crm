@@ -77,4 +77,12 @@ class DeleteCampaignApprovalGuardTest extends TestCase
         $this->assertSame('inbox_conversation', $svc->normalizeKind('thread'));
         $this->assertSame('outreach_template', $svc->normalizeKind('template'));
     }
+
+    public function test_list_created_today_method_exists(): void
+    {
+        $svc = app(DeleteCampaignCommandCenterService::class);
+        $this->assertTrue(method_exists($svc, 'listDeletableCampaignsCreatedToday'));
+        $ref = new \ReflectionMethod($svc, 'listDeletableOutreachCampaigns');
+        $this->assertGreaterThanOrEqual(3, $ref->getNumberOfParameters());
+    }
 }

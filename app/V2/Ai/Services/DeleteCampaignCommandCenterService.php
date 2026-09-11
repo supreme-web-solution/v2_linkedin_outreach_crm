@@ -348,14 +348,26 @@ class DeleteCampaignCommandCenterService
      *
      * @return list<array{kind:string,resource_id:string,name:string,status:string}>
      */
-    public function listDeletableOutreachCampaigns(User $user, int $organizationId): array
-    {
-        return V2OutreachCampaign::query()
+    /**
+     * @return list<array{kind:string,resource_id:string,name:string,status:string}>
+     */
+    public function listDeletableOutreachCampaigns(
+        User $user,
+        int $organizationId,
+        bool $createdToday = false,
+    ): array {
+        $query = V2OutreachCampaign::query()
             ->where('user_id', $user->id)
             ->where('organization_id', $organizationId)
             ->where(function ($q) {
                 $q->whereNull('status')->orWhere('status', '!=', 'template');
-            })
+            });
+
+        if ($createdToday) {
+            $query->whereDate('created_at', now()->toDateString());
+        }
+
+        return $query
             ->orderByDesc('id')
             ->get(['id', 'name', 'status'])
             ->map(fn (V2OutreachCampaign $c) => [
@@ -365,6 +377,32 @@ class DeleteCampaignCommandCenterService
                 'status' => (string) ($c->status ?? ''),
             ])
             ->all();
+    }
+
+    /**
+     * Outreach + LinkedIn extension campaigns created today (local app date).
+     *
+     * @return list<array{kind:string,resource_id:string,name:string,status:string}>
+     */
+    public function listDeletableCampaignsCreatedToday(User $user, int $organizationId): array
+    {
+        $outreach = $this->listDeletableOutreachCampaigns($user, $organizationId, true);
+
+        $linkedin = V2Campaign::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->whereDate('created_at', now()->toDateString())
+            ->orderByDesc('id')
+            ->get(['id', 'name', 'status'])
+            ->map(fn (V2Campaign $c) => [
+                'kind' => 'linkedin',
+                'resource_id' => (string) $c->id,
+                'name' => (string) $c->name,
+                'status' => (string) ($c->status ?? ''),
+            ])
+            ->all();
+
+        return array_values(array_merge($outreach, $linkedin));
     }
 
     public function normalizeKind(string $kind): string

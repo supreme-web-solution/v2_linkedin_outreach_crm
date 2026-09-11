@@ -132,6 +132,33 @@ class UserTurnIntentService
     }
 
     /**
+     * User explicitly asked for Instagram (or all channels) — not LinkedIn-only discovery.
+     */
+    public function wantsInstagramDiscovery(string $message): bool
+    {
+        $lower = Str::lower(trim($message));
+
+        return (bool) preg_match(
+            '/\b(instagram|ig\b|all channels?|every channel|both channels?|multichannel|multi[- ]channel)\b/i',
+            $lower,
+        );
+    }
+
+    /**
+     * Prefer LinkedIn for vague B2B find/save asks unless Instagram/all was requested.
+     */
+    public function prefersLinkedInOnlyDiscovery(string $message): bool
+    {
+        if ($this->wantsInstagramDiscovery($message)) {
+            return false;
+        }
+
+        return $this->isDiscoveryOnly($message)
+            || (bool) preg_match('/\b(find|search|discover|get|fetch)\b.{0,40}\b(prospect|lead|customer|client|people|profile)s?\b/i', $message)
+            || (bool) preg_match('/\b(prospect|lead)\s+details?\b/i', $message);
+    }
+
+    /**
      * User wants net-new profiles — not a repeat of a list Soci just pulled.
      */
     public function wantsFreshProspectPull(string $message): bool

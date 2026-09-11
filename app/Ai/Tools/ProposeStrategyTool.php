@@ -28,7 +28,8 @@ class ProposeStrategyTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Turn a user sales goal into a structured SociFusion Command Center plan awaiting Review & Launch. Call this even when audience is missing — the card will show what is blocked.';
+        return 'Draft an outreach campaign plan for Review & Launch. ONLY when the user explicitly wants outreach/messaging/campaigns. '
+            .'Never call for find/save-only requests ("find prospect details", "get me leads") — use discover_prospects instead.';
     }
 
     public function schema(JsonSchema $schema): array
@@ -64,6 +65,8 @@ class ProposeStrategyTool extends GatedTool
         $explicitTarget = array_key_exists('target_count', $request->all());
         $hasList = trim((string) ($request['list_hash'] ?? '')) !== '';
         $goal = (string) $request['goal'];
+        $userMessage = $this->latestUserMessage();
+        $intentSource = $userMessage !== '' ? $userMessage : $goal;
         $oneShot = (bool) ($request['one_shot'] ?? false)
             || (bool) preg_match('/one[-\s]?time|one[-\s]?shot|greeting|just (a )?message|single (email|message)|message (him|her|them)/i', $goal);
         $profileUrl = trim((string) ($request['profile_url'] ?? ''));
@@ -72,15 +75,24 @@ class ProposeStrategyTool extends GatedTool
             $oneShot = true;
         }
 
+        $intent = app(\App\V2\Ai\Services\UserTurnIntentService::class);
+        if ($intent->isDiscoveryOnly($intentSource)) {
+            return [
+                'blocked' => true,
+                'discovery_only' => true,
+                'instruction' => 'User asked to find/save prospects only. Do NOT draft a campaign. Call discover_prospects instead, or if discovery already ran, reply with the saved leads report.',
+            ];
+        }
         if (! $oneShot && ! $hasList && $this->isDirectAcquisitionGoal($goal)
-            && ! app(\App\V2\Ai\Services\UserTurnIntentService::class)->isInformational($goal)
-            && app(\App\V2\Ai\Services\UserTurnIntentService::class)->isOutreachCommand($goal)) {
+            && ! $intent->isInformational($intentSource)
+            && $intent->isOutreachCommand($intentSource)) {
+            $userCount = app(DiscoverProspectsService::class)->inferCountFromQuery($intentSource);
             $discovery = app(DiscoverProspectsService::class)->discover(
                 user: $this->context->user,
                 query: $goal,
-                targetCount: isset($request['target_count']) ? (int) $request['target_count'] : null,
-                preferFresh: $explicitTarget,
-                platform: 'auto',
+                targetCount: $userCount ?? (isset($request['target_count']) ? (int) $request['target_count'] : null),
+                preferFresh: $explicitTarget || $userCount !== null,
+                platform: $intent->wantsInstagramDiscovery($intentSource) ? 'auto' : 'linkedin',
             );
 
             if (($discovery['mode'] ?? '') === 'parallel' && ! empty($discovery['lists'])) {
@@ -196,5 +208,21 @@ class ProposeStrategyTool extends GatedTool
             'card' => $formatter->formatPlanCard($plan, $approval->id, $this->context->channel),
             'cta' => 'Ask the user to Review & Launch (LAUNCH '.$approval->id.' on WhatsApp).',
         ];
+    }
+
+    private function latestUserMessage(): string
+    {
+        $conversation = $this->context->conversation;
+        if (! $conversation?->id) {
+            return '';
+        }
+
+        $message = \App\Models\AiMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', 'user')
+            ->orderByDesc('id')
+            ->value('content');
+
+        return trim((string) $message);
     }
 }

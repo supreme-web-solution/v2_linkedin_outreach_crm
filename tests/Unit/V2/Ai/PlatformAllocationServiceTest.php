@@ -20,9 +20,9 @@ class PlatformAllocationServiceTest extends TestCase
         );
     }
 
-    public function test_unspecified_default_is_fifty(): void
+    public function test_unspecified_default_is_ten(): void
     {
-        $this->assertSame(50, PlatformAllocationService::DEFAULT_TOTAL);
+        $this->assertSame(10, PlatformAllocationService::DEFAULT_TOTAL);
     }
 
     public function test_twenty_balances_evenly_between_linkedin_and_instagram(): void

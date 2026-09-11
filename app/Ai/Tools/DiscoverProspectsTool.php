@@ -36,7 +36,7 @@ class DiscoverProspectsTool extends GatedTool
             'query' => $schema->string()->required()->description(
                 'LinkedIn ICP keywords, or Instagram Search keyword (Mindcase: e.g. "coffee", "nasa" — finds accounts by topic). Use @handle only for Handle mode (exact accounts)',
             ),
-            'platform' => $schema->string()->nullable()->description('Optional: instagram (IG only), all (force parallel). Omit to auto-search all connected channels (LinkedIn + Instagram when both connected)'),
+            'platform' => $schema->string()->nullable()->description('Optional: linkedin (default for find-only), instagram (IG only), all (force parallel LinkedIn+IG when both connected). Omit for auto: find-only → LinkedIn; outreach → connected searchable channels.'),
             'competitors' => $schema->string()->nullable()->description('Optional comma-separated competitor names'),
             'target_count' => $schema->integer()->min(1)->max(100)->nullable()->description(
                 'Fetch and SAVE ~N NEW profiles (forces fresh search). Max 100 per pull across all channels.',
@@ -64,12 +64,35 @@ class DiscoverProspectsTool extends GatedTool
     {
         $query = (string) $request['query'];
         $intent = app(UserTurnIntentService::class);
-        $wantsOutreach = $intent->isOutreachCommand($query);
-        $setupOnly = $intent->wantsCampaignSetupOnly($query);
-        $preferFresh = (bool) ($request['prefer_fresh'] ?? false) || $intent->wantsFreshProspectPull($query);
-        $targetCount = isset($request['target_count']) ? (int) $request['target_count'] : null;
+        $userMessage = $this->latestUserMessage();
+        $intentSource = $userMessage !== '' ? $userMessage : $query;
 
-        $result = app(DiscoverProspectsService::class)->discover(
+        // Always judge outreach vs find-only from the real user turn — never from LLM-rewritten tool query.
+        $wantsOutreach = $intent->isOutreachCommand($intentSource);
+        $setupOnly = $intent->wantsCampaignSetupOnly($intentSource);
+        $preferFresh = (bool) ($request['prefer_fresh'] ?? false) || $intent->wantsFreshProspectPull($intentSource);
+
+        $discover = app(DiscoverProspectsService::class);
+        $userCount = $discover->inferCountFromQuery($intentSource)
+            ?? $discover->inferCountFromQuery($query);
+        // Ignore hallucinated target_count (e.g. 50) when the user never specified a number.
+        $targetCount = $userCount;
+        if ($targetCount === null && isset($request['target_count']) && $userMessage === '') {
+            $targetCount = (int) $request['target_count'];
+        }
+
+        $platform = (string) ($request['platform'] ?? 'auto');
+        if ($platform === 'auto' && $intent->prefersLinkedInOnlyDiscovery($intentSource) && ! $wantsOutreach) {
+            $platform = 'linkedin';
+        } elseif ($platform === 'auto' && $intent->wantsInstagramDiscovery($intentSource) === false
+            && ! $wantsOutreach
+            && ! preg_match('/\b(instagram|ig)\b/i', $query)
+        ) {
+            // Find/save without IG mention → LinkedIn first (avoid celebrity Mindcase noise).
+            $platform = 'linkedin';
+        }
+
+        $result = $discover->discover(
                 user: $this->context->user,
                 query: $query,
                 competitors: $request['competitors'] ?? null,
@@ -82,10 +105,15 @@ class DiscoverProspectsTool extends GatedTool
                 company: isset($request['company']) ? (string) $request['company'] : null,
                 openLink: array_key_exists('open_link', $request->all()) ? (bool) $request['open_link'] : null,
                 profileUrl: isset($request['profile_url']) ? (string) $request['profile_url'] : null,
-                platform: (string) ($request['platform'] ?? 'auto'),
+                platform: $platform,
         );
 
         if (($result['mode'] ?? '') !== 'parallel' || empty($result['lists'])) {
+            if (! $wantsOutreach && empty($result['discovery_only'])) {
+                $result['discovery_only'] = true;
+                $result['instruction'] = 'User asked to find/save prospects only — no outreach. Reply with what was saved in Leads. Do NOT draft or launch campaigns.';
+            }
+
             return $result;
         }
 
@@ -106,13 +134,13 @@ class DiscoverProspectsTool extends GatedTool
             $staged = app(MultiChannelCampaignStagingService::class)->stage(
                 $this->context->user,
                 $this->context->organizationId,
-                $query,
+                $intentSource !== '' ? $intentSource : $query,
                 $result['lists'],
                 $this->context->conversation,
             );
 
             if ($staged !== []) {
-                $ledger->recordOutreach($query, $allocation, $channelResults, $staged);
+                $ledger->recordOutreach($intentSource !== '' ? $intentSource : $query, $allocation, $channelResults, $staged);
                 $result['staged_campaigns'] = $staged;
                 $result['execution_report'] = $ledger->report();
                 $result['instruction'] = $setupOnly
@@ -123,11 +151,27 @@ class DiscoverProspectsTool extends GatedTool
             return $result;
         }
 
-        $ledger->recordDiscovery($query, $allocation, $channelResults);
+        $ledger->recordDiscovery($intentSource !== '' ? $intentSource : $query, $allocation, $channelResults);
         $result['discovery_only'] = true;
         $result['execution_report'] = $ledger->report();
         $result['instruction'] = 'User asked to find/save prospects only — no outreach. Reply with the discovery report. Do NOT draft campaigns unless they ask to message/outreach.';
 
         return $result;
+    }
+
+    private function latestUserMessage(): string
+    {
+        $conversation = $this->context->conversation;
+        if (! $conversation?->id) {
+            return '';
+        }
+
+        $message = \App\Models\AiMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', 'user')
+            ->orderByDesc('id')
+            ->value('content');
+
+        return trim((string) $message);
     }
 }
