@@ -272,6 +272,7 @@ class ProspectAudienceResolverService
     {
         $channels = Str::lower((string) ($plan['preferred_channels'] ?? $plan['channels'] ?? ''));
         $handle = $this->extractInstagramHandle($plan);
+        $telegram = $this->extractTelegramHandle($plan);
         $email = $this->extractEmail($plan);
         $phone = $this->extractPhone($plan);
 
@@ -294,6 +295,12 @@ class ProspectAudienceResolverService
             return [
                 'Save the phone or @handle with save_contacts first.',
                 'Then draft_campaign_plan with the matching channel and one_shot=true.',
+            ];
+        }
+        if ($telegram !== '' && str_contains($channels, 'telegram')) {
+            return [
+                'Save the Telegram @handle with save_contacts first.',
+                'Then draft_campaign_plan with channels=Telegram + one_shot=true.',
             ];
         }
 
@@ -505,6 +512,26 @@ class ProspectAudienceResolverService
             );
         }
 
+        $telegramHandle = $this->extractTelegramHandle($plan);
+        if ($telegramHandle !== '' && $this->planTargetsChannel($plan, 'telegram')) {
+            $existing = $this->findImportListByTelegramHandle($user, $telegramHandle);
+            if ($existing !== null) {
+                $existing['note'] = '1 Telegram contact from saved list';
+
+                return $existing;
+            }
+
+            return $this->createImportListFromContacts(
+                $user,
+                'Telegram: @'.$telegramHandle,
+                [[
+                    'full_name' => $this->contactDisplayName($plan, '@'.$telegramHandle),
+                    'telegram' => $telegramHandle,
+                ]],
+                '1 Telegram handle saved for outreach',
+            );
+        }
+
         $phone = $this->extractPhone($plan);
         if ($phone !== '' && ($this->planTargetsChannel($plan, 'whatsapp') || $this->planTargetsChannel($plan, 'telegram'))) {
             $existing = $this->findImportListByPhone($user, $phone);
@@ -574,7 +601,8 @@ class ProspectAudienceResolverService
 
         return $this->extractInstagramHandle($plan) !== ''
             || $this->extractEmail($plan) !== ''
-            || $this->extractPhone($plan) !== '';
+            || $this->extractPhone($plan) !== ''
+            || $this->extractTelegramHandle($plan) !== '';
     }
 
     /**
@@ -590,6 +618,7 @@ class ProspectAudienceResolverService
             (string) ($plan['icp_summary'] ?? ''),
             (string) ($plan['instagram_url'] ?? ''),
             (string) ($plan['instagram_handle'] ?? ''),
+            (string) ($plan['telegram_handle'] ?? ''),
         ]));
     }
 
@@ -679,6 +708,28 @@ class ProspectAudienceResolverService
         return '';
     }
 
+    /**
+     * @param  array<string, mixed>  $plan
+     */
+    private function extractTelegramHandle(array $plan): string
+    {
+        $handle = trim((string) ($plan['telegram_handle'] ?? ''));
+        if ($handle !== '') {
+            return Str::lower(ltrim($handle, '@'));
+        }
+
+        $blob = $this->planTextBlob($plan);
+        if (preg_match('~(?:t\.me|telegram\.me)/([a-z0-9_]{5,32})~i', $blob, $m)) {
+            return Str::lower($m[1]);
+        }
+        if ($this->planTargetsChannel($plan, 'telegram')
+            && preg_match('/(?:^|\s)@([a-z0-9_]{5,32})(?:\s|$)/i', $blob, $m)) {
+            return Str::lower($m[1]);
+        }
+
+        return '';
+    }
+
     private function normalizeInstagramHandle(string $value): string
     {
         $value = trim($value);
@@ -749,6 +800,22 @@ class ProspectAudienceResolverService
             ->whereHas('importList', fn ($q) => $q->where('user_id', $user->id))
             ->whereNotNull('phone')
             ->whereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE ?", ['%'.$digits.'%'])
+            ->latest('id')
+            ->first();
+
+        return $lead ? $this->importListRefFromLead($lead) : null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function findImportListByTelegramHandle(User $user, string $handle): ?array
+    {
+        $handle = Str::lower(ltrim(trim($handle), '@'));
+        $lead = V2OutreachImportLead::query()
+            ->whereHas('importList', fn ($q) => $q->where('user_id', $user->id))
+            ->whereNotNull('telegram_handle')
+            ->whereRaw('LOWER(REPLACE(telegram_handle, "@", "")) = ?', [$handle])
             ->latest('id')
             ->first();
 

@@ -37,6 +37,32 @@ class UserTurnIntentService
             }
         }
 
+        if (preg_match('/\b(get|find|discover|fetch)\b.{0,80}\b(launch|start|run|activate)\b.{0,20}\b(now|immediately|right away)\b/i', $lower)) {
+            return true;
+        }
+
+        if (str_contains($lower, 'launch now')
+            && preg_match('/\b(client|customer|prospect|lead|people|profile)s?\b/i', $lower)) {
+            return true;
+        }
+
+        if (preg_match('/\b(find|discover|get|fetch)\b/i', $lower)
+            && preg_match('/\b(activate|run|start|launch)\b/i', $lower)
+            && preg_match('/\b(winner|winners|lead|leads|clients?|customers?)\b/i', $lower)) {
+            return true;
+        }
+
+        if (preg_match('/\b(launch|start|run|activate)\b.{0,20}\b(now|immediately|right away)\b/i', $lower)
+            && preg_match('/\b(client|customer|prospect|lead|people|profile)s?\b/i', $lower)) {
+            return true;
+        }
+
+        if ($this->isProspectDiscoveryRequest($lower)
+            && preg_match('/\b(launch|start|run|activate|send|message)\b/i', $lower)
+            && preg_match('/\b(now|immediately|right away)\b/i', $lower)) {
+            return true;
+        }
+
         return false;
     }
 
@@ -48,6 +74,24 @@ class UserTurnIntentService
         $lower = Str::lower(trim($message));
 
         if ((bool) preg_match('/\b(\d{1,3})\s*(client|customer|prospect|lead)s?\b/i', $lower)) {
+            return true;
+        }
+
+        if (preg_match('/\b(save|store|collect)\b.{0,25}\b(prospects?|leads?|customers?|clients?|people|profiles?)\b/i', $lower)) {
+            return true;
+        }
+
+        // Supports terse "get 30" discovery prompts when list/fresh context is explicit.
+        if (preg_match('/\b(get|find|fetch|discover|search)\b.{0,20}\b\d{1,3}\b/i', $lower)
+            && preg_match('/\b(list|lead|prospect|client|customer|reuse|fresh|new|more)\b/i', $lower)) {
+            return true;
+        }
+
+        if (preg_match('/\b(search|find|discover|get|fetch)\b.{0,40}\b(linkedin|instagram|whatsapp|telegram|email)\b.{0,20}\b\d{1,3}\b/i', $lower)) {
+            return true;
+        }
+
+        if (preg_match('/\b(find|search|discover|get|fetch)\b.{0,60}\b(founders?|cofounders?|ceos?|ctos?|cmos?|owners?|directors?|vps?|heads?)\b/i', $lower)) {
             return true;
         }
 
@@ -66,8 +110,8 @@ class UserTurnIntentService
 
         $patterns = [
             '/\b(outreach|reach out|cold outreach)\b/',
-            '/\b(start|launch|run|create|build|draft|activate)\b.{0,40}\b(campaign|outreach|sequence)\b/',
-            '/\b(campaign|outreach|sequence)\b.{0,20}\b(for|to|on)\b/',
+            '/\b(start|launch|run|create|build|draft|activate)\b.{0,40}\b(campaigns?|outreach|sequences?)\b/',
+            '/\b(campaigns?|outreach|sequences?)\b.{0,20}\b(for|to|on)\b/',
             '/\b(market to|message them|dm them|email them|contact them|send (messages|dms|emails))\b/',
             '/\b(start (messaging|outreach)|begin outreach|launch outreach)\b/',
             '/\breview\s*&\s*launch\b/',
@@ -142,12 +186,17 @@ class UserTurnIntentService
             '/\b(don\'?t|do not|dont)\s+(send|launch|start|activate|run|message|dm|email)\b/',
             '/\b(not|never)\s+(send|launch|start|activate|run)\b/',
             '/\b(no\s+send|without\s+sending|do\s+not\s+send)\b/',
+            '/\bno\s+(launch|send|start|activate|run)\b/',
             '/\b(setup|set\s+up|stage|prepare|draft|create)\b.{0,40}\b(but|and)\s+(don\'?t|do not|dont|not)\s+(send|launch|start|activate|run)\b/',
             '/\b(create|build|draft|stage|prepare)\b.{0,30}\b(campaign|outreach|sequence)\b.{0,40}\b(but|and)\s+(don\'?t|do not|dont|not)\s+(send|launch|start|activate|run)\b/',
-            '/\bjust\s+(setup|set\s+up|stage|prepare|draft|create)\b/',
+            '/\bjust\s+(setup|set\s+up|set\s+it\s+up|stage|prepare|draft|create)\b/',
             '/\b(setup|set\s+up|stage|prepare)\s+only\b/',
             '/\bready\s+for\s+review\b/',
+            '/\b(for\s+review\s+only|review\s+only)\b/',
+            '/\breview\s+panel\s+only\b/',
             '/\breview\s*&\s*launch\s+later\b/',
+            '/\b(not\s+now|launch\s+later|send\s+later|hold|wait\s+for\s+my\s+go)\b/',
+            '/\b(plan|draft|stage|prepare)\b.{0,20}\b(campaign|outreach|sequence)\b.{0,20}\b(first)\b/',
         ];
 
         foreach ($patterns as $pattern) {

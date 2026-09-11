@@ -10,6 +10,7 @@ use App\Models\AiMessage;
 use App\Models\User;
 use App\V2\Ai\AgentContext;
 use App\V2\Ai\Enums\AiAutonomyLevel;
+use Illuminate\Support\Str;
 use Throwable;
 
 class AgentOrchestrator
@@ -19,6 +20,7 @@ class AgentOrchestrator
         private readonly CommandCenterService $commandCenter,
         private readonly AutonomyContextService $autonomyContext,
         private readonly WebChatProcessingService $webChatProcessing,
+        private readonly PromptObservabilityService $promptObservability,
     ) {}
 
     /**
@@ -395,6 +397,28 @@ class AgentOrchestrator
 
         $control = $this->commandCenter->handleControlCommand($user, $organizationId, $message);
         $promptMessage = $message;
+        $intent = app(UserTurnIntentService::class);
+        $preStatus = $this->promptObservability->classifyPreAgentPrompt($message, $control, [
+            'is_informational' => $intent->isInformational($message),
+            'is_discovery' => $intent->isProspectDiscoveryRequest($message),
+            'is_outreach' => $intent->isOutreachCommand($message),
+            'is_setup_only' => $intent->wantsCampaignSetupOnly($message),
+            'has_pending_approvals' => $this->commandCenter->pendingApprovals($user, $organizationId)->isNotEmpty(),
+        ]);
+        $this->promptObservability->logPromptEvent(
+            $user,
+            $organizationId,
+            $conversation,
+            $preStatus,
+            [
+                'message' => Str::limit($message, 500, ''),
+                'channel' => $channel,
+                'control' => $control ? ($control['decision'] ?? ($control['handled'] ?? false ? 'handled' : 'rewrite')) : null,
+            ],
+            [
+                'rewrite' => $control['rewrite'] ?? null,
+            ],
+        );
 
         if ($control && ($control['handled'] ?? false)) {
             AiMessage::query()->create([
@@ -526,6 +550,25 @@ class AgentOrchestrator
 
         if ($reply === '') {
             $reply = 'Done.';
+        }
+
+        $fallback = $this->promptObservability->enforceClarifierFallback($promptMessage, $reply);
+        if ($fallback['used_fallback']) {
+            $this->promptObservability->logPromptEvent(
+                $user,
+                $organizationId,
+                $conversation,
+                'fallback_clarifier',
+                [
+                    'message' => Str::limit($promptMessage, 500, ''),
+                    'reason' => $fallback['reason'],
+                    'raw_reply' => Str::limit($reply, 300, ''),
+                ],
+                [
+                    'reply' => Str::limit($fallback['reply'], 500, ''),
+                ],
+            );
+            $reply = $fallback['reply'];
         }
 
         if ($latestApproval && $channel === 'whatsapp' && $latestApproval->status === 'pending') {

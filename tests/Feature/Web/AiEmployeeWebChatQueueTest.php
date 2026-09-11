@@ -232,7 +232,7 @@ class AiEmployeeWebChatQueueTest extends TestCase
             organizationId: $org->id,
             conversationId: (int) $conversation->id,
             userMessageId: (int) $userMessage->id,
-            exception: new \RuntimeException('timeout'),
+            exception: null,
         );
 
         $conversation->refresh();

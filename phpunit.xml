@@ -11,6 +11,20 @@
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
+        <testsuite name="CommandCenterNightly">
+            <file>tests/Unit/V2/Ai/UserTurnIntentServiceTest.php</file>
+            <file>tests/Unit/V2/Ai/PromptObservabilityServiceTest.php</file>
+            <file>tests/Unit/V2/Ai/ProspectAudienceResolverServiceTest.php</file>
+            <file>tests/Unit/V2/Ai/AgentOrchestratorAutoLaunchGuardTest.php</file>
+            <file>tests/Unit/V2/Ai/CommandCenterControlCommandTest.php</file>
+            <file>tests/Unit/V2/Ai/CommandCenterHistoryWindowTest.php</file>
+            <file>tests/Unit/V2/Ai/WebChatTurnProgressServiceTest.php</file>
+            <file>tests/Unit/V2/Ai/WebChatProgressReplyTest.php</file>
+            <file>tests/Unit/V2/Ai/ContentPostCommandCenterServiceTest.php</file>
+            <file>tests/Unit/V2/Ai/LeadNurtureCommandCenterServiceTest.php</file>
+            <file>tests/Feature/Web/AiEmployeeWebChatQueueTest.php</file>
+            <file>tests/Feature/Console/PromptRegressionWeeklyCommandTest.php</file>
+        </testsuite>
     </testsuites>
     <source>
         <include>

@@ -55,7 +55,7 @@ class CommandCenterControlCommandTest extends TestCase
         $this->assertStringContainsString('Audience:', (string) ($result['reply'] ?? ''));
     }
 
-    public function test_second_launch_explains_plan_already_used(): void
+    public function test_second_launch_for_icp_returns_stable_confirmation(): void
     {
         [$user, $org, $approval] = $this->pendingIcpApproval('Dev shops using AI tools');
 
@@ -66,7 +66,7 @@ class CommandCenterControlCommandTest extends TestCase
         $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'LAUNCH '.$approval->id);
 
         $this->assertTrue($result['handled'] ?? false);
-        $this->assertStringContainsString('already launched', (string) ($result['reply'] ?? ''));
+        $this->assertStringContainsString('ICP saved', (string) ($result['reply'] ?? ''));
         $this->assertStringNotContainsString("couldn't find", (string) ($result['reply'] ?? ''));
     }
 
@@ -122,6 +122,57 @@ class CommandCenterControlCommandTest extends TestCase
         $this->assertStringContainsString('LinkedIn', (string) ($result['reply'] ?? ''));
         $this->assertStringContainsString('Integrations', (string) ($result['reply'] ?? ''));
         $this->assertSame('pending', $approval->fresh()->status);
+    }
+
+    public function test_fuzzy_go_ahead_without_audience_does_not_execute_setup_only_plan(): void
+    {
+        [$user, $org, $approval] = $this->pendingStrategyApproval('US software founders');
+        $approval->update([
+            'payload' => array_merge($approval->payload ?? [], [
+                'setup_only' => true,
+                'status' => 'awaiting_review',
+            ]),
+        ]);
+
+        $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'go ahead');
+
+        $this->assertTrue(array_key_exists('handled', $result));
+        $this->assertSame('pending', $approval->fresh()->status);
+    }
+
+    public function test_do_it_without_pending_plan_returns_no_plans_waiting(): void
+    {
+        $user = User::factory()->create();
+        $org = V2Organization::query()->create([
+            'name' => 'No Pending Org',
+            'slug' => 'no-pending-org-'.uniqid(),
+            'owner_id' => $user->id,
+        ]);
+        V2OrganizationUser::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'role' => 'owner',
+        ]);
+
+        $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'do it');
+
+        $this->assertTrue($result['handled'] ?? false);
+        $this->assertStringContainsString('No plans waiting for review', (string) ($result['reply'] ?? ''));
+    }
+
+    public function test_relaunch_approved_outreach_without_campaign_id_returns_recovery_message(): void
+    {
+        [$user, $org, $approval] = $this->pendingStrategyApproval('US SaaS founders');
+        $approval->update([
+            'status' => 'approved',
+            'result' => [],
+        ]);
+
+        $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'LAUNCH '.$approval->id);
+
+        $this->assertTrue($result['handled'] ?? false);
+        $this->assertSame('blocked_launch', $result['decision'] ?? null);
+        $this->assertStringContainsString("won't create a campaign", (string) ($result['reply'] ?? ''));
     }
 
     /**

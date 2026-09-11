@@ -730,7 +730,7 @@ class CommandCenterService
             return ['handled' => false, 'rewrite' => 'How are my campaigns performing? Summarize with get_campaign_stats.'];
         }
 
-        if (in_array($lower, ['attention', 'who needs me?', 'who needs my attention?', 'inbox'], true)) {
+        if (in_array($lower, ['attention', 'who needs me', 'who needs me?', 'who needs my attention', 'who needs my attention?', 'inbox'], true)) {
             return ['handled' => false, 'rewrite' => 'Who needs my attention right now? Use get_attention_queue.'];
         }
 
@@ -795,6 +795,11 @@ class CommandCenterService
 
                 return $this->handleControlCommand($user, $organizationId, 'LAUNCH '.$newest->id);
             }
+
+            return [
+                'handled' => true,
+                'reply' => 'No plans waiting for review. Describe a goal and I\'ll stage one.',
+            ];
         }
 
         return null;

@@ -66,6 +66,16 @@ class UserTurnIntentServiceTest extends TestCase
         $this->assertTrue($intent->wantsCampaignSetupOnly('create the outreach sequence but do not send yet'));
     }
 
+    public function test_company_mention_without_outreach_verb_stays_non_outreach(): void
+    {
+        $intent = app(UserTurnIntentService::class);
+
+        $this->assertFalse($intent->isOutreachCommand('Acme Digital in Lagos'));
+        $this->assertFalse($intent->isProspectDiscoveryRequest('Acme Digital in Lagos'));
+        $this->assertTrue($intent->isProspectDiscoveryRequest('find people at Acme Digital in Lagos'));
+        $this->assertTrue($intent->isDiscoveryOnly('find people at Acme Digital in Lagos'));
+    }
+
     public function test_what_do_we_have_today_returns_sync_brief_without_agent(): void
     {
         $user = User::factory()->create();

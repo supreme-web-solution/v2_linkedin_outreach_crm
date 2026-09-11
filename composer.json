@@ -91,6 +91,15 @@
             "@types:check",
             "@php artisan test"
         ],
+        "test:command-center-nightly": [
+            "@php vendor/bin/phpunit --testsuite CommandCenterNightly"
+        ],
+        "ai:prompt-regression-weekly": [
+            "@php artisan ai:prompt-regression-weekly --days=7 --limit=50"
+        ],
+        "test:prompt-expansion-weekly": [
+            "@php vendor/bin/phpunit tests/Unit/V2/Ai/PromptObservabilityServiceTest.php tests/Feature/Console/PromptRegressionWeeklyCommandTest.php tests/Feature/V2/Ai/PromptIntentCoverageMatrixTest.php"
+        ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php scripts/patch-horizon-l13.php",

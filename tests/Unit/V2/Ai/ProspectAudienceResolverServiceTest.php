@@ -89,4 +89,91 @@ class ProspectAudienceResolverServiceTest extends TestCase
         $this->assertSame(1, $resolved['total_leads']);
         $this->assertSame('csv', $resolved['list_src']);
     }
+
+    public function test_enrich_attaches_existing_email_contact_for_one_shot_email(): void
+    {
+        $user = User::factory()->create();
+        $list = V2OutreachImportList::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Email contacts',
+            'list_hash' => 'email-test-'.uniqid(),
+            'lead_count' => 1,
+        ]);
+        V2OutreachImportLead::query()->create([
+            'import_list_id' => $list->id,
+            'full_name' => 'John',
+            'email' => 'john@acme.com',
+        ]);
+
+        $plan = app(ProspectAudienceResolverService::class)->enrichPlanWithAudience($user, [
+            'goal' => 'Send one email to john@acme.com',
+            'audience' => 'john@acme.com',
+            'preferred_channels' => 'Email',
+            'channels' => 'Email',
+            'one_shot' => true,
+            'message' => 'Hello John',
+        ]);
+
+        $this->assertSame($list->list_hash, $plan['list_hash'] ?? null);
+        $this->assertSame('csv', $plan['list_src'] ?? null);
+        $this->assertSame('attached', $plan['audience_status'] ?? null);
+    }
+
+    public function test_enrich_attaches_existing_phone_contact_for_whatsapp_one_shot(): void
+    {
+        $user = User::factory()->create();
+        $list = V2OutreachImportList::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Phone contacts',
+            'list_hash' => 'phone-test-'.uniqid(),
+            'lead_count' => 1,
+        ]);
+        V2OutreachImportLead::query()->create([
+            'import_list_id' => $list->id,
+            'full_name' => 'Kola',
+            'phone' => '+2348011112222',
+        ]);
+
+        $plan = app(ProspectAudienceResolverService::class)->enrichPlanWithAudience($user, [
+            'goal' => 'Send one WhatsApp message to +2348011112222',
+            'audience' => '+2348011112222',
+            'preferred_channels' => 'WhatsApp',
+            'channels' => 'WhatsApp',
+            'one_shot' => true,
+            'message' => 'Hi there',
+        ]);
+
+        $this->assertSame($list->list_hash, $plan['list_hash'] ?? null);
+        $this->assertSame('csv', $plan['list_src'] ?? null);
+        $this->assertSame('attached', $plan['audience_status'] ?? null);
+    }
+
+    public function test_enrich_attaches_existing_telegram_handle_for_one_shot(): void
+    {
+        $user = User::factory()->create();
+        $list = V2OutreachImportList::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Telegram contacts',
+            'list_hash' => 'tg-test-'.uniqid(),
+            'lead_count' => 1,
+        ]);
+        V2OutreachImportLead::query()->create([
+            'import_list_id' => $list->id,
+            'full_name' => 'Lina',
+            'telegram_handle' => 'linatech',
+        ]);
+
+        $plan = app(ProspectAudienceResolverService::class)->enrichPlanWithAudience($user, [
+            'goal' => 'Send one Telegram message to @linatech',
+            'audience' => '@linatech',
+            'preferred_channels' => 'Telegram',
+            'channels' => 'Telegram',
+            'one_shot' => true,
+            'message' => 'Hi Lina',
+        ]);
+
+        $this->assertSame($list->list_hash, $plan['list_hash'] ?? null);
+        $this->assertSame('csv', $plan['list_src'] ?? null);
+        $this->assertSame('attached', $plan['audience_status'] ?? null);
+    }
 }

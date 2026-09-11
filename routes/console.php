@@ -1,5 +1,6 @@
 <?php
 
+use App\V2\Services\CallOrchestrationService;
 use App\Jobs\V2\ProcessNurtureDueLeadsJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -47,6 +48,11 @@ Schedule::command('queue:monitor-depth')
     ->runInBackground();
 
 Schedule::command('horizon:snapshot')->everyFiveMinutes();
+
+Schedule::command('ai:prompt-regression-weekly --days=7 --limit=50')
+    ->weeklyOn(1, '07:30')
+    ->withoutOverlapping()
+    ->runInBackground();
 
 Artisan::command('nurture:flag-due', function () {
     ProcessNurtureDueLeadsJob::dispatchSync();
