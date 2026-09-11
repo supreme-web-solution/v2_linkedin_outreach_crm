@@ -401,7 +401,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
             if (OutreachSendProof::nodeIsOutboundSend($node)) {
                 $channel = OutreachChannelRegistry::normalizeChannelKey((string) ($node['channel'] ?? 'linkedin'));
                 $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
-                $channelState[$channel] = array_merge(
+                $channelSlice = array_merge(
                     is_array($channelState[$channel] ?? null) ? $channelState[$channel] : [],
                     array_filter([
                         'chat_id' => (string) ($result['payload']['chat_id'] ?? ''),
@@ -411,6 +411,13 @@ class ProcessOutreachLeadJob implements ShouldQueue
                         'confirmed_sent' => true,
                     ], fn ($v) => $v !== null && $v !== '' && $v !== 0),
                 );
+
+                if (($node['action'] ?? '') === 'send_invite') {
+                    $channelSlice['invite_sent'] = true;
+                    $channelSlice['invite_sent_at'] = now()->toIso8601String();
+                }
+
+                $channelState[$channel] = $channelSlice;
                 $progress->forceFill(['channel_state' => $channelState])->save();
             }
 

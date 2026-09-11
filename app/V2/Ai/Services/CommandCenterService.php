@@ -117,7 +117,7 @@ class CommandCenterService
         ]);
 
         $settings = app(AiEmployeeSettingsService::class)->for($user, $organizationId);
-        $name = $settings->employee_name ?: 'Alex';
+        $name = $settings->employee_name ?: 'Soci';
         $welcomeContent = "Hi — I'm {$name}, your SociFusion Command Center.\n"
             ."Fresh thread started. Pending Launch items are still in Review & Launch.\n"
             .'Tell me what you want to accomplish (same WhatsApp link still works).';
@@ -215,6 +215,7 @@ class CommandCenterService
             'role' => $m->role,
             'content' => $m->content,
             'channel' => is_array($m->meta) ? ($m->meta['channel'] ?? null) : null,
+            'progress' => is_array($m->meta) ? (bool) ($m->meta['progress'] ?? false) : false,
             'created_at' => $m->created_at?->toIso8601String(),
         ])->values()->all();
     }
@@ -293,7 +294,7 @@ class CommandCenterService
         }
         if (array_key_exists('pause_on_reply', $plan) || in_array(($plan['type'] ?? ''), ['campaign', 'strategy'], true)) {
             $pause = array_key_exists('pause_on_reply', $plan) ? (bool) $plan['pause_on_reply'] : true;
-            $lines[] = '• Pause on reply: '.($pause ? 'Yes — Alex/you reply in inbox' : 'No');
+            $lines[] = '• Pause on reply: '.($pause ? 'Yes — Soci/you reply in inbox' : 'No');
         }
         if (! empty($plan['list_name'] ?? null)) {
             $lines[] = '• Audience list: '.$plan['list_name'];
@@ -519,6 +520,14 @@ class CommandCenterService
     public function handleControlCommand(User $user, int $organizationId, string $text): ?array
     {
         $trimmed = trim($text);
+
+        if (app(UserTurnIntentService::class)->isInformational($trimmed)) {
+            return [
+                'handled' => true,
+                'reply' => app(SalesBriefService::class)->todaySummary($user, $organizationId),
+                'decision' => 'status_brief',
+            ];
+        }
 
         // Confirm Delete → all pending destructive plans (or one bulk_delete plan).
         if (preg_match('/^\s*confirm\s+delete(\s+all)?\s*$/i', $trimmed)) {
@@ -749,7 +758,7 @@ class CommandCenterService
             return ['handled' => false, 'rewrite' => 'Give me a meeting brief for my next booked call using get_meeting_brief.'];
         }
 
-        if (in_array($lower, ['execute', 'let ai execute', 'run recommendations', 'let alex execute'], true)) {
+        if (in_array($lower, ['execute', 'let ai execute', 'run recommendations', 'let Soci execute'], true)) {
             return ['handled' => false, 'rewrite' => 'Build and stage a multi-step sales manager plan using let_ai_execute (pause struggling campaigns + follow up hot inbox threads).'];
         }
 
@@ -779,7 +788,7 @@ class CommandCenterService
                     return [
                         'handled' => false,
                         'rewrite' => "The user approved plan #{$newest->id} ({$goal}) but no prospect list is attached yet. "
-                            .'Run discover_prospects for this goal (Alex auto-searches LinkedIn when connected), '
+                            .'Run discover_prospects for this goal (Soci auto-searches LinkedIn when connected), '
                             ."attach list_hash + list_src to the plan, then tell them to send LAUNCH {$newest->id}.",
                     ];
                 }
@@ -1498,7 +1507,7 @@ class CommandCenterService
             array_map(fn (string $step) => '• '.$step, $steps),
             [
                 '',
-                'Say "fetch prospects" or "discover 40" again — Alex retries with broader LinkedIn search variants and saves the list.',
+                'Say "fetch prospects" or "discover 40" again — Soci retries with broader LinkedIn search variants and saves the list.',
             ],
         ));
     }

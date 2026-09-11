@@ -11,6 +11,8 @@ import {
     Phone,
     Rocket,
     Sparkles,
+    Target,
+    TrendingUp,
     Upload,
     Users2,
 } from '@lucide/vue';
@@ -39,6 +41,36 @@ const props = defineProps<{
         messages_sent: number;
         unread_conversations: number;
     };
+    acquisitionFunnel: {
+        headline: string;
+        period: string;
+        stages: Array<{
+            key: string;
+            label: string;
+            count: number;
+            rate_from_previous: number | null;
+            href: string | null;
+        }>;
+        summary: {
+            targeted: number;
+            contacted: number;
+            responses: number;
+            conversations: number;
+            qualified: number;
+            demos: number;
+            customers: number;
+            response_rate: number;
+            qualified_per_100_targeted: number;
+        };
+    };
+    acquisitionExperiment: {
+        active: boolean;
+        niche: string;
+        target_prospects: number;
+        progress_pct: number;
+        message_angle?: string | null;
+        started_at?: string;
+    } | null;
     recentActivity: Array<{ module: string; identifier: string; stat: number; created_at: string }>;
     organization: { id: number; name: string } | null;
     hasOrg: boolean;
@@ -85,6 +117,46 @@ const campaignCardHref = computed(() => {
     return outreach >= linkedin ? '/outreach' : '/campaigns';
 });
 
+const funnelHasActivity = computed(() =>
+    props.acquisitionFunnel.stages.some((s) => s.count > 0),
+);
+
+const funnelHighlight = computed(() => {
+    const s = props.acquisitionFunnel.summary;
+    if (s.customers > 0) return `${s.customers} customer${s.customers === 1 ? '' : 's'} won`;
+    if (s.demos > 0) return `${s.demos} demo${s.demos === 1 ? '' : 's'} booked`;
+    if (s.responses > 0) return `${s.response_rate}% response rate`;
+    if (s.contacted > 0) return `${s.contacted} contacted`;
+    return 'Launch outreach to fill your funnel';
+});
+
+const funnelShortLabels: Record<string, string> = {
+    targeted: 'Targeted',
+    contacted: 'Contacted',
+    responses: 'Replies',
+    conversations: 'Convo',
+    qualified: 'Qualified',
+    demos: 'Demos',
+    customers: 'Won',
+};
+
+function funnelShortLabel(key: string, fallback: string): string {
+    return funnelShortLabels[key] ?? fallback.split(' ')[0] ?? fallback;
+}
+
+function funnelStageTone(count: number, index: number): string {
+    if (count <= 0) {
+        return 'border-border/50 bg-muted/30 text-muted-foreground';
+    }
+    if (index === 0) {
+        return 'border-emerald-500/30 bg-emerald-50 text-emerald-950 dark:bg-emerald-950/40 dark:text-emerald-100';
+    }
+    if (index <= 2) {
+        return 'border-teal-500/30 bg-teal-50 text-teal-950 dark:bg-teal-950/40 dark:text-teal-100';
+    }
+    return 'border-violet-500/30 bg-violet-50 text-violet-950 dark:bg-violet-950/40 dark:text-violet-100';
+}
+
 const statCards = [
     {
         href: '/leads',
@@ -125,7 +197,7 @@ const statCards = [
 ];
 
 const quickActions = [
-    { href: '/ai-employee', label: 'Ask Alex', icon: Bot },
+    { href: '/ai-employee', label: 'Ask Soci', icon: Bot },
     { href: '/leads', label: 'View Leads', icon: Users2 },
     { href: '/outreach/create', label: 'New outreach', icon: Upload },
     { href: '/campaigns', label: 'Campaigns', icon: Megaphone },
@@ -175,7 +247,7 @@ async function letAiExecute(): Promise<void> {
             || (data.empty ? 'Nothing urgent to execute right now — open Command Center for a manual review.' : null)
             || (!res.ok ? 'Could not stage a plan. Try again from Command Center.' : 'No plan was staged.');
     } catch {
-        executeError.value = 'Could not reach Alex. Check your connection and try again.';
+        executeError.value = 'Could not reach Soci. Check your connection and try again.';
     } finally {
         executeBusy.value = false;
     }
@@ -223,6 +295,91 @@ async function letAiExecute(): Promise<void> {
                             <span class="font-medium text-white">{{ organization.name }}</span>
                         </p>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Acquisition funnel (compact pipeline) -->
+        <div class="rounded-2xl border border-border/60 bg-card p-3 shadow-sm sm:p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex min-w-0 items-center gap-2.5">
+                    <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-teal-600 text-white shadow-sm">
+                        <TrendingUp class="size-3.5" />
+                    </div>
+                    <div class="min-w-0">
+                        <h2 class="text-sm font-semibold text-foreground">
+                            {{ acquisitionFunnel.headline }}
+                        </h2>
+                        <p class="truncate text-xs text-muted-foreground">
+                            {{ funnelHighlight }}
+                            <span v-if="acquisitionFunnel.summary.qualified_per_100_targeted > 0">
+                                · {{ acquisitionFunnel.summary.qualified_per_100_targeted }}/100 qualified
+                            </span>
+                        </p>
+                    </div>
+                </div>
+                <Link
+                    href="/ai-employee"
+                    class="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-50 px-3 text-[11px] font-semibold text-emerald-800 transition hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-200"
+                >
+                    <Target class="size-3" />
+                    Grow pipeline
+                </Link>
+            </div>
+
+            <div
+                v-if="acquisitionExperiment?.active"
+                class="mt-3 rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+            >
+                <span class="font-semibold">Experiment:</span>
+                {{ acquisitionExperiment.niche }}
+                · {{ acquisitionExperiment.progress_pct }}% of {{ acquisitionExperiment.target_prospects.toLocaleString() }} target
+            </div>
+
+            <div v-if="!funnelHasActivity" class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border/70 bg-muted/20 px-3 py-3">
+                <p class="text-xs text-muted-foreground">
+                    Target → contact → reply → qualify → demo → win. Tell Soci to find customers.
+                </p>
+                <Link href="/ai-employee?starter=Find%20my%20ideal%20customers%20and%20start%20outreach">
+                    <Button size="sm" variant="outline" class="h-8 rounded-full px-3 text-xs">
+                        Start with Soci
+                        <ArrowRight class="ml-1 size-3" />
+                    </Button>
+                </Link>
+            </div>
+
+            <div v-else class="mt-3 overflow-x-auto pb-1">
+                <div class="flex min-w-max items-stretch gap-0.5 sm:min-w-0 sm:gap-1">
+                    <template v-for="(stage, index) in acquisitionFunnel.stages" :key="stage.key">
+                        <div class="flex items-stretch">
+                            <Link
+                                v-if="stage.href"
+                                :href="stage.href"
+                                :title="stage.label"
+                                class="group flex w-[4.25rem] flex-col items-center rounded-lg border px-1.5 py-2 transition hover:-translate-y-0.5 hover:shadow-sm sm:w-auto sm:min-w-[4.5rem] sm:px-2"
+                                :class="funnelStageTone(stage.count, index)"
+                            >
+                                <span class="text-base font-bold tabular-nums leading-none sm:text-lg">
+                                    {{ stage.count.toLocaleString() }}
+                                </span>
+                                <span class="mt-1 text-center text-[9px] font-medium leading-tight sm:text-[10px]">
+                                    {{ funnelShortLabel(stage.key, stage.label) }}
+                                </span>
+                            </Link>
+                            <div
+                                v-if="index < acquisitionFunnel.stages.length - 1"
+                                class="flex w-4 shrink-0 flex-col items-center justify-center sm:w-5"
+                            >
+                                <div class="h-px w-full bg-border/80" />
+                                <span
+                                    v-if="acquisitionFunnel.stages[index + 1]?.rate_from_previous !== null"
+                                    class="mt-0.5 text-[8px] font-medium tabular-nums text-muted-foreground sm:text-[9px]"
+                                >
+                                    {{ acquisitionFunnel.stages[index + 1]?.rate_from_previous }}%
+                                </span>
+                            </div>
+                        </div>
+                    </template>
                 </div>
             </div>
         </div>
@@ -308,7 +465,7 @@ async function letAiExecute(): Promise<void> {
                         <div class="min-w-0 flex-1">
                             <p class="text-sm font-semibold">Let AI Execute</p>
                             <p class="text-muted-foreground text-xs leading-relaxed">
-                                One tap — Alex pauses struggling campaigns and sends follow-ups to hot inbox threads.
+                                One tap — Soci pauses struggling campaigns and sends follow-ups to hot inbox threads.
                             </p>
                             <Button
                                 size="sm"

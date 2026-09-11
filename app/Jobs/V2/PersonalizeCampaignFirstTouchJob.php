@@ -36,15 +36,19 @@ class PersonalizeCampaignFirstTouchJob implements ShouldQueue
         }
 
         $result = $personalizer->personalizeCampaign($campaign, $this->limit);
-        if ($result['personalized'] > 0) {
-            $logger->log(
-                $campaign->id,
-                null,
-                null,
-                null,
-                'info',
-                "Personalized first-touch for {$result['personalized']} lead(s).",
-            );
+        if ($result['personalized'] > 0 && V2OutreachCampaign::query()->whereKey($campaign->id)->exists()) {
+            try {
+                $logger->log(
+                    $campaign->id,
+                    null,
+                    null,
+                    null,
+                    'info',
+                    "Personalized first-touch for {$result['personalized']} lead(s).",
+                );
+            } catch (\Throwable $e) {
+                report($e);
+            }
         }
     }
 }

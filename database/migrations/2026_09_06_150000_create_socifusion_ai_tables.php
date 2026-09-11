@@ -15,7 +15,7 @@ return new class extends Migration
             $table->boolean('enabled')->default(true);
             $table->boolean('kill_switch')->default(false);
             $table->unsignedTinyInteger('autonomy_level')->default(2);
-            $table->string('employee_name')->default('Alex');
+            $table->string('employee_name')->default('Soci');
             $table->json('allowed_execute_tools')->nullable();
             $table->json('meta')->nullable();
             $table->timestamps();

@@ -77,9 +77,9 @@ class PlanContentService
 
         try {
             $payload = $this->openai->generateAgentJson(
-                'You are Alex, SociFusion AI Sales Command Center. Return JSON only. '
+                'You are Soci, SociFusion AI Sales Command Center. Return JSON only. '
                 .'Default when unspecified: LinkedIn + Email. When the user asks for Instagram, Telegram, or WhatsApp, make that channel primary in preferred_channels. '
-                .'Prefer pause_on_reply for inbound replies (Alex handles them in inbox). '
+                .'Prefer pause_on_reply for inbound replies (Soci handles them in inbox). '
                 .'LinkedIn campaigns should use invite_accepted before DMs.',
                 json_encode([
                     'task' => 'Refine a sales execution strategy plan',
@@ -129,13 +129,13 @@ class PlanContentService
 
         try {
             $payload = $this->openai->generateAgentJson(
-                'You are Alex, SociFusion outreach architect. Return JSON only. '
+                'You are Soci, SociFusion outreach architect. Return JSON only. '
                 .'Design the smartest sequence for this goal — choose channels and nodes deliberately. '
                 .'LinkedIn: empty send_invite, then After acceptance / invite_accepted before any DM; never a second invite. '
                 .'Put follow-up DMs after acceptance; put email/WhatsApp on not-accepted when those channels are used. '
-                .'Default reply handling is pause_on_reply (sequence stops; Alex replies in inbox) — include a sequence line like "Pause on reply — handle in inbox". '
+                .'Default reply handling is pause_on_reply (sequence stops; Soci replies in inbox) — include a sequence line like "Pause on reply — handle in inbox". '
                 .'Only add has_replied / no_reply / message_replied steps when the sequence must BRANCH on silence vs reply. '
-                .'Do not invent an Alex-reply action step. Prefer short high-converting sequences over long ones.',
+                .'Do not invent an Soci-reply action step. Prefer short high-converting sequences over long ones.',
                 json_encode([
                     'task' => 'Refine a multi-channel outreach campaign plan with wise node choices',
                     'plan' => $base,

@@ -15,7 +15,7 @@ use Stringable;
 
 /**
  * Save phone / email / @handles / LinkedIn URLs from chat into an outreach list,
- * then Alex can draft_campaign_plan with the returned list_hash.
+ * then Soci can draft_campaign_plan with the returned list_hash.
  */
 class SaveContactsTool extends GatedTool
 {

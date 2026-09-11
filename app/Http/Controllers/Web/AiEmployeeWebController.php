@@ -15,6 +15,8 @@ use App\V2\Ai\Services\WhatsAppCommandLinkPresenter;
 use App\V2\Ai\Services\CommandCenterService;
 use App\V2\Ai\Services\ExecuteSalesPlanCommandCenterService;
 use App\V2\Ai\Services\InboxCommandCenterService;
+use App\V2\Ai\Services\WebChatProcessingService;
+use App\V2\Ai\Services\WebChatTurnRecoveryService;
 use App\V2\Services\EntitlementService;
 use App\V2\Outreach\OutreachChannelGuard;
 use Illuminate\Http\JsonResponse;
@@ -32,6 +34,7 @@ class AiEmployeeWebController extends Controller
         OutreachChannelGuard $channelGuard,
         AiChannelPolicyService $channelPolicy,
         AiActionHistoryService $actionHistory,
+        WebChatTurnRecoveryService $turnRecovery,
     ): Response {
         $user = auth()->user();
         $orgId = (int) ($user->current_organization_id ?? 0);
@@ -41,6 +44,8 @@ class AiEmployeeWebController extends Controller
         $conversation = $commandCenter->conversation($user, $orgId);
         $historyWindow = $commandCenter->historyWindow($conversation);
         $pending = $commandCenter->pendingApprovals($user, $orgId);
+        $conversation = $conversation->fresh() ?? $conversation;
+        $pendingTurn = $turnRecovery->resolvePendingTurn($user, $orgId, $conversation);
 
         $identity = AiChannelIdentity::query()
             ->where('user_id', $user->id)
@@ -66,6 +71,7 @@ class AiEmployeeWebController extends Controller
             'messages' => $commandCenter->serializeMessages($historyWindow['messages']),
             'has_older_messages' => $historyWindow['has_older'],
             'pending_approvals' => $commandCenter->serializeApprovals($pending),
+            'pending_turn' => $pendingTurn,
             'attention_queue' => $inboxCommandCenter->attention($user, $orgId, 8),
             'action_history' => $actionHistory->recent($user, $orgId, 5),
             'integrations' => $this->integrationReadiness($channelGuard, $channelPolicy, $user->id),
@@ -75,6 +81,7 @@ class AiEmployeeWebController extends Controller
     public function widgetBootstrap(
         AiEmployeeSettingsService $settingsService,
         CommandCenterService $commandCenter,
+        WebChatTurnRecoveryService $turnRecovery,
     ): JsonResponse {
         $user = auth()->user();
         $orgId = (int) ($user->current_organization_id ?? 0);
@@ -84,6 +91,9 @@ class AiEmployeeWebController extends Controller
         $conversation = $commandCenter->conversation($user, $orgId);
         $historyWindow = $commandCenter->historyWindow($conversation);
         $pending = $commandCenter->pendingApprovals($user, $orgId);
+        $processing = app(WebChatProcessingService::class);
+        $conversation = $conversation->fresh() ?? $conversation;
+        $pendingTurn = $turnRecovery->resolvePendingTurn($user, $orgId, $conversation);
 
         return response()->json([
             'conversation_id' => $conversation->id,
@@ -91,6 +101,8 @@ class AiEmployeeWebController extends Controller
             'has_older_messages' => $historyWindow['has_older'],
             'pending_approvals' => $commandCenter->serializeApprovals($pending),
             'pending_approvals_count' => count($pending),
+            'pending_turn' => $pendingTurn,
+            'processing' => $processing->snapshot($conversation->fresh() ?? $conversation),
             'settings' => [
                 'enabled' => (bool) $settings->enabled,
                 'kill_switch' => (bool) $settings->kill_switch,
@@ -291,7 +303,7 @@ class AiEmployeeWebController extends Controller
         ]);
     }
 
-    public function messages(Request $request, CommandCenterService $commandCenter): JsonResponse
+    public function messages(Request $request, CommandCenterService $commandCenter, WebChatTurnRecoveryService $turnRecovery): JsonResponse
     {
         $user = auth()->user();
         $orgId = (int) ($user->current_organization_id ?? 0);
@@ -307,6 +319,9 @@ class AiEmployeeWebController extends Controller
         abort_unless((int) $conversation->id === (int) $data['conversation_id'], 404);
 
         if (array_key_exists('after_id', $data) && $data['after_id'] !== null) {
+            $turnRecovery->resolvePendingTurn($user, $orgId, $conversation);
+            $conversation = $conversation->fresh() ?? $conversation;
+
             $rows = $commandCenter->messagesAfter(
                 $conversation,
                 (int) $data['after_id'],
@@ -319,6 +334,7 @@ class AiEmployeeWebController extends Controller
                 'messages' => $commandCenter->serializeMessages($rows),
                 'pending_approvals' => $commandCenter->serializeApprovals($pending),
                 'pending_approvals_count' => $pending->count(),
+                'processing' => app(WebChatProcessingService::class)->snapshot($conversation),
             ]);
         }
 

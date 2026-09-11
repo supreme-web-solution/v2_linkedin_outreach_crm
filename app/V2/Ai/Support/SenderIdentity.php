@@ -9,10 +9,10 @@ use App\Models\V2OutreachCampaign;
 use App\V2\Ai\Services\AiEmployeeSettingsService;
 
 /**
- * Resolve the human sender name Alex should sign emails/DMs with.
+ * Resolve the human sender name Soci should sign emails/DMs with.
  *
  * Priority (highest first):
- * 1. Explicit name the user told Alex for this send/campaign
+ * 1. Explicit name the user told Soci for this send/campaign
  * 2. Saved preferred sender (update_sender_profile)
  * 3. Registration / profile name
  * 4. Connected email account display name

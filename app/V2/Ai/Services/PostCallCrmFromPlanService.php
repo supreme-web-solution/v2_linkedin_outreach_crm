@@ -40,6 +40,7 @@ class PostCallCrmFromPlanService
 
         $meta = is_array($call->meta) ? $call->meta : [];
         $meta['post_call_crm'] = $postCall;
+        $meta['outcome'] = $outcome;
         $call->update(['meta' => $meta]);
 
         if ($call->lead_id) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckCircle2, Loader2, Rocket, Send } from '@lucide/vue';
+import { CheckCircle2, Loader2, Paperclip, Rocket, Send, X } from '@lucide/vue';
 import AlexAvatar from '@/components/crm/AlexAvatar.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
@@ -42,9 +42,17 @@ type OnboardingStatus = {
     outreach_ready?: boolean;
     show_whatsapp_command?: boolean;
     can_open_command_center?: boolean;
+    business_profile_complete?: boolean;
+    conversion_assets_complete?: boolean;
+    business_profile_summary?: string | null;
+    conversion_assets?: { sales_page_url?: string | null; webinar_url?: string | null };
     ready: boolean;
     workspace_configured?: boolean;
     autonomy_level?: number;
+    connections_complete?: boolean;
+    required_progress?: { connected: number; total: number; complete: boolean; remaining?: string[] };
+    composer_mode?: 'goal' | 'connect' | 'business' | 'conversion' | 'chat';
+    assistant_prompt?: string;
 };
 
 const props = defineProps<{
@@ -58,20 +66,62 @@ const draft = ref('');
 const status = ref<OnboardingStatus>({ ...props.onboarding });
 const scrollEl = ref<HTMLElement | null>(null);
 const waLink = ref<WhatsAppCommandLink | null>(null);
+const attachedFile = ref<File | null>(null);
+const fileInputRef = ref<HTMLInputElement | null>(null);
+const salesPageUrl = ref('');
+const webinarUrl = ref('');
+const businessInputUnlocked = ref(false);
+const conversionInputUnlocked = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-const employeeName = computed(() => status.value.employee_name || 'Alex');
-const showConnections = computed(() => status.value.goal && status.value.connections.length > 0);
-const outreachConnections = computed(() =>
-    status.value.connections.filter((c) => c.phase !== 'climax'),
+const BUSINESS_ASK =
+    'Great — connections are set.\n\nTell me about **your business** — who you help, what you sell, and what makes you different.\n\n**One is enough** — paste a short description **or** drop your website link **or** tap **attach** for a PDF. You can also combine any of these — you don\'t need to do all three.';
+const CONVERSION_ASK =
+    'Perfect — I built your ICP.\n\nAdd your **sales page** and/or **webinar** link in the fields below — **one is enough**, or fill both. Tap **Continue** when ready. I only share these when a prospect shows real interest.';
+
+const employeeName = computed(() => status.value.employee_name || 'Soci');
+const showSetupChecklist = computed(
+    () =>
+        Boolean(status.value.goal)
+        && status.value.connections.length > 0
+        && status.value.composer_mode === 'connect',
 );
-const climaxConnections = computed(() =>
-    status.value.connections.filter((c) => c.phase === 'climax'),
+const checklistConnections = computed(() =>
+    status.value.connections.filter((c) => c.key !== 'whatsapp_command'),
 );
 const connectedCount = computed(
-    () => status.value.connections.filter((c) => c.connected).length,
+    () => status.value.required_progress?.connected
+        ?? checklistConnections.value.filter((c) => c.connected).length,
 );
-const totalConnections = computed(() => status.value.connections.length);
+const totalConnections = computed(
+    () => status.value.required_progress?.total ?? checklistConnections.value.length,
+);
+const connectionsGateComplete = computed(() => {
+    if (status.value.required_progress) {
+        return status.value.required_progress.complete;
+    }
+    return totalConnections.value === 0 || connectedCount.value >= totalConnections.value;
+});
+const showConversionForm = computed(() => conversionInputUnlocked.value);
+const canSubmitConversionForm = computed(() => {
+    if (busy.value) return false;
+    return salesPageUrl.value.trim() !== '' || webinarUrl.value.trim() !== '';
+});
+const showAttachButton = computed(() => businessInputUnlocked.value && !showConversionForm.value);
+const attachBeep = computed(() => businessInputUnlocked.value && !attachedFile.value);
+const composerDisabled = computed(() => busy.value || showConversionForm.value);
+const composerPlaceholder = computed(() => {
+    if ((status.value.composer_mode ?? 'goal') === 'goal') return 'Type your own goal…';
+    if (businessInputUnlocked.value) {
+        return 'Paste a description, website link, or attach a PDF — one is enough…';
+    }
+    return 'Message Soci…';
+});
+const canSendComposer = computed(() => {
+    if (composerDisabled.value) return false;
+    if (attachedFile.value) return true;
+    return draft.value.trim() !== '';
+});
 const canOpenCommandCenter = computed(
     () => Boolean(status.value.can_open_command_center ?? status.value.ready),
 );
@@ -79,9 +129,10 @@ const showSkipWhatsapp = computed(
     () =>
         Boolean(
             status.value.outreach_ready
+            && !status.value.connections_complete
             && !status.value.skip_whatsapp_command
             && !status.value.whatsapp_command?.linked
-            && climaxConnections.value.length > 0,
+            && status.value.connections.some((c) => c.key === 'whatsapp_command'),
         ),
 );
 const autonomyLabel = computed(() => {
@@ -94,6 +145,42 @@ const autonomyLabel = computed(() => {
     return map[status.value.autonomy_level ?? 3] ?? 'Autopilot';
 });
 
+function syncComposerUnlocks(options: { announce?: boolean; prevMode?: string } = {}): void {
+    const mode = status.value.composer_mode ?? 'goal';
+    const prevMode = options.prevMode;
+
+    if (mode === 'business' && status.value.connections_complete && connectionsGateComplete.value) {
+        if (!businessInputUnlocked.value) {
+            businessInputUnlocked.value = true;
+            if (options.announce && prevMode !== 'business') {
+                chat.value.push({ role: 'assistant', content: BUSINESS_ASK });
+                void scrollChat();
+            }
+        }
+    } else {
+        businessInputUnlocked.value = false;
+        if (mode !== 'business') {
+            clearAttachedFile();
+        }
+    }
+
+    if (mode === 'conversion') {
+        if (!conversionInputUnlocked.value) {
+            conversionInputUnlocked.value = true;
+            if (options.announce && prevMode !== 'conversion') {
+                chat.value.push({ role: 'assistant', content: CONVERSION_ASK });
+                void scrollChat();
+            }
+        }
+    } else {
+        conversionInputUnlocked.value = false;
+    }
+}
+
+function applyStatus(next: OnboardingStatus, options: { announce?: boolean; prevMode?: string } = {}): void {
+    status.value = next;
+    syncComposerUnlocks(options);
+}
 function workspaceConfiguredMessage(label: string): string {
     return `Great choice — **${label}**.\n\nI've configured your workspace on **${autonomyLabel.value}** — I can auto-send inbox replies and move maybe-later leads to nurture. Connect what's below and I'll detect when you're done.`;
 }
@@ -108,13 +195,14 @@ function connectionIconChannel(key: string): string {
     return key === 'whatsapp_command' ? 'whatsapp' : key;
 }
 
-async function refreshStatus(): Promise<void> {
+async function refreshStatus(announce = true): Promise<void> {
+    const prevMode = status.value.composer_mode;
     const res = await fetch('/onboarding/status', {
         headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf() },
         credentials: 'same-origin',
     });
     if (res.ok) {
-        status.value = await res.json();
+        applyStatus(await res.json(), { announce, prevMode });
     }
 }
 
@@ -148,10 +236,8 @@ async function sendChat(message = draft.value): Promise<void> {
             chat.value.push({ role: 'assistant', content: data.reply.content });
         }
         if (data.status) {
-            status.value = data.status;
-            if (data.status.goal) {
-                startPolling();
-            }
+            const prevMode = status.value.composer_mode;
+            applyStatus(data.status, { announce: true, prevMode });
         }
     } finally {
         busy.value = false;
@@ -175,7 +261,8 @@ async function pickGoal(key: string, label: string): Promise<void> {
             credentials: 'same-origin',
             body: JSON.stringify({ goal: key }),
         });
-        status.value = await res.json();
+        const data = await res.json();
+        applyStatus(data, { announce: true, prevMode: 'goal' });
         chat.value.push({
             role: 'assistant',
             content: workspaceConfiguredMessage(label),
@@ -249,11 +336,20 @@ async function skipWhatsappCommand(): Promise<void> {
             credentials: 'same-origin',
         });
         if (res.ok) {
-            status.value = await res.json();
-            chat.value.push({
-                role: 'assistant',
-                content: 'Got it — web Command Center only. Tap **Open Command Center** when you\'re ready.',
-            });
+            const data = (await res.json()) as OnboardingStatus;
+            const prevMode = status.value.composer_mode;
+            if (data.composer_mode === 'business') {
+                chat.value.push({
+                    role: 'assistant',
+                    content: 'Got it — we\'ll skip WhatsApp for now. You can link your phone anytime later.',
+                });
+            } else {
+                chat.value.push({
+                    role: 'assistant',
+                    content: 'Got it — WhatsApp hidden for now. You can link your phone anytime later from settings.',
+                });
+            }
+            applyStatus(data, { announce: data.composer_mode === 'business', prevMode });
         }
     } finally {
         busy.value = false;
@@ -261,9 +357,236 @@ async function skipWhatsappCommand(): Promise<void> {
     }
 }
 
+function isLikelyUrl(text: string): boolean {
+    const value = text.trim();
+    if (value === '') return false;
+    if (/^https?:\/\//i.test(value)) return true;
+    return /^[\w-]+\.[\w.-]+(\/\S*)?$/i.test(value);
+}
+
+function normalizeUrl(text: string): string {
+    const value = text.trim();
+    if (/^https?:\/\//i.test(value)) return value;
+    return `https://${value.replace(/^\/+/, '')}`;
+}
+
+function extractUrls(text: string): string[] {
+    const matches = text.match(/https?:\/\/[^\s)\]"']+/gi) ?? [];
+    return [...new Set(matches.map((url) => url.replace(/[.,;]+$/, '')))];
+}
+
+function onAttachedFileChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    attachedFile.value = input.files?.[0] ?? null;
+}
+
+function clearAttachedFile(): void {
+    attachedFile.value = null;
+    if (fileInputRef.value) fileInputRef.value.value = '';
+}
+
+function openFilePicker(): void {
+    fileInputRef.value?.click();
+}
+
+function parseBusinessInput(text: string): { description: string; websiteUrl: string } {
+    const trimmed = text.trim();
+    if (trimmed === '') {
+        return { description: '', websiteUrl: '' };
+    }
+
+    if (isLikelyUrl(trimmed)) {
+        return { description: '', websiteUrl: normalizeUrl(trimmed) };
+    }
+
+    const urls = extractUrls(trimmed);
+    if (urls.length === 1 && trimmed === urls[0]) {
+        return { description: '', websiteUrl: urls[0] };
+    }
+
+    return {
+        description: trimmed,
+        websiteUrl: urls[0] ?? '',
+    };
+}
+
+async function submitBusinessProfileFromComposer(text: string, file: File | null): Promise<void> {
+    const { description, websiteUrl } = parseBusinessInput(text);
+    if (!description && !websiteUrl && !file) {
+        chat.value.push({
+            role: 'assistant',
+            content: 'Tell me about your business — paste a short description **or** your website link **or** tap **attach** for a PDF. One is enough; you can combine them too.',
+        });
+        await scrollChat();
+        return;
+    }
+
+    busy.value = true;
+    const userLine = description || websiteUrl || (file?.name ?? 'Uploaded business file');
+    chat.value.push({ role: 'user', content: userLine });
+    draft.value = '';
+    await scrollChat();
+
+    try {
+        const form = new FormData();
+        if (description) form.append('description', description);
+        if (websiteUrl) form.append('website_url', websiteUrl);
+        if (file) form.append('file', file);
+
+        const res = await fetch('/onboarding/business-profile', {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf() },
+            credentials: 'same-origin',
+            body: form,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            chat.value.push({
+                role: 'assistant',
+                content: data.message ?? 'Could not save your business profile. Try again.',
+            });
+            return;
+        }
+
+        if (data.status) {
+            const prevMode = status.value.composer_mode;
+            chat.value.push({
+                role: 'assistant',
+                content: data.message ?? 'Business profile saved.',
+            });
+            applyStatus(data.status, { announce: true, prevMode });
+        } else {
+            chat.value.push({
+                role: 'assistant',
+                content: data.message ?? 'Business profile saved.',
+            });
+        }
+        clearAttachedFile();
+        startPolling();
+    } finally {
+        busy.value = false;
+        await scrollChat();
+    }
+}
+
+async function submitConversionAssetsFromForm(): Promise<void> {
+    const sales = salesPageUrl.value.trim() ? normalizeUrl(salesPageUrl.value.trim()) : '';
+    const webinar = webinarUrl.value.trim() ? normalizeUrl(webinarUrl.value.trim()) : '';
+
+    if (!sales && !webinar) {
+        chat.value.push({
+            role: 'assistant',
+            content: 'Add at least one link — **sales page** or **webinar** — then tap **Continue**.',
+        });
+        await scrollChat();
+        return;
+    }
+
+    busy.value = true;
+    chat.value.push({
+        role: 'user',
+        content: [sales ? `Sales page: ${sales}` : null, webinar ? `Webinar: ${webinar}` : null]
+            .filter(Boolean)
+            .join('\n'),
+    });
+    await scrollChat();
+
+    try {
+        const res = await fetch('/onboarding/conversion-assets', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-XSRF-TOKEN': xsrf(),
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                sales_page_url: sales || null,
+                webinar_url: webinar || null,
+            }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            chat.value.push({
+                role: 'assistant',
+                content: data.message ?? 'Could not save conversion links. Try again.',
+            });
+            return;
+        }
+
+        salesPageUrl.value = '';
+        webinarUrl.value = '';
+
+        if (data.status) {
+            applyStatus(data.status, { announce: false, prevMode: status.value.composer_mode });
+        }
+        chat.value.push({ role: 'assistant', content: data.message ?? 'Conversion assets saved.' });
+        startPolling();
+    } finally {
+        busy.value = false;
+        await scrollChat();
+    }
+}
+
+async function handleComposerSubmit(): Promise<void> {
+    const text = draft.value.trim();
+    const file = attachedFile.value;
+
+    if (businessInputUnlocked.value) {
+        await submitBusinessProfileFromComposer(text, file);
+        return;
+    }
+
+    await sendChat(text);
+}
+
+function connectionHint(conn: Connection): string {
+    if (conn.key === 'whatsapp_command') {
+        return conn.connected ? 'Linked — text me anytime' : 'Optional — control Soci from your phone';
+    }
+    return conn.connected ? 'Connected' : 'Required before we talk about your business';
+}
+
+function connectedChannelLabels(): string[] {
+    return checklistConnections.value.filter((c) => c.connected).map((c) => c.label);
+}
+
+function formatChannelList(labels: string[]): string {
+    const bold = labels.map((label) => `**${label}**`);
+    if (bold.length <= 1) return bold[0] ?? '';
+    if (bold.length === 2) return `${bold[0]} and ${bold[1]}`;
+    return `${bold.slice(0, -1).join(', ')}, and ${bold[bold.length - 1]}`;
+}
+
+function connectFollowUp(label: string, connected: boolean): string {
+    if (!connected) {
+        return `**${label}** connection finished on Unipile — if Done doesn't show yet, tap Refresh.`;
+    }
+
+    const progress = status.value.required_progress;
+    const done = progress?.connected ?? connectedCount.value;
+    const total = progress?.total ?? totalConnections.value;
+    const remaining = progress?.remaining ?? checklistConnections.value.filter((c) => !c.connected).map((c) => c.label);
+
+    if (!connectionsGateComplete.value) {
+        const left = remaining.length > 0 ? remaining.join(', ') : 'the rest';
+        return `**${label}** is connected. **${done} of ${total}** — connect ${left} before we talk about your business.`;
+    }
+
+    const labels = connectedChannelLabels();
+    if (labels.length <= 1) {
+        return `**${label}** is connected. That's the one this setup needs.`;
+    }
+
+    return `${formatChannelList(labels)} are connected.`;
+}
+
+function whatsappConnectLabel(conn: Connection): string {
+    return conn.key === 'whatsapp_command' ? 'Link phone' : 'Connect';
+}
+
 function startPolling(): void {
     stopPolling();
-    let climaxNudged = false;
     pollTimer = setInterval(async () => {
         const prevReady = status.value.ready;
         await refreshStatus();
@@ -273,20 +596,6 @@ function startPolling(): void {
                 content: "You're all set — open Command Center and I'll continue from your goal.",
             });
             stopPolling();
-            await scrollChat();
-            return;
-        }
-        if (
-            !climaxNudged
-            && status.value.outreach_ready
-            && status.value.phase === 'link_whatsapp'
-            && !status.value.whatsapp_command?.linked
-        ) {
-            climaxNudged = true;
-            chat.value.push({
-                role: 'assistant',
-                content: 'Outreach is connected. Last step: link **WhatsApp** to control me from your phone — or skip if you only want the web app.',
-            });
             await scrollChat();
         }
     }, 4000);
@@ -340,47 +649,69 @@ async function dismiss(): Promise<void> {
 onMounted(async () => {
     if (!props.onboarding.show && props.onboarding.completed) return;
     open.value = true;
-    await refreshStatus();
+    const params = new URLSearchParams(window.location.search);
+    const returningFromConnect = params.get('onboarding') === '1';
+    await refreshStatus(!returningFromConnect);
+    const mode = status.value.composer_mode ?? 'goal';
+    const deferBusinessAsk = returningFromConnect && mode === 'business' && connectionsGateComplete.value;
+    let opening = `Hey 👋 I'm **${employeeName.value}**, your AI Sales Employee.\n\nWhat's your customer goal? Say it in plain English — e.g. *get more clients*, *find ideal customers*, *turn replies into sales* — or tap a quick pick.`;
+    if (status.value.goal) {
+        if (mode === 'connect' || (mode === 'business' && !connectionsGateComplete.value)) {
+            opening = `Welcome back — we're setting up **${status.value.goal_label ?? 'your goal'}**.\n\nConnect every channel in the **${connectedCount.value}/${totalConnections.value}** checklist before we talk about your business. If that number is 1, that one channel is enough. WhatsApp phone control is optional.`;
+        } else if (mode === 'conversion') {
+            opening = CONVERSION_ASK;
+        } else if (mode === 'business' && !deferBusinessAsk) {
+            opening = BUSINESS_ASK;
+        } else if (!deferBusinessAsk) {
+            opening = `Welcome back — we're setting up **${status.value.goal_label ?? 'your goal'}**.`;
+        } else {
+            opening = '';
+        }
+    }
 
-    chat.value = [
-        {
-            role: 'assistant',
-            content: status.value.goal
-                ? `Welcome back — we're setting up **${status.value.goal_label ?? 'your goal'}**. Connect what's below and I'll keep watch.`
-                : `Hey 👋 I'm **${employeeName.value}**, your AI Sales Employee.\n\nWhat should we work on? Say it in plain English — e.g. *run a WhatsApp campaign*, *book meetings*, *find prospects* — or tap a quick pick.`,
-        },
-    ];
+    chat.value = opening ? [{ role: 'assistant', content: opening }] : [];
+    syncComposerUnlocks({ announce: false, prevMode: 'goal' });
 
     if (status.value.goal) {
         startPolling();
     }
 
-    const params = new URLSearchParams(window.location.search);
+    if (status.value.conversion_assets?.sales_page_url) {
+        salesPageUrl.value = status.value.conversion_assets.sales_page_url;
+    }
+    if (status.value.conversion_assets?.webinar_url) {
+        webinarUrl.value = status.value.conversion_assets.webinar_url;
+    }
+
     if (params.get('onboarding') === '1') {
         const connectedKey = params.get('channel') || params.get('connected');
         const erroredKey = params.get('error') || params.get('channel_error');
         if (connectedKey && connectedKey !== '1') {
-            await refreshStatus();
+            await refreshStatus(false);
             const conn = status.value.connections.find((c) => c.key === connectedKey);
             const label = conn?.label ?? connectedKey;
             const isDone = Boolean(conn?.connected);
             chat.value.push({
                 role: 'assistant',
-                content: isDone
-                    ? `**${label}** is connected. Keep going with the checklist, or open Command Center when ready.`
-                    : `**${label}** connection finished on Unipile — if Done doesn't show yet, tap Refresh.`,
+                content: connectFollowUp(label, isDone),
             });
+            if (connectionsGateComplete.value) {
+                chat.value.push({ role: 'assistant', content: BUSINESS_ASK });
+            }
             startPolling();
         } else if (params.get('connected') === '1') {
-            await refreshStatus();
+            await refreshStatus(false);
             const channel = params.get('channel');
             const conn = channel ? status.value.connections.find((c) => c.key === channel) : null;
             chat.value.push({
                 role: 'assistant',
                 content: conn?.connected
-                    ? `**${conn.label}** is connected. Keep going with the checklist, or open Command Center when ready.`
-                    : 'Nice — connection saved. Keep going with the checklist.',
+                    ? connectFollowUp(conn.label, true)
+                    : 'Nice — connection saved. Keep going with the checklist until the number is complete.',
             });
+            if (connectionsGateComplete.value) {
+                chat.value.push({ role: 'assistant', content: BUSINESS_ASK });
+            }
             startPolling();
         } else if (erroredKey && erroredKey !== '1') {
             chat.value.push({
@@ -501,12 +832,12 @@ watch(open, (v) => {
                         </button>
                     </div>
                     <p class="text-muted-foreground mt-2 text-xs">
-                        Or type your own below — WhatsApp, Instagram, competitors, etc.
+                        Or type your own below — niche, channel, or a specific target audience.
                     </p>
                 </div>
 
-                <!-- Connection cards in chat flow -->
-                <div v-if="showConnections" class="pl-11 space-y-3">
+                <!-- Setup checklist (includes WhatsApp — comes after channels + business + assets) -->
+                <div v-if="showSetupChecklist" class="pl-11 space-y-3">
                     <div
                         v-if="status.workspace_configured"
                         class="rounded-xl border border-blue-200 bg-blue-50/80 px-3.5 py-2.5 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100"
@@ -524,12 +855,21 @@ watch(open, (v) => {
                             {{ connectedCount }}/{{ totalConnections }}
                         </span>
                     </div>
+                    <p v-if="totalConnections > 1" class="text-muted-foreground text-xs">
+                        Connect all {{ totalConnections }} before the business step. WhatsApp phone control does not count.
+                    </p>
 
                     <div
-                        v-for="conn in outreachConnections"
+                        v-for="conn in status.connections"
                         :key="conn.key"
                         class="flex items-center justify-between gap-3 rounded-xl border bg-white p-3.5 shadow-sm transition dark:bg-zinc-900"
-                        :class="conn.connected ? 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-900' : ''"
+                        :class="[
+                            conn.connected
+                                ? 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-900'
+                                : conn.key === 'whatsapp_command'
+                                  ? 'border-emerald-300 bg-emerald-50/80 dark:border-emerald-800 dark:bg-emerald-950/30'
+                                  : '',
+                        ]"
                     >
                         <div class="flex min-w-0 items-center gap-3">
                             <OutreachChannelIcon
@@ -540,7 +880,7 @@ watch(open, (v) => {
                             <div class="min-w-0">
                                 <div class="text-sm font-medium">{{ conn.label }}</div>
                                 <div class="text-muted-foreground text-xs">
-                                    {{ conn.required ? 'Required for your goal' : 'Optional backup' }}
+                                    {{ connectionHint(conn) }}
                                 </div>
                             </div>
                         </div>
@@ -555,79 +895,30 @@ watch(open, (v) => {
                                 v-else
                                 size="sm"
                                 class="h-8 rounded-full px-4 text-xs"
+                                :class="
+                                    conn.key === 'whatsapp_command'
+                                    && !conn.connected
+                                        ? 'bg-emerald-600 hover:bg-emerald-700'
+                                        : ''
+                                "
                                 :disabled="busy"
                                 @click="connectChannel(conn)"
                             >
-                                Connect
+                                {{ whatsappConnectLabel(conn) }}
                             </Button>
                         </div>
                     </div>
 
-                    <template v-if="climaxConnections.length > 0">
-                        <div class="pt-1">
-                            <p class="text-xs font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400">
-                                Final step — control Alex from your phone
-                            </p>
-                            <p class="text-muted-foreground mt-1 text-xs">
-                                Optional but recommended. Same Alex, same plans — reply LAUNCH from WhatsApp.
-                            </p>
-                        </div>
-
-                        <div
-                            v-for="conn in climaxConnections"
-                            :key="conn.key"
-                            class="flex items-center justify-between gap-3 rounded-xl border bg-white p-3.5 shadow-sm transition dark:bg-zinc-900"
-                            :class="[
-                                conn.connected
-                                    ? 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-900'
-                                    : conn.highlight
-                                      ? 'border-emerald-300 bg-emerald-50/80 ring-2 ring-emerald-200 dark:border-emerald-800 dark:bg-emerald-950/30 dark:ring-emerald-900'
-                                      : 'border-dashed border-emerald-200 dark:border-emerald-900',
-                            ]"
-                        >
-                            <div class="flex min-w-0 items-center gap-3">
-                                <OutreachChannelIcon
-                                    channel="whatsapp"
-                                    :size="24"
-                                    class="h-6 w-6 shrink-0"
-                                />
-                                <div class="min-w-0">
-                                    <div class="text-sm font-medium">{{ conn.label }}</div>
-                                    <div class="text-muted-foreground text-xs">
-                                        {{ conn.connected ? 'Linked — text me anytime' : 'Skip if you only want the web app' }}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="shrink-0">
-                                <span
-                                    v-if="conn.connected"
-                                    class="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-                                >
-                                    <CheckCircle2 class="size-3.5" /> Done
-                                </span>
-                                <Button
-                                    v-else
-                                    size="sm"
-                                    class="link-phone-beep h-8 rounded-full bg-emerald-600 px-4 text-xs hover:bg-emerald-700"
-                                    :disabled="busy"
-                                    @click="connectChannel(conn)"
-                                >
-                                    Link phone
-                                </Button>
-                            </div>
-                        </div>
-
-                        <Button
-                            v-if="showSkipWhatsapp"
-                            size="sm"
-                            variant="ghost"
-                            class="h-8 w-full rounded-full text-xs text-muted-foreground"
-                            :disabled="busy"
-                            @click="skipWhatsappCommand"
-                        >
-                            Skip WhatsApp control — web only
-                        </Button>
-                    </template>
+                    <Button
+                        v-if="showSkipWhatsapp"
+                        size="sm"
+                        variant="ghost"
+                        class="h-8 w-full rounded-full text-xs text-muted-foreground"
+                        :disabled="busy"
+                        @click="skipWhatsappCommand"
+                    >
+                        Not now — hide WhatsApp for setup
+                    </Button>
 
                     <WhatsAppCommandLinkPanel v-if="waLink" :link="waLink" class="mt-1" />
                 </div>
@@ -635,20 +926,93 @@ watch(open, (v) => {
 
             <!-- Composer -->
             <div class="shrink-0 border-t bg-white px-5 py-4 dark:bg-zinc-950">
-                <form class="flex items-end gap-2" @submit.prevent="sendChat()">
+                <input
+                    ref="fileInputRef"
+                    type="file"
+                    accept=".pdf,.txt,application/pdf,text/plain"
+                    class="hidden"
+                    :disabled="busy"
+                    @change="onAttachedFileChange"
+                />
+                <div
+                    v-if="attachedFile && !showConversionForm"
+                    class="mb-2 flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100"
+                >
+                    <Paperclip class="size-3.5 shrink-0" />
+                    <span class="min-w-0 flex-1 truncate">{{ attachedFile.name }}</span>
+                    <button
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground"
+                        :disabled="busy"
+                        @click="clearAttachedFile"
+                    >
+                        <X class="size-3.5" />
+                    </button>
+                </div>
+
+                <div v-if="showConversionForm" class="space-y-3">
+                    <p class="text-xs text-muted-foreground">
+                        Fill one or both — leave blank what you don't have yet.
+                    </p>
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-medium text-muted-foreground">Sales page</label>
+                        <Input
+                            v-model="salesPageUrl"
+                            class="h-11 rounded-2xl border-zinc-200 bg-zinc-50 text-[15px] shadow-inner focus-visible:ring-blue-500 dark:bg-zinc-900"
+                            placeholder="https://yoursite.com/sales (optional)"
+                            :disabled="busy"
+                            @keydown.enter.prevent="submitConversionAssetsFromForm()"
+                        />
+                    </div>
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-medium text-muted-foreground">Webinar</label>
+                        <Input
+                            v-model="webinarUrl"
+                            class="h-11 rounded-2xl border-zinc-200 bg-zinc-50 text-[15px] shadow-inner focus-visible:ring-blue-500 dark:bg-zinc-900"
+                            placeholder="https://yoursite.com/webinar (optional)"
+                            :disabled="busy"
+                            @keydown.enter.prevent="submitConversionAssetsFromForm()"
+                        />
+                    </div>
+                    <Button
+                        type="button"
+                        class="h-11 w-full rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 text-sm font-semibold shadow-md hover:from-blue-500 hover:to-blue-700"
+                        :disabled="!canSubmitConversionForm"
+                        @click="submitConversionAssetsFromForm()"
+                    >
+                        <Loader2 v-if="busy" class="mr-2 size-4 animate-spin" />
+                        Continue
+                    </Button>
+                </div>
+
+                <form v-else class="flex items-end gap-2" @submit.prevent="handleComposerSubmit()">
+                    <Button
+                        v-if="showAttachButton"
+                        type="button"
+                        size="icon"
+                        variant="outline"
+                        class="size-12 shrink-0 rounded-2xl border-zinc-200 bg-zinc-50 dark:bg-zinc-900"
+                        :class="{ 'attach-beep': attachBeep }"
+                        :disabled="composerDisabled"
+                        :title="showBusinessProfile ? 'Attach PDF or text file' : 'Attach file'"
+                        @click="openFilePicker"
+                    >
+                        <Paperclip class="size-5" />
+                    </Button>
                     <div class="relative min-w-0 flex-1">
                         <Input
                             v-model="draft"
-                            class="h-12 rounded-2xl border-zinc-200 bg-zinc-50 pr-12 text-[15px] shadow-inner focus-visible:ring-blue-500 dark:bg-zinc-900"
-                            :placeholder="status.goal ? 'Message Alex…' : 'Type your own goal…'"
-                            :disabled="busy"
+                            class="h-12 rounded-2xl border-zinc-200 bg-zinc-50 text-[15px] shadow-inner focus-visible:ring-blue-500 dark:bg-zinc-900"
+                            :class="showAttachButton ? 'pr-4' : 'pr-12'"
+                            :placeholder="composerPlaceholder"
+                            :disabled="composerDisabled"
                         />
                     </div>
                     <Button
                         type="submit"
                         size="icon"
                         class="size-12 shrink-0 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-md hover:from-blue-500 hover:to-blue-700"
-                        :disabled="busy || !draft.trim()"
+                        :disabled="!canSendComposer"
                     >
                         <Loader2 v-if="busy" class="size-5 animate-spin" />
                         <Send v-else class="size-5" />
@@ -712,8 +1076,28 @@ watch(open, (v) => {
     animation: link-phone-beep 2.4s ease-in-out infinite;
 }
 
+@keyframes attach-beep {
+    0%,
+    100% {
+        box-shadow:
+            0 0 0 0 rgb(59 130 246 / 0.45),
+            inset 0 0 0 1px rgb(59 130 246 / 0.15);
+    }
+
+    50% {
+        box-shadow:
+            0 0 0 8px rgb(59 130 246 / 0),
+            inset 0 0 0 1px rgb(59 130 246 / 0.35);
+    }
+}
+
+.attach-beep {
+    animation: attach-beep 2.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .link-phone-beep {
+    .link-phone-beep,
+    .attach-beep {
         animation: none;
     }
 }

@@ -16,6 +16,7 @@ use App\V2\Ai\Services\InboxClassificationService;
 use App\V2\Ai\Services\AttentionQueueService;
 use App\V2\Ai\Services\LeadNurtureCommandCenterService;
 use App\V2\Ai\Services\NurtureQueueService;
+use App\V2\Ai\Services\ProspectMemoryService;
 use App\V2\Services\OpenAIContentService;
 use App\V2\Services\OutreachChannelInboxSettingsService;
 use App\V2\Services\EmailAddressQuality;
@@ -548,8 +549,10 @@ class UnifiedInboxWebController extends Controller
         $personalizedDraft = is_array($leadMeta['ai_personalized_draft'] ?? null)
             ? $leadMeta['ai_personalized_draft']
             : null;
+        $dossier = $lead ? app(ProspectMemoryService::class)->dossier($lead) : null;
+        $dossierSummary = $lead ? $this->presentDossierSummary($dossier) : null;
 
-        if ($classification === null && $nextBest === null && $personalizedDraft === null) {
+        if ($classification === null && $nextBest === null && $personalizedDraft === null && $dossierSummary === null) {
             return null;
         }
 
@@ -565,7 +568,58 @@ class UnifiedInboxWebController extends Controller
                 'channel' => $personalizedDraft['channel'] ?? null,
                 'saved_at' => $personalizedDraft['saved_at'] ?? null,
             ] : null,
+            'prospect_dossier' => $dossierSummary,
             'command_center_url' => url('/ai-employee'),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $dossier
+     * @return array<string, mixed>|null
+     */
+    private function presentDossierSummary(?array $dossier): ?array
+    {
+        if (! is_array($dossier)) {
+            return null;
+        }
+
+        $signals = collect($dossier['signals'] ?? [])
+            ->filter(fn ($row) => is_string($row) && trim($row) !== '')
+            ->values()
+            ->all();
+        $facts = collect($dossier['conversation_facts'] ?? [])
+            ->filter(fn ($row) => is_array($row) && trim((string) ($row['fact'] ?? '')) !== '')
+            ->map(fn (array $row) => [
+                'fact' => trim((string) ($row['fact'] ?? '')),
+                'source' => (string) ($row['source'] ?? 'inbound'),
+                'recorded_at' => (string) ($row['recorded_at'] ?? ''),
+            ])
+            ->values()
+            ->all();
+        $pages = collect($dossier['scraped_pages'] ?? [])
+            ->filter(fn ($row) => is_array($row) && trim((string) ($row['url'] ?? '')) !== '')
+            ->map(fn (array $row) => [
+                'url' => (string) ($row['url'] ?? ''),
+                'title' => (string) ($row['title'] ?? ''),
+                'excerpt' => trim((string) ($row['excerpt'] ?? '')),
+                'scraped_at' => (string) ($row['scraped_at'] ?? ''),
+            ])
+            ->values()
+            ->all();
+
+        $hasAny = $signals !== [] || $facts !== [] || $pages !== [];
+        if (! $hasAny) {
+            return null;
+        }
+
+        return [
+            'company' => trim((string) Arr::get($dossier, 'business.company', '')) ?: null,
+            'headline' => trim((string) Arr::get($dossier, 'business.headline', '')) ?: null,
+            'conversion_stage' => trim((string) ($dossier['conversion_stage'] ?? '')) ?: 'opening',
+            'updated_at' => (string) ($dossier['updated_at'] ?? ''),
+            'signals' => $signals,
+            'conversation_facts' => array_slice($facts, -8),
+            'scraped_pages' => array_slice($pages, -5),
         ];
     }
 

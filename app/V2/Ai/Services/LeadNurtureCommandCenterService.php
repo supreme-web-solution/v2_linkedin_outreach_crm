@@ -34,7 +34,7 @@ class LeadNurtureCommandCenterService
         $meta = is_array($lead->meta) ? $lead->meta : [];
         $meta['qualification'] = array_merge($meta['qualification'] ?? [], [
             'stage' => 'nurture',
-            'notes' => $reason !== '' ? $reason : 'Moved to nurture by Alex.',
+            'notes' => $reason !== '' ? $reason : 'Moved to nurture by Soci.',
             'nurture_follow_up_at' => $followUpAt->toIso8601String(),
             'nurture_follow_up_days' => $followUpDays,
             'qualified_at' => Carbon::now()->toIso8601String(),
@@ -45,7 +45,7 @@ class LeadNurtureCommandCenterService
             'reason' => $reason !== '' ? $reason : 'Prospect asked to reconnect later.',
             'follow_up_at' => $followUpAt->toIso8601String(),
             'set_at' => Carbon::now()->toIso8601String(),
-            'set_by' => 'alex',
+            'set_by' => 'Soci',
         ];
 
         $lead->update(['meta' => $meta]);

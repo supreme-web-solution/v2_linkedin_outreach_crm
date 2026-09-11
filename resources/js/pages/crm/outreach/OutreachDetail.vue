@@ -643,7 +643,7 @@ const channelActionEntries = computed(() =>
                 <div>
                     <div class="flex items-center gap-2 text-sm font-semibold text-violet-950 dark:text-violet-100">
                         <Sparkles class="h-4 w-4" />
-                        Alex recommendations
+                        Soci recommendations
                     </div>
                     <p v-if="aiOptimization?.summary" class="mt-1 text-xs text-violet-900/80 dark:text-violet-200/80">
                         {{ aiOptimization.summary }}
@@ -697,7 +697,7 @@ const channelActionEntries = computed(() =>
                 </li>
             </ul>
             <p v-else class="mt-3 text-xs text-violet-900/70 dark:text-violet-200/70">
-                No urgent changes right now. Tap Refresh analysis anytime, or ask Alex in Command Center.
+                No urgent changes right now. Tap Refresh analysis anytime, or Ask Soci in Command Center.
             </p>
         </div>
 
@@ -983,7 +983,7 @@ const channelActionEntries = computed(() =>
                                 <a
                                     class="mt-1 inline-flex items-center gap-1 text-sky-700 underline dark:text-sky-300"
                                     :href="`/ai-employee?prompt=${encodeURIComponent('Set next best action for outreach lead ' + lead.id)}`"
-                                ><Bot class="h-3 w-3" /> Ask Alex</a>
+                                ><Bot class="h-3 w-3" /> Ask Soci</a>
                             </div>
                             <span v-else class="text-muted-foreground">—</span>
                         </td>

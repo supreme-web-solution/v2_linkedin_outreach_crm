@@ -32,6 +32,25 @@ class ActionApprovalService
         ]);
     }
 
+    public function createPendingWithoutSupersede(
+        User $user,
+        int $organizationId,
+        string $tool,
+        AiToolPermission $permission,
+        array $payload,
+        ?AiConversation $conversation = null,
+    ): AiActionApproval {
+        return AiActionApproval::query()->create([
+            'organization_id' => $organizationId,
+            'user_id' => $user->id,
+            'conversation_id' => $conversation?->id,
+            'tool' => $tool,
+            'permission' => $permission->value,
+            'payload' => $payload,
+            'status' => 'pending',
+        ]);
+    }
+
     /**
      * Reject all other pending approvals for this user/org so only the latest CTA remains.
      */

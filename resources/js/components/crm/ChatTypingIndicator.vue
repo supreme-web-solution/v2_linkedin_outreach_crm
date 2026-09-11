@@ -5,7 +5,7 @@ withDefaults(defineProps<{
     name?: string;
     showLabel?: boolean;
 }>(), {
-    name: 'Alex',
+    name: 'Soci',
     showLabel: true,
 });
 </script>

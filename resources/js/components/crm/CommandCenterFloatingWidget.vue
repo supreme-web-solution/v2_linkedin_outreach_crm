@@ -178,7 +178,7 @@ if (open.value && showWidget.value) {
                 <span
                     v-if="(chat.awaitingReply || chat.sending) && !open"
                     class="absolute -left-0.5 -top-0.5 z-10 flex size-5 items-center justify-center rounded-full bg-sky-500 text-white ring-2 ring-background"
-                    title="Alex is thinking…"
+                    title="Soci is thinking…"
                 >
                     <Loader2 class="size-3 animate-spin" />
                 </span>

@@ -49,17 +49,17 @@ const autonomyOptions = computed(() => {
         {
             value: 1,
             label: 'Copilot',
-            description: 'Alex recommends only — you run everything in the app.',
+            description: 'Soci recommends only — you run everything in the app.',
         },
         {
             value: 2,
             label: 'Assisted',
-            description: 'Alex stages plans; you Launch or say "go ahead".',
+            description: 'Soci stages plans; you Launch or say "go ahead".',
         },
         {
             value: 3,
             label: 'Autopilot',
-            description: 'Alex auto-searches LinkedIn, stages plans, and launches campaigns without "go ahead".',
+            description: 'Soci auto-searches LinkedIn, stages plans, and launches campaigns without "go ahead".',
         },
     ];
 
@@ -140,7 +140,7 @@ async function onToggleEnabled(enabled: boolean) {
     const previous = local.value.enabled;
     local.value.enabled = enabled;
     try {
-        await save({ enabled }, enabled ? 'Alex enabled' : 'Alex paused');
+        await save({ enabled }, enabled ? 'Soci enabled' : 'Soci paused');
     } catch {
         local.value.enabled = previous;
     }
@@ -178,7 +178,7 @@ async function onAutonomyChange(level: number) {
             class="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium hover:bg-muted/50"
         >
             <span class="flex items-center gap-2">
-                Alex settings
+                Soci settings
                 <Loader2 v-if="saving" class="size-3.5 animate-spin text-muted-foreground" />
             </span>
             <span class="flex items-center gap-2 text-xs font-normal text-muted-foreground">
@@ -201,20 +201,20 @@ async function onAutonomyChange(level: number) {
 
             <div class="flex items-center justify-between gap-3">
                 <div>
-                    <Label for="alex-enabled">Enable Alex</Label>
+                    <Label for="Soci-enabled">Enable Soci</Label>
                     <p class="text-xs text-muted-foreground">Turn off to pause Command Center replies.</p>
                 </div>
                 <Switch
-                    id="alex-enabled"
+                    id="Soci-enabled"
                     v-model="enabledModel"
                     :disabled="saving || local.kill_switch"
                 />
             </div>
 
             <div class="space-y-2">
-                <Label for="alex-name">Display name</Label>
+                <Label for="Soci-name">Display name</Label>
                 <input
-                    id="alex-name"
+                    id="Soci-name"
                     v-model="local.employee_name"
                     type="text"
                     maxlength="40"
@@ -227,7 +227,7 @@ async function onAutonomyChange(level: number) {
             <div class="space-y-2">
                 <Label>Autonomy mode</Label>
                 <p class="text-xs text-muted-foreground">
-                    Controls how much Alex can do without your explicit approval. Changes save automatically.
+                    Controls how much Soci can do without your explicit approval. Changes save automatically.
                 </p>
                 <div class="space-y-2">
                     <button
@@ -250,7 +250,7 @@ async function onAutonomyChange(level: number) {
             </div>
 
             <p v-if="local.kill_switch" class="text-xs text-destructive">
-                Alex is paused by an admin kill switch. Contact support to restore access.
+                Soci is paused by an admin kill switch. Contact support to restore access.
             </p>
         </CollapsibleContent>
     </Collapsible>

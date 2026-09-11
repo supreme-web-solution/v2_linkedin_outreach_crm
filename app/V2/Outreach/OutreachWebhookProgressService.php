@@ -7,6 +7,7 @@ use App\Models\V2Conversation;
 use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
+use App\V2\Ai\Services\CampaignFirstTouchPersonalizationService;
 use Illuminate\Support\Arr;
 
 class OutreachWebhookProgressService
@@ -200,7 +201,17 @@ class OutreachWebhookProgressService
         $this->updateChannelState($lead, $campaign, 'linkedin', [
             'invite_accepted' => true,
             'invite_accepted_at' => now()->toIso8601String(),
-        ], $advanceCondition);
+        ], advanceCondition: false);
+
+        $campaignMeta = is_array($campaign->meta) ? $campaign->meta : [];
+        if (! empty($campaignMeta['ai_personalize_first_touch'])) {
+            $goal = (string) (\Illuminate\Support\Arr::get($campaignMeta, 'ai_plan.goal', $campaign->name));
+            app(CampaignFirstTouchPersonalizationService::class)->personalizeLead(
+                $lead->fresh() ?? $lead,
+                $campaign,
+                $goal,
+            );
+        }
 
         $this->logger->log(
             $campaign->id,
@@ -208,9 +219,20 @@ class OutreachWebhookProgressService
             null,
             null,
             'condition_met',
-            sprintf('%s accepted your LinkedIn invite.', $lead->full_name ?? 'Lead'),
+            sprintf('%s accepted your LinkedIn invite — preparing first message.', $lead->full_name ?? 'Lead'),
             ['condition' => 'invite_accepted'],
         );
+
+        if ($advanceCondition) {
+            $progress = V2OutreachLeadProgress::query()
+                ->where('outreach_campaign_id', $campaign->id)
+                ->where('outreach_lead_id', $lead->id)
+                ->first();
+
+            if ($progress) {
+                $this->tryAdvanceWaitingCondition($lead, $progress, $campaign);
+            }
+        }
     }
 
     public function confirmOutboundSendFromWebhook(

@@ -27,7 +27,7 @@ final class AgentContext
     {
         $settings = $this->activeSettings();
 
-        return $settings->employee_name ?: (string) config('socifusion_ai.employee_name', 'Alex');
+        return $settings->employee_name ?: (string) config('socifusion_ai.employee_name', 'Soci');
     }
 
     public function autonomy(): AiAutonomyLevel

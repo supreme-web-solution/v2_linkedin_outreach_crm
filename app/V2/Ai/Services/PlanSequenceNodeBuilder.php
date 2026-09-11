@@ -8,7 +8,7 @@ use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Support\Str;
 
 /**
- * Turns Alex plan sequence prose / structured steps into an executable outreach node_model.
+ * Turns Soci plan sequence prose / structured steps into an executable outreach node_model.
  * Falls back to channel presets when the plan does not describe a usable sequence.
  * Always maps actions onto OutreachChannelRegistry-supported keys (e.g. connect → send_invite).
  *
@@ -361,7 +361,7 @@ class PlanSequenceNodeBuilder
                 $channel = 'instagram';
                 $action = 'send_message';
                 $label = 'Instagram DM';
-                $config = ['message' => 'Hi {{firstName}},'];
+                $config = $this->personalizedFirstTouchConfig();
             } elseif (preg_match('/follow.?up|message|dm|touch|diagnostic|value|close|question/i', $text)) {
                 if (str_contains($channels, 'email') && ! str_contains($channels, 'linkedin')) {
                     $channel = 'email';
@@ -377,10 +377,31 @@ class PlanSequenceNodeBuilder
                     $label = 'WhatsApp Follow-up';
                     $config = ['message' => 'Hi {{firstName}}, just bumping this.'];
                 } else {
-                    $channel = 'linkedin';
-                    $action = 'send_message';
-                    $label = 'Send Message';
-                    $config = ['message' => 'Thanks for connecting, {{firstName}}!'];
+                    $isFirstTouch = ! preg_match('/follow.?up|value follow|professional close/i', $text);
+                    $channel = $defaultChannel;
+                    $action = $channel === 'email' ? 'send_email' : 'send_message';
+
+                    if ($channel === 'email') {
+                        $label = $isFirstTouch ? 'First email (after research)' : 'Follow-up Email';
+                        $config = $isFirstTouch
+                            ? [
+                                'subject' => 'Quick intro',
+                                'body' => '',
+                                'personalize_before_send' => true,
+                                'placeholder' => 'Written for this person after profile and company research. Not a shared template.',
+                            ]
+                            : [
+                                'subject' => 'Following up',
+                                'body' => 'Just floating this back up — still curious how this is going on your side.',
+                            ];
+                    } else {
+                        $label = $isFirstTouch
+                            ? (strtolower($channel) === 'linkedin' ? 'First message (after research)' : Str::headline($channel).' first message (after research)')
+                            : (strtolower($channel) === 'linkedin' ? 'Follow-up' : Str::headline($channel).' Follow-up');
+                        $config = $isFirstTouch
+                            ? $this->personalizedFirstTouchConfig()
+                            : ['message' => 'Just floating this back up — still curious how this is going on your side.'];
+                    }
                 }
             } else {
                 // Skip vague strategy lines that aren't executable steps.
@@ -832,5 +853,17 @@ class PlanSequenceNodeBuilder
         $nodes[] = ['key' => 99, 'type' => 'end', 'label' => 'End'];
 
         return $nodes;
+    }
+
+    /**
+     * @return array{message:string, personalize_before_send:bool, placeholder:string}
+     */
+    private function personalizedFirstTouchConfig(): array
+    {
+        return [
+            'message' => '',
+            'personalize_before_send' => true,
+            'placeholder' => 'Written for this person after profile and company research. Not a shared template.',
+        ];
     }
 }

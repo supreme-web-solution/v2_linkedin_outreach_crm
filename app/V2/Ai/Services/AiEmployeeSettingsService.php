@@ -29,7 +29,7 @@ class AiEmployeeSettingsService
                 'enabled' => (bool) config('socifusion_ai.enabled', true),
                 'kill_switch' => (bool) config('socifusion_ai.kill_switch', false),
                 'autonomy_level' => (int) config('socifusion_ai.default_autonomy_level', 2),
-                'employee_name' => (string) config('socifusion_ai.employee_name', 'Alex'),
+                'employee_name' => (string) config('socifusion_ai.employee_name', 'Soci'),
                 'allowed_execute_tools' => config('socifusion_ai.default_allowed_execute_tools', []),
             ]
         );

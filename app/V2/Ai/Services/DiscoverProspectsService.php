@@ -6,7 +6,10 @@ use App\Models\Audience;
 use App\Models\AudienceList;
 use App\Models\User;
 use App\V2\Ai\Support\PlanLeadList;
+use App\V2\Integrations\Mindcase\MindcaseClient;
+use App\V2\Outreach\OutreachChannelGuard;
 use App\V2\Services\LeadListService;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class DiscoverProspectsService
@@ -14,11 +17,21 @@ class DiscoverProspectsService
     /** Minimum score to treat a saved list as an intentional match (not engagers fallback). */
     public const STRONG_MATCH_SCORE = 10;
 
+    /** Max prospects fetched/saved in one pull across any channel. */
+    public const MAX_TARGET_COUNT = 100;
+
+    /** Prevents discover() → discoverParallel() → discover() stack overflow. */
+    private bool $insideParallel = false;
+
     public function __construct(
         private readonly LeadListService $leadLists,
         private readonly ProspectAudienceResolverService $audienceResolver,
         private readonly LinkedInAudienceBuilderService $linkedInAudience,
         private readonly InstagramAudienceBuilderService $instagramAudience,
+        private readonly WorkspaceContextService $workspaceContext,
+        private readonly SingleChannelOutreachService $singleChannel,
+        private readonly OutreachChannelGuard $channelGuard,
+        private readonly MindcaseClient $mindcase,
     ) {}
 
     /**
@@ -42,19 +55,58 @@ class DiscoverProspectsService
         string $platform = 'linkedin',
     ): array {
         $platform = Str::lower(trim($platform));
+        if ($platform === '') {
+            $platform = 'auto';
+        }
+
+        if (app(UserTurnIntentService::class)->wantsFreshProspectPull($query)) {
+            $preferFresh = true;
+        }
+
+        if (! $this->insideParallel && $this->shouldUseParallelDiscovery($user, $platform)) {
+            $this->insideParallel = true;
+            try {
+                return $this->discoverParallel(
+                $user,
+                $query,
+                $competitors,
+                $limit,
+                $targetCount,
+                $preferFresh,
+                $geography,
+                $networkDegree,
+                $title,
+                $company,
+                $openLink,
+                $profileUrl,
+            );
+            } finally {
+                $this->insideParallel = false;
+            }
+        }
+
         if (in_array($platform, ['instagram', 'ig'], true)) {
             return $this->discoverInstagram(
                 $user,
                 $query,
-                $targetCount ?? max(10, $limit),
+                $this->normalizeTargetCount($targetCount) ?? max(1, $limit),
                 $profileUrl,
+                $geography,
+                $preferFresh,
             );
         }
 
         $limit = max(1, min(20, $limit));
-        $query = trim($query);
+        $targetCount = $this->normalizeTargetCount($targetCount);
+        $query = trim($this->workspaceContext->enrichDiscoveryQuery(
+            $user,
+            (int) ($user->current_organization_id ?? 0),
+            $query,
+        ));
         $competitorNames = array_values(array_filter(array_map('trim', explode(',', (string) $competitors))));
-        $targetCount = $targetCount !== null ? max(10, min(500, $targetCount)) : null;
+        if ($targetCount === null) {
+            $targetCount = $this->inferCountFromQuery($query);
+        }
 
         // Any explicit net-new size (or prefer_fresh) → LinkedIn search + SAVE, do not reuse engagers lists.
         $forceFresh = $preferFresh || $targetCount !== null || ($profileUrl !== null && trim($profileUrl) !== '');
@@ -74,7 +126,7 @@ class DiscoverProspectsService
             'goal' => $query,
             'icp_notes' => $query,
             'audience' => $query,
-            'target_count' => $profileUrl ? 1 : ($targetCount ?? 100),
+            'target_count' => $profileUrl ? 1 : ($targetCount ?? $this->inferCountFromQuery($query) ?? $limit),
             'prefer_fresh_audience' => $forceFresh,
             'geography' => $geography,
             'network_degree' => $networkDegree,
@@ -138,6 +190,8 @@ class DiscoverProspectsService
                 $resolved = $autoSourced;
                 $merged = $merged->prepend(array_merge($autoSourced, [
                     'origin' => 'linkedin_search',
+                    'primary_channel' => 'linkedin',
+                    'platform' => 'linkedin',
                     'note' => 'Fetched from LinkedIn and saved'
                         .($targetCount ? " (target {$targetCount})" : ''),
                     'match_score' => 100,
@@ -150,7 +204,7 @@ class DiscoverProspectsService
         $nextSteps = [];
         if ($resolved === null && $merged->isEmpty()) {
             $nextSteps = [
-                'Connect LinkedIn in SociFusion → Integrations, then ask again — Alex will fetch and save matching profiles.',
+                'Connect LinkedIn in SociFusion → Integrations, then ask again — Soci will fetch and save matching profiles.',
                 'Or import / build a lead list in SociFusion → Leads',
                 'Or share a competitor LinkedIn company URL to harvest engagers',
             ];
@@ -165,7 +219,7 @@ class DiscoverProspectsService
                 'Prepared filters: keywords="'.($previewFilters['keywords'] ?? '').'"'
                     .' title='.($previewFilters['title'] ?? 'any')
                     .' location='.($previewFilters['location'] ?? 'any'),
-                'Alex retries broader variants automatically — ask again, or check LinkedIn under Integrations.',
+                'Soci retries broader variants automatically — ask again, or check LinkedIn under Integrations.',
             ];
         } elseif ($autoSourced !== null) {
             $found = (int) ($resolved['total_leads'] ?? 0);
@@ -205,7 +259,7 @@ class DiscoverProspectsService
                     .'. Use this when drafting a personalized one-shot.';
             }
             if ($targetCount !== null && $found < $targetCount) {
-                $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Ask Alex to discover again to grow this same saved list (<=100 per run).";
+                $nextSteps[] = "Found {$found} of ~{$targetCount} requested. Ask Soci to discover again to grow this same saved list (<=100 per run).";
             }
             $nextSteps = array_merge($nextSteps, [
                 '- propose_strategy or draft_campaign_plan USING this list_hash (do not swap to an old engagers list)',
@@ -225,6 +279,8 @@ class DiscoverProspectsService
 
         return [
             'query' => $query,
+            'platform' => 'linkedin',
+            'primary_channel' => 'linkedin',
             'lists' => $merged->take($limit)->values()->all(),
             'competitor_audiences' => $competitorAudiences,
             'best_match' => $resolved,
@@ -243,7 +299,7 @@ class DiscoverProspectsService
                 : null,
             'next_steps' => $nextSteps,
             'limits' => [
-                'note' => 'When target_count / prefer_fresh is set, Alex ALWAYS fetches LinkedIn profiles and saves a new list. Saved engagers lists are only reused on a strong name match when you did not ask for a fresh count.',
+                'note' => 'When target_count / prefer_fresh is set, Soci ALWAYS fetches LinkedIn profiles and saves a new list. Saved engagers lists are only reused on a strong name match when you did not ask for a fresh count.',
                 'linkedin_search_cap' => 'Each LinkedIn fetch returns up to ~100 profiles and is saved under Leads. Repeat discover_prospects to grow the same list.',
                 'search_params' => 'Pass geography, network_degree (1st|2nd|3rd / F|S|O), title, company, open_link. Unipile classic people search.',
                 'competitor_harvest' => 'Optional: prepare_competitor_harvest for engagers from a competitor post/profile.',
@@ -259,7 +315,11 @@ class DiscoverProspectsService
         string $query,
         int $limit,
         ?string $profileUrl,
+        ?string $geography = null,
+        bool $forceFresh = false,
     ): array {
+        $query = $this->instagramQueryWithLocation($query, $geography);
+
         // Keyword is primary. Only force username lookup for @handle or profile URL.
         $usernames = [];
         if ($profileUrl && preg_match('~instagram\.com/([^/?#]+)~i', $profileUrl, $m)) {
@@ -273,11 +333,15 @@ class DiscoverProspectsService
         $built = $this->instagramAudience->searchAndPersist(
             $user,
             $query,
-            max(1, min(250, $limit)),
+            max(1, min(self::MAX_TARGET_COUNT, $limit)),
             $usernames !== [] ? $usernames : null,
+            forceFresh: $forceFresh,
         );
 
         if ($built === null) {
+            $failureReason = $this->instagramAudience->lastError()
+                ?? 'Instagram search returned no profiles. Check MINDCASE_API_KEY or try a simpler keyword.';
+
             return [
                 'query' => $query,
                 'platform' => 'instagram',
@@ -285,10 +349,12 @@ class DiscoverProspectsService
                 'best_match' => null,
                 'ready_for_campaign' => false,
                 'auto_sourced' => false,
+                'search_failed' => true,
+                'failure_reason' => $failureReason,
                 'sample_profiles' => [],
                 'next_steps' => [
-                    'Instagram search needs MINDCASE_API_KEY from https://console.mindcase.co',
-                    'Or save_contacts with instagram=@handle, then draft_campaign_plan channels=Instagram.',
+                    $failureReason,
+                    'Try again with a shorter keyword, or search from Leads → Find Instagram leads (max '.self::MAX_TARGET_COUNT.' per pull).',
                 ],
             ];
         }
@@ -313,16 +379,289 @@ class DiscoverProspectsService
         return [
             'query' => $query,
             'platform' => 'instagram',
-            'lists' => [$built],
-            'best_match' => $built,
+            'primary_channel' => 'instagram',
+            'lists' => [array_merge($built, ['primary_channel' => 'instagram'])],
+            'best_match' => array_merge($built, ['primary_channel' => 'instagram']),
             'total_leads_in_matches' => $built['total_leads'],
             'ready_for_campaign' => true,
             'auto_sourced' => true,
             'fresh_fetch' => true,
             'sample_profiles' => $samples,
-            'campaign_hint' => 'Instagram list: plan Instagram DM / one_shot. Prepare contacts to resolve handles if needed.',
+            'campaign_hint' => 'Instagram list: single-channel Instagram outreach only — do not mix LinkedIn/email in the same sequence.',
             'next_steps' => $next,
         ];
+    }
+
+    /**
+     * Fan-out discovery across connected channels (LinkedIn + Instagram). Each list is tagged primary_channel.
+     *
+     * @return array<string, mixed>
+     */
+    private function discoverParallel(
+        User $user,
+        string $query,
+        ?string $competitors,
+        int $limit,
+        ?int $targetCount,
+        bool $preferFresh,
+        ?string $geography,
+        ?string $networkDegree,
+        ?string $title,
+        ?string $company,
+        ?bool $openLink,
+        ?string $profileUrl,
+    ): array {
+        if (app(UserTurnIntentService::class)->wantsFreshProspectPull($query)) {
+            $preferFresh = true;
+        }
+
+        $channels = $this->parallelDiscoveryChannels($user);
+        if ($targetCount === null) {
+            $targetCount = $this->inferCountFromQuery($query);
+        }
+        if ($channels === []) {
+            return [
+                'mode' => 'parallel',
+                'query' => $query,
+                'platforms_searched' => [],
+                'lists' => [],
+                'ready_for_campaign' => false,
+                'next_steps' => [
+                    'Connect LinkedIn and/or Instagram on Integrations, then ask Soci to find customers again.',
+                ],
+            ];
+        }
+
+        $allocationPlan = app(PlatformAllocationService::class)->plan($user, $targetCount, $channels);
+        $allocation = $allocationPlan['allocation'];
+        $forceFreshPull = $preferFresh || $targetCount !== null;
+        $activeChannels = array_values(array_filter(
+            $allocation,
+            fn (int $count) => $count > 0,
+        ));
+        $activeChannelCount = count($activeChannels);
+        $streamProgress = $activeChannelCount > 1;
+        $progress = app(WebChatTurnProgressService::class);
+        $completedChannels = 0;
+
+        if ($streamProgress) {
+            $progress->status('Searching LinkedIn profiles…');
+        }
+
+        $channelResults = [];
+        foreach ($allocation as $channel => $channelTarget) {
+            if ($channelTarget <= 0) {
+                continue;
+            }
+            if ($channel === 'linkedin') {
+                $channelResults['linkedin'] = $this->discover(
+                    $user,
+                    $query,
+                    $competitors,
+                    $limit,
+                    $channelTarget,
+                    $forceFreshPull,
+                    $geography,
+                    $networkDegree,
+                    $title,
+                    $company,
+                    $openLink,
+                    $profileUrl,
+                    'linkedin',
+                );
+            } elseif ($channel === 'instagram') {
+                Log::info('[Soci] Instagram discovery starting', [
+                    'user_id' => $user->id,
+                    'target' => $channelTarget,
+                    'force_fresh' => $forceFreshPull,
+                ]);
+                $channelResults['instagram'] = $this->discoverInstagram(
+                    $user,
+                    $query,
+                    $channelTarget,
+                    $profileUrl,
+                    $geography,
+                    $forceFreshPull,
+                );
+            } else {
+                continue;
+            }
+
+            $completedChannels++;
+            if ($streamProgress) {
+                $remaining = $activeChannelCount - $completedChannels;
+                $progress->afterDiscoveryChannel(
+                    channel: (string) $channel,
+                    result: $channelResults[$channel],
+                    moreChannelsPending: $remaining > 0,
+                    nextLabel: $remaining > 0 ? $this->nextDiscoveryProgressLabel($allocation, $completedChannels) : null,
+                    allChannelResults: $channelResults,
+                );
+            }
+        }
+
+        $lists = collect($channelResults)
+            ->flatMap(function (array $result, string $channel) {
+                return collect($result['lists'] ?? [])
+                    ->map(fn (array $row) => array_merge($row, [
+                        'primary_channel' => $row['primary_channel'] ?? $channel,
+                        'first_degree_only' => (bool) ($row['first_degree_only'] ?? $result['first_degree_only'] ?? false),
+                    ]));
+            })
+            ->values()
+            ->all();
+
+        $ready = collect($channelResults)->contains(fn (array $r) => ! empty($r['ready_for_campaign']));
+        $next = [
+            $allocationPlan['summary'],
+            'Do not call draft_campaign_plan yourself if staged_campaigns is already filled — one campaign is created per platform.',
+            'First message is written per person after research. LinkedIn DMs wait until the invite is accepted.',
+        ];
+
+        foreach ($channelResults as $channel => $result) {
+            $best = $result['best_match'] ?? null;
+            if (is_array($best) && ! empty($best['list_hash'])) {
+                $next[] = strtoupper($channel).': '.$best['list_name']
+                    .' ('.($best['total_leads'] ?? 0).' leads) list_hash='.$best['list_hash']
+                    .' list_src='.($best['list_src'] ?? 'csv');
+            }
+        }
+
+        return [
+            'mode' => 'parallel',
+            'query' => $query,
+            'allocation' => $allocationPlan,
+            'platforms_searched' => array_keys($channelResults),
+            'channel_results' => $channelResults,
+            'lists' => $lists,
+            'total_leads_in_matches' => (int) collect($lists)->sum(fn (array $r) => (int) ($r['total_leads'] ?? 0)),
+            'ready_for_campaign' => $ready,
+            'single_channel_rule' => 'Never mix channels in one outreach sequence. Follow up on the channel where the prospect was found.',
+            'next_steps' => $next,
+        ];
+    }
+
+    public function normalizeTargetCount(?int $targetCount): ?int
+    {
+        if ($targetCount === null || $targetCount <= 0) {
+            return null;
+        }
+
+        return max(1, min(self::MAX_TARGET_COUNT, $targetCount));
+    }
+
+    public function inferCountFromQuery(string $query): ?int
+    {
+        if (preg_match('/\b(?:more|another|extra)\s+(\d{1,3})\b/i', $query, $matches)) {
+            return $this->normalizeTargetCount((int) $matches[1]);
+        }
+
+        if (preg_match('/\b(\d{1,3})\s+more\b/i', $query, $matches)) {
+            return $this->normalizeTargetCount((int) $matches[1]);
+        }
+
+        if (preg_match('/\b(\d{1,3})\s*(customers|prospects|leads|people|profiles)\b/i', $query, $matches)) {
+            return $this->normalizeTargetCount((int) $matches[1]);
+        }
+
+        if (preg_match('/\b(\d{1,3})\s+of\s+them\b/i', $query, $matches)) {
+            return $this->normalizeTargetCount((int) $matches[1]);
+        }
+
+        if (preg_match('/\blike\s+(\d{1,3})\b/i', $query, $matches)) {
+            return $this->normalizeTargetCount((int) $matches[1]);
+        }
+
+        if (preg_match('/\b(\d{1,3})\s+or\s+above\b/i', $query, $matches)) {
+            return $this->normalizeTargetCount((int) $matches[1]);
+        }
+
+        if (preg_match('/\b(?:about|around|up\s+to)\s+(\d{1,3})\b/i', $query, $matches)) {
+            return $this->normalizeTargetCount((int) $matches[1]);
+        }
+
+        if (preg_match('/\bjust\s+(\d{1,3})\b/i', $query, $matches)) {
+            return $this->normalizeTargetCount((int) $matches[1]);
+        }
+
+        return null;
+    }
+
+    private function shouldUseParallelDiscovery(User $user, string $platform): bool
+    {
+        $platform = Str::lower(trim($platform));
+
+        if (in_array($platform, ['all', 'parallel', 'multi', 'multichannel', 'auto', 'default'], true)) {
+            return true;
+        }
+
+        if (in_array($platform, ['instagram', 'ig'], true)) {
+            return false;
+        }
+
+        return count($this->parallelDiscoveryChannels($user)) >= 2;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function parallelDiscoveryChannels(User $user): array
+    {
+        $channels = [];
+
+        if ($this->channelGuard->isChannelConnected($user->id, 'linkedin')) {
+            $channels[] = 'linkedin';
+        }
+
+        if ($this->channelGuard->isChannelConnected($user->id, 'instagram') && $this->mindcase->configured()) {
+            $channels[] = 'instagram';
+        }
+
+        return $channels;
+    }
+
+    /**
+     * @param  array<string, int>  $allocation
+     */
+    private function nextDiscoveryProgressLabel(array $allocation, int $completedChannels): string
+    {
+        $pending = [];
+        $index = 0;
+        foreach ($allocation as $channel => $target) {
+            if ($target <= 0) {
+                continue;
+            }
+            $index++;
+            if ($index <= $completedChannels) {
+                continue;
+            }
+            $pending[] = ucfirst((string) $channel);
+        }
+
+        if ($pending === []) {
+            return 'Finishing up…';
+        }
+
+        $next = $pending[0];
+
+        return "Searching {$next} profiles now — this can take a few minutes.";
+    }
+
+    private function instagramQueryWithLocation(string $query, ?string $geography): string
+    {
+        $base = trim($query);
+        $geo = trim((string) $geography);
+        if ($geo === '') {
+            return $base;
+        }
+
+        $geoLower = Str::lower($geo);
+        $baseLower = Str::lower($base);
+        if ($baseLower !== '' && str_contains($baseLower, $geoLower)) {
+            return $base;
+        }
+
+        return trim($base.' '.$geo);
     }
 
     /**

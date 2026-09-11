@@ -6,6 +6,7 @@ use App\Models\User;
 use App\V2\Integrations\Mindcase\MindcaseClient;
 use App\V2\Outreach\OutreachImportListService;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
@@ -16,10 +17,17 @@ use Throwable;
  */
 class InstagramAudienceBuilderService
 {
+    private ?string $lastError = null;
+
     public function __construct(
         private readonly MindcaseClient $mindcase,
         private readonly OutreachImportListService $imports,
     ) {}
+
+    public function lastError(): ?string
+    {
+        return $this->lastError;
+    }
 
     /**
      * @param  list<string>|null  $usernames
@@ -40,16 +48,39 @@ class InstagramAudienceBuilderService
         ?int $limit = 25,
         ?array $usernames = null,
         ?string $listName = null,
+        bool $forceFresh = false,
     ): ?array {
+        $this->lastError = null;
+
         if (! $this->mindcase->configured()) {
-            Log::info('[Alex] Instagram search skipped — MINDCASE_API_KEY not set', [
+            $this->lastError = 'Mindcase is not configured. Add MINDCASE_API_KEY from https://console.mindcase.co';
+            Log::info('[Soci] Instagram search skipped — MINDCASE_API_KEY not set', [
                 'user_id' => $user->id,
             ]);
 
             return null;
         }
 
-        $cap = max(1, min(250, $limit ?? 25));
+        $cap = max(1, min($this->mindcase->maxResultsCap(), $limit ?? 25));
+        $cacheKey = 'soci:recent-ig-search:'.$user->id;
+        if ($forceFresh) {
+            Cache::forget($cacheKey);
+        }
+        $cached = $forceFresh ? null : Cache::get($cacheKey);
+        if (is_array($cached) && (int) ($cached['total_leads'] ?? 0) >= min($cap, 1)) {
+            Log::info('[Soci] Reusing recent Instagram list — not searching again', [
+                'user_id' => $user->id,
+                'list_hash' => $cached['list_hash'] ?? null,
+            ]);
+
+            return $cached;
+        }
+
+        Log::info('[Soci] Instagram Mindcase search starting', [
+            'user_id' => $user->id,
+            'query' => Str::limit($query, 120),
+            'target' => $cap,
+        ]);
         $handles = [];
         foreach ($usernames ?? [] as $u) {
             $h = $this->cleanHandle((string) $u);
@@ -65,7 +96,8 @@ class InstagramAudienceBuilderService
                 maxResults: $cap,
             );
         } catch (Throwable $e) {
-            Log::warning('[Alex] Instagram Mindcase search failed', [
+            $this->lastError = $e->getMessage();
+            Log::warning('[Soci] Instagram Mindcase search failed', [
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
             ]);
@@ -74,6 +106,8 @@ class InstagramAudienceBuilderService
         }
 
         if ($rows === []) {
+            $this->lastError = 'No Instagram profiles matched that search. Try a simpler keyword or fewer results.';
+
             return null;
         }
 
@@ -119,7 +153,7 @@ class InstagramAudienceBuilderService
 
         $result = $this->imports->createFromContactMaps($user, $name.' ('.count($contacts).')', $contacts);
 
-        return [
+        $saved = [
             'list_hash' => (string) $result['list']['list_hash'],
             'list_src' => 'csv',
             'list_name' => (string) ($result['list']['list_name'] ?? $name),
@@ -130,6 +164,9 @@ class InstagramAudienceBuilderService
             'platform' => 'instagram',
             'profile_detail' => $samples[0] ?? null,
         ];
+        Cache::put($cacheKey, $saved, now()->addMinutes(30));
+
+        return $saved;
     }
 
     private function cleanHandle(string $value): string

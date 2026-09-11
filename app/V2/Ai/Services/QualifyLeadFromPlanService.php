@@ -41,8 +41,17 @@ class QualifyLeadFromPlanService
         $updates = ['meta' => $meta];
         if ($stage === 'disqualified') {
             $updates['status'] = 'skipped';
-        } elseif (in_array($stage, ['sql', 'qualified', 'meeting_booked'], true) && $lead->status === 'replied') {
+        } elseif (in_array($stage, ['sql', 'qualified', 'meeting_booked', 'customer'], true) && $lead->status === 'replied') {
             $updates['status'] = 'replied';
+        }
+
+        if ($stage === 'customer') {
+            $meta['conversion'] = [
+                'stage' => 'customer',
+                'converted_at' => Carbon::now()->toIso8601String(),
+                'source' => 'command_center',
+            ];
+            $updates['meta'] = $meta;
         }
 
         $lead->update($updates);

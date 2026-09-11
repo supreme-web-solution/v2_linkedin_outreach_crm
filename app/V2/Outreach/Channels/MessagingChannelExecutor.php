@@ -44,6 +44,9 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
         $row = $this->leadContactRow($lead);
         $recipientId = $this->contactResolver->messagingRecipientId($row, $this->channelKey);
         if ($recipientId === null || $recipientId === '') {
+            $recipientId = $this->resolveRecipientIdJustInTime($campaign, $lead, $row);
+        }
+        if ($recipientId === null || $recipientId === '') {
             $hint = match ($this->channelKey) {
                 'whatsapp' => 'Run Verify WhatsApp before sending.',
                 'instagram', 'twitter' => 'Run Resolve handles before sending.',
@@ -55,8 +58,19 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
 
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $message = $this->resolver->messageText($node, $firstName);
-        $message = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
-            ->resolveMessageText($lead, $message);
+        $isFollowUp = (bool) preg_match('/follow[- ]?up|bump|check(ing)? in/i', (string) ($node['label'] ?? ''));
+        $personalize = ! empty($node['config']['personalize_before_send']);
+        $personalizer = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class);
+        $prepared = $isFollowUp
+            ? $personalizer->messageForFollowUpSend($lead, $campaign, $node, $message)
+            : $personalizer->messageForFirstSend($lead, $campaign, $message);
+        if ($prepared === null && $personalize) {
+            return [
+                'status' => 'deferred',
+                'error_message' => 'Waiting to research this profile before the first message.',
+            ];
+        }
+        $message = $prepared ?? $message;
 
         $owner = \App\Models\User::query()->find((int) $campaign->user_id);
         $message = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound($message, [
@@ -197,5 +211,53 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
             'twitter_handle' => trim((string) ($meta['twitter_handle'] ?? '')),
             'twitter_provider_id' => trim((string) ($meta['twitter_provider_id'] ?? '')),
         ];
+    }
+
+    /**
+     * Try to resolve social recipient id on first send so IG/Twitter can run
+     * from saved handles without requiring manual "Prepare contacts" first.
+     *
+     * @param  array<string, mixed>  $row
+     */
+    private function resolveRecipientIdJustInTime(V2OutreachCampaign $campaign, V2OutreachLead $lead, array $row): ?string
+    {
+        if (! in_array($this->channelKey, ['instagram', 'telegram', 'twitter'], true)) {
+            return null;
+        }
+
+        $field = $this->channelKey.'_provider_id';
+        $existing = trim((string) ($row[$field] ?? ''));
+        if ($existing !== '') {
+            return $existing;
+        }
+
+        $identifier = trim((string) ($row[$this->channelKey.'_handle'] ?? ''));
+        if ($identifier === '' && $this->channelKey === 'telegram') {
+            $identifier = preg_replace('/\D+/', '', (string) ($row['phone'] ?? '')) ?? '';
+        }
+        if ($identifier === '') {
+            return null;
+        }
+
+        $owner = \App\Models\User::query()->find((int) $campaign->user_id);
+        if (! $owner) {
+            return null;
+        }
+
+        try {
+            $providerId = (string) app(\App\V2\Services\UnipileProfileContactService::class)
+                ->resolvePlatformIdentifier($owner, $this->channelKey, $identifier);
+            if ($providerId === '') {
+                return null;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $meta = is_array($lead->meta) ? $lead->meta : [];
+        $meta[$field] = $providerId;
+        $lead->forceFill(['meta' => $meta])->save();
+
+        return $providerId;
     }
 }

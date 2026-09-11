@@ -6,6 +6,7 @@ use App\V2\Ai\AgentContext;
 use App\V2\Ai\Enums\AiToolPermission;
 use App\V2\Ai\Services\AiActionLogService;
 use App\V2\Ai\Services\AiEmployeeSettingsService;
+use App\V2\Ai\Services\WebChatTurnProgressService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Tools\Request;
@@ -30,6 +31,7 @@ abstract class GatedTool implements Tool
         $settingsService = app(AiEmployeeSettingsService::class);
         $logger = app(AiActionLogService::class);
         $settings = $this->context->activeSettings();
+        $progress = app(WebChatTurnProgressService::class);
 
         if (! $settingsService->mayRun($settings, $this->permission(), $this->toolName())) {
             $logger->log(
@@ -51,9 +53,17 @@ abstract class GatedTool implements Tool
         }
 
         try {
+            if ($progress->active()) {
+                $progress->status($progress->labelForTool($this->toolName()));
+            }
+
             $result = $this->run($request);
             $payload = is_array($result) ? $result : ['message' => (string) $result];
             $durationMs = (int) ((hrtime(true) - $started) / 1_000_000);
+
+            if ($progress->active()) {
+                $progress->relayToolComplete($this->toolName(), $payload, $durationMs);
+            }
 
             $logger->log(
                 $this->context->user,

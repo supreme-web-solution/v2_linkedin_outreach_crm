@@ -57,7 +57,7 @@ class BookMeetingCommandCenterService
         if (! $this->calendar->isAvailable($user->id)) {
             return [
                 'blocked' => true,
-                'message' => 'Connect Google or Outlook calendar on Integrations before Alex can send booking links.',
+                'message' => 'Connect Google or Outlook calendar on Integrations before Soci can send booking links.',
             ];
         }
 

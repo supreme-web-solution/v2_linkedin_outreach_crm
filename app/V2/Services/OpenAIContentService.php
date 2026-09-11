@@ -11,7 +11,7 @@ class OpenAIContentService
 {
     public function isConfigured(): bool
     {
-        return $this->apiKey() !== '';
+        return $this->apiKey() !== '' || $this->openRouterKey() !== '';
     }
 
     /**
@@ -188,27 +188,77 @@ PROMPT;
 
     private function chatCompletion(string $prompt, int $maxTokens = 700, float $temperature = 0.8): string
     {
-        $response = Http::withToken($this->apiKey())
-            ->timeout(60)
-            ->post('https://api.openai.com/v1/chat/completions', [
-                'model' => 'gpt-4o-mini',
-                'messages' => [
-                    ['role' => 'system', 'content' => 'You are an expert LinkedIn copywriter.'],
-                    ['role' => 'user', 'content' => $prompt],
-                ],
-                'max_tokens' => $maxTokens,
-                'temperature' => $temperature,
+        $lastError = 'AI is not configured.';
+
+        foreach ($this->chatEndpoints() as $endpoint) {
+            $response = Http::withToken($endpoint['key'])
+                ->timeout(60)
+                ->withHeaders($endpoint['headers'])
+                ->post($endpoint['url'], [
+                    'model' => $endpoint['model'],
+                    'messages' => [
+                        ['role' => 'system', 'content' => 'You are an expert outreach copywriter. Write only the message the recipient should read.'],
+                        ['role' => 'user', 'content' => $prompt],
+                    ],
+                    'max_tokens' => $maxTokens,
+                    'temperature' => $temperature,
+                ]);
+
+            if ($response->ok()) {
+                return trim((string) Arr::get($response->json(), 'choices.0.message.content', ''));
+            }
+
+            $lastError = OpenAiUserError::fromHttp($response->status(), $response->body());
+            Log::warning('[OpenAIContentService] Chat completion failed, trying next model', [
+                'provider' => $endpoint['name'],
+                'status' => $response->status(),
             ]);
 
-        if (!$response->ok()) {
-            Log::warning('[OpenAIContentService] Chat completion failed', [
-                'status' => $response->status(),
-                'body' => substr($response->body(), 0, 400),
-            ]);
-            throw new \RuntimeException(OpenAiUserError::fromHttp($response->status(), $response->body()));
+            if (! in_array($response->status(), [402, 429, 500, 502, 503], true)) {
+                break;
+            }
         }
 
-        return trim((string) Arr::get($response->json(), 'choices.0.message.content', ''));
+        throw new \RuntimeException($lastError);
+    }
+
+    /**
+     * @return list<array{name:string, url:string, key:string, model:string, headers:array<string, string>}>
+     */
+    private function chatEndpoints(): array
+    {
+        $endpoints = [];
+        $openAi = $this->apiKey();
+        if ($openAi !== '') {
+            $endpoints[] = [
+                'name' => 'openai',
+                'url' => 'https://api.openai.com/v1/chat/completions',
+                'key' => $openAi,
+                'model' => (string) config('socifusion_ai.model_failover.openai', 'gpt-4o-mini') ?: 'gpt-4o-mini',
+                'headers' => [],
+            ];
+        }
+
+        $router = $this->openRouterKey();
+        if ($router !== '') {
+            $endpoints[] = [
+                'name' => 'openrouter',
+                'url' => 'https://openrouter.ai/api/v1/chat/completions',
+                'key' => $router,
+                'model' => (string) config('socifusion_ai.model_failover.openrouter', 'openai/gpt-4o-mini'),
+                'headers' => [
+                    'HTTP-Referer' => (string) config('app.url'),
+                    'X-Title' => 'SociFusion',
+                ],
+            ];
+        }
+
+        return $endpoints;
+    }
+
+    private function openRouterKey(): string
+    {
+        return trim((string) config('ai.providers.openrouter.key', ''));
     }
 
     /**

@@ -44,8 +44,8 @@ class DraftCampaignPlanTool extends GatedTool
             'channels' => $schema->string()->nullable()->description('Default: LinkedIn + Email. When user asks: Instagram, Telegram, WhatsApp (or combos).'),
             'follow_up_days' => $schema->integer()->min(1)->max(90)->nullable(),
             'source' => $schema->string()->nullable()->description('e.g. competitor audiences, LinkedIn search'),
-            'pause_on_reply' => $schema->boolean()->nullable()->description('Default true. When a prospect replies, pause the sequence so Alex/human can reply in inbox chat context.'),
-            'auto_reply_enabled' => $schema->boolean()->nullable()->description('Default false. Only enable when the user wants campaign auto-replies from AI context without waiting for Alex.'),
+            'pause_on_reply' => $schema->boolean()->nullable()->description('Default true. When a prospect replies, pause the sequence so Soci/human can reply in inbox chat context.'),
+            'auto_reply_enabled' => $schema->boolean()->nullable()->description('Default false. Only enable when the user wants campaign auto-replies from AI context without waiting for Soci.'),
             'ai_context' => $schema->string()->nullable()->description('Short product/offer context for inbox AI replies on this campaign.'),
             'sequence' => $schema->array()->nullable()->description(
                 'Ordered prose steps chosen for THIS goal. LinkedIn example: '
@@ -75,6 +75,17 @@ class DraftCampaignPlanTool extends GatedTool
 
     protected function run(Request $request): array
     {
+        $ledger = app(\App\V2\Ai\Services\TurnExecutionLedger::class);
+        if ($ledger->ownsTurnResult()) {
+            return [
+                'blocked' => true,
+                'already_executed' => true,
+                'do_not_draft_again' => true,
+                'report' => $ledger->report(),
+                'instruction' => 'Campaigns for this request already exist — one per platform from the planned split. Do not create another campaign and do not search again.',
+            ];
+        }
+
         $channels = (string) ($request['channels'] ?? app(\App\V2\Ai\Services\AiChannelPolicyService::class)->defaultChannelsLabel());
         $days = (int) ($request['follow_up_days'] ?? 21);
         $explicitTarget = array_key_exists('target_count', $request->all());
@@ -86,13 +97,25 @@ class DraftCampaignPlanTool extends GatedTool
             || (bool) preg_match('/one[-\s]?time|one[-\s]?shot|greeting|just (a )?message|single (email|message)|message (him|her|them)/i', (string) $request['goal']);
 
         $profileUrl = trim((string) ($request['profile_url'] ?? ''));
+        $instagramHandle = trim((string) ($request['instagram_handle'] ?? ''));
+        $blob = (string) $request['goal'].' '.(string) $request['audience'].' '.(string) ($request['message'] ?? '').' '.(string) ($request['profile_url'] ?? '');
         if ($profileUrl === '' || ! preg_match('#linkedin\.com/in/#i', $profileUrl)) {
-            $blob = (string) $request['goal'].' '.(string) $request['audience'].' '.(string) ($request['message'] ?? '');
             if (preg_match('#https?://(?:www\.)?linkedin\.com/in/[\w%-]+/?#i', $blob, $m)) {
                 $profileUrl = $m[0];
             }
         }
-        if ($profileUrl !== '') {
+        if ($instagramHandle === '') {
+            if (preg_match('#https?://(?:www\.)?instagram\.com/([a-z0-9._]{1,30})/?#i', $blob, $ig)) {
+                $instagramHandle = ltrim($ig[1], '@');
+            } elseif (preg_match('/(?:^|\s)@([a-z0-9._]{2,30})(?:\s|$)/i', $blob, $at)
+                && str_contains(strtolower($channels), 'instagram')) {
+                $instagramHandle = $at[1];
+            }
+        }
+        if ($profileUrl !== '' && preg_match('#linkedin\.com/in/#i', $profileUrl)) {
+            $oneShot = true;
+        }
+        if ($instagramHandle !== '' && str_contains(strtolower($channels), 'instagram')) {
             $oneShot = true;
         }
 
@@ -156,6 +179,10 @@ class DraftCampaignPlanTool extends GatedTool
             'subject' => trim((string) ($request['subject'] ?? '')),
             'profile_url' => $profileUrl,
             'linkedin_url' => $profileUrl,
+            'instagram_handle' => $instagramHandle !== '' ? ltrim($instagramHandle, '@') : null,
+            'instagram_url' => $instagramHandle !== ''
+                ? 'https://www.instagram.com/'.ltrim($instagramHandle, '@')
+                : null,
             'sequence' => array_values(array_map('strval', $sequence)),
             'sequence_steps' => $oneShot ? null : (is_array($request['sequence_steps'] ?? null) ? $request['sequence_steps'] : null),
             'steps' => $oneShot
@@ -178,8 +205,9 @@ class DraftCampaignPlanTool extends GatedTool
         ];
 
         $plan = app(PlanContentService::class)->enrichCampaign($plan);
-        // Prefer profile_url import over a stale multi-lead list for one-shots.
-        if (! ($oneShot && $profileUrl !== '')) {
+        // Prefer profile URL / IG handle over a stale multi-lead list for one-shots.
+        $directOnePerson = $oneShot && ($profileUrl !== '' || $instagramHandle !== '');
+        if (! $directOnePerson) {
             $plan = PlanLeadList::merge(
                 $plan,
                 $request['list_hash'] ?? null,
@@ -192,12 +220,25 @@ class DraftCampaignPlanTool extends GatedTool
         $plan = app(\App\V2\Ai\Services\PlanFunnelService::class)
             ->attachToPlan($plan, $this->context->user);
 
+        $setupOnly = app(\App\V2\Ai\Services\UserTurnIntentService::class)
+            ->wantsCampaignSetupOnly((string) $request['goal']);
+        if ($setupOnly) {
+            $plan['setup_only'] = true;
+            $plan['status'] = 'awaiting_review';
+        }
+
         if ($this->context->autonomy()->value <= AiAutonomyLevel::Copilot->value) {
-            return [
+            $result = [
                 'approval_id' => null,
                 'plan' => $plan,
                 'card' => app(CommandCenterService::class)->formatPlanCard($plan, null, $this->context->channel),
             ];
+            if ($setupOnly) {
+                $result['setup_only'] = true;
+                $result['instruction'] = 'User asked to CREATE the campaign but NOT send or launch yet. Stage the plan only — do NOT LAUNCH, activate, or auto-send. Tell them it is ready in Review & Launch when they want to go live.';
+            }
+
+            return $result;
         }
 
         $approval = app(ActionApprovalService::class)->createPending(
@@ -209,11 +250,19 @@ class DraftCampaignPlanTool extends GatedTool
             $this->context->conversation,
         );
 
-        return [
+        $result = [
             'approval_id' => $approval->id,
             'plan' => $plan,
             'card' => app(CommandCenterService::class)->formatPlanCard($plan, $approval->id, $this->context->channel),
-            'cta' => 'User should Review & Launch.',
+            'cta' => $setupOnly
+                ? 'Campaign staged for Review & Launch — do NOT send until the user launches it.'
+                : 'User should Review & Launch.',
         ];
+        if ($setupOnly) {
+            $result['setup_only'] = true;
+            $result['instruction'] = 'User asked to CREATE the campaign but NOT send or launch yet. Do NOT LAUNCH or activate_outreach_campaign. Tell them the plan is ready in Review & Launch.';
+        }
+
+        return $result;
     }
 }

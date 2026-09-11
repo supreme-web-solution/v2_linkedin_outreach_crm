@@ -117,7 +117,7 @@ class ContentPostCommandCenterService
         $postMeta = array_merge([
             'post_type' => $imageMeta !== [] ? 'image' : 'text',
             'topic' => $topic !== '' ? $topic : null,
-            'created_by' => 'alex',
+            'created_by' => 'Soci',
             'style' => $style,
             'image_urls' => [],
             'image_paths' => [],
@@ -290,7 +290,7 @@ class ContentPostCommandCenterService
     }
 
     /**
-     * Cancel a draft/scheduled LinkedIn post created by Alex (Activity undo).
+     * Cancel a draft/scheduled LinkedIn post created by Soci (Activity undo).
      *
      * @return array{ok:bool, message:string, post_id?:int}
      */

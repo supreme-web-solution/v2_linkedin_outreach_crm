@@ -21,6 +21,11 @@ class MindcaseClient
         return trim((string) config('services.mindcase.api_key')) !== '';
     }
 
+    public function maxResultsCap(): int
+    {
+        return max(1, min(100, (int) config('socifusion_ai.max_prospect_pull', 100)));
+    }
+
     /**
      * Search or look up Instagram profiles.
      *
@@ -38,10 +43,12 @@ class MindcaseClient
             );
         }
 
+        $maxResults = max(1, min($this->maxResultsCap(), $maxResults));
+
         $params = array_filter([
             'query' => $query !== null && trim($query) !== '' ? trim($query) : null,
             'usernames' => $usernames !== [] ? array_values($usernames) : null,
-            'maxResults' => max(1, min(250, $maxResults)),
+            'maxResults' => $maxResults,
         ], fn ($v) => $v !== null);
 
         if (! isset($params['query']) && ! isset($params['usernames'])) {
@@ -49,8 +56,12 @@ class MindcaseClient
         }
 
         $base = $this->url('/v1/data/instagram/profiles/run');
+        $timeout = max(
+            (int) config('services.mindcase.timeout', 120),
+            min(300, 60 + ($maxResults * 2)),
+        );
         $response = Http::withToken((string) config('services.mindcase.api_key'))
-            ->timeout((int) config('services.mindcase.timeout', 90))
+            ->timeout($timeout)
             ->acceptJson()
             ->asJson()
             ->post($base.'?wait=true', [
@@ -78,16 +89,17 @@ class MindcaseClient
             return [];
         }
 
-        return $this->pollJobResults($jobId);
+        return $this->pollJobResults($jobId, $maxResults);
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    private function pollJobResults(string $jobId): array
+    private function pollJobResults(string $jobId, int $maxResults = 25): array
     {
-        $attempts = max(1, (int) config('services.mindcase.max_poll_attempts', 45));
         $sleep = max(1, (int) config('services.mindcase.poll_seconds', 2));
+        $baseAttempts = max(1, (int) config('services.mindcase.max_poll_attempts', 90));
+        $attempts = max($baseAttempts, (int) ceil($maxResults * 2));
 
         for ($i = 0; $i < $attempts; $i++) {
             $statusResp = Http::withToken((string) config('services.mindcase.api_key'))

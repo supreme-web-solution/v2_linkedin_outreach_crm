@@ -134,7 +134,7 @@ const adminNavItems = computed<NavItem[]>(() => {
     }
     if (isPlatformAdmin.value) {
         items.push({ title: 'Users', href: '/admin/users', icon: Users });
-        items.push({ title: 'Alex errors', href: '/admin/ai-errors', icon: AlertTriangle });
+        items.push({ title: 'Soci errors', href: '/admin/ai-errors', icon: AlertTriangle });
     }
     return items;
 });

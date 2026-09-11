@@ -1,1 +1,1 @@
-export const ALEX_AVATAR_SRC = '/images/avatars/alex.png';
+export const ALEX_AVATAR_SRC = '/images/avatars/Soci.png';

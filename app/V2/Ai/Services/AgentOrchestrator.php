@@ -18,6 +18,7 @@ class AgentOrchestrator
         private readonly AiEmployeeSettingsService $settingsService,
         private readonly CommandCenterService $commandCenter,
         private readonly AutonomyContextService $autonomyContext,
+        private readonly WebChatProcessingService $webChatProcessing,
     ) {}
 
     /**
@@ -139,6 +140,13 @@ class AgentOrchestrator
             'meta' => ['channel' => 'web', 'queued' => true],
         ]);
 
+        $this->webChatProcessing->markPending(
+            $conversation,
+            (int) $userMessage->id,
+            $promptMessage,
+            $organizationId,
+        );
+
         ProcessWebAiChatJob::dispatch(
             $user->id,
             $organizationId,
@@ -233,24 +241,89 @@ class AgentOrchestrator
             ];
         }
 
+        $processing = app(WebChatProcessingService::class);
         $alreadyReplied = AiMessage::query()
             ->where('conversation_id', $conversation->id)
             ->where('role', 'assistant')
             ->where('id', '>', $userMessage->id)
-            ->exists();
+            ->get(['content', 'meta'])
+            ->contains(fn (AiMessage $message) => $processing->isFinalAssistantReply(
+                $message->content,
+                $message->meta,
+            ));
 
         if ($alreadyReplied) {
+            $this->webChatProcessing->clearAll($conversation);
+
             return $this->payload($user, $organizationId, $conversation->id, '', null, $settings);
         }
 
-        return $this->runAgentAndPersistReply(
-            user: $user,
-            organizationId: $organizationId,
-            conversation: $conversation,
-            settings: $settings,
-            channel: 'web',
-            promptMessage: $promptMessage,
-        );
+        $this->webChatProcessing->start($conversation, 'Thinking…');
+        $this->webChatProcessing->markAgentRunning($conversation);
+
+        try {
+            return $this->runAgentAndPersistReply(
+                user: $user,
+                organizationId: $organizationId,
+                conversation: $conversation,
+                settings: $settings,
+                channel: 'web',
+                promptMessage: $promptMessage,
+            );
+        } finally {
+            $this->webChatProcessing->clearAll($conversation->fresh() ?? $conversation);
+        }
+    }
+
+    public function failQueuedWebTurn(
+        User $user,
+        int $organizationId,
+        int $conversationId,
+        int $userMessageId,
+        ?Throwable $exception = null,
+    ): void {
+        $conversation = AiConversation::query()
+            ->whereKey($conversationId)
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        if ($conversation) {
+            $this->webChatProcessing->clearAll($conversation);
+        }
+
+        if (! $conversation) {
+            return;
+        }
+
+        $alreadyReplied = AiMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', 'assistant')
+            ->where('id', '>', $userMessageId)
+            ->get(['content', 'meta'])
+            ->contains(fn (AiMessage $message) => app(WebChatProcessingService::class)->isFinalAssistantReply(
+                $message->content,
+                $message->meta,
+            ));
+
+        if ($alreadyReplied) {
+            return;
+        }
+
+        if ($exception !== null) {
+            report($exception);
+        }
+
+        AiMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'role' => 'assistant',
+            'content' => 'That took too long or hit an error while processing. Please try again — if it keeps failing, check the queue worker is running.',
+            'meta' => [
+                'channel' => 'web',
+                'queued_job_failed' => true,
+                'error' => $exception?->getMessage(),
+            ],
+        ]);
     }
 
     /**
@@ -391,18 +464,34 @@ class AgentOrchestrator
         );
 
         $latestApproval = null;
+        $ledger = app(TurnExecutionLedger::class);
+        $ledger->reset();
+        $progress = app(WebChatTurnProgressService::class);
+        $progress->bind($channel === 'web' ? $context : null);
+        $postedProgressFinal = false;
+        $reply = '';
 
         try {
-            $response = (new SociFusionAgent($context))->prompt($promptMessage);
-            $reply = trim((string) $response);
-            $latestApproval = $this->commandCenter->pendingApprovals($user, $organizationId)->first();
-
-            $latestApproval = $this->maybeAutoLaunchOutreachPlan(
-                $user,
-                $organizationId,
-                $reply,
-                $latestApproval,
+            $providers = app(AiProviderChain::class)->forAgent();
+            $response = (new SociFusionAgent($context))->prompt(
+                $promptMessage,
+                provider: $providers !== [] ? $providers : null,
             );
+            $reply = trim((string) $response);
+
+            if ($ledger->ownsTurnResult()) {
+                $reply = $ledger->report();
+                $latestApproval = null;
+            } else {
+                $latestApproval = $this->commandCenter->pendingApprovals($user, $organizationId)->first();
+                $latestApproval = $this->maybeAutoLaunchOutreachPlan(
+                    $user,
+                    $organizationId,
+                    $reply,
+                    $latestApproval,
+                    $promptMessage,
+                );
+            }
         } catch (Throwable $e) {
             report($e);
             try {
@@ -422,7 +511,17 @@ class AgentOrchestrator
             } catch (Throwable $logError) {
                 report($logError);
             }
-            $reply = 'I hit an error processing that. Please try again in a moment.';
+            $reply = $this->userFacingAgentError($e);
+            if ($ledger->ownsTurnResult()) {
+                $reply = $ledger->report();
+            }
+        } finally {
+            $postedProgressFinal = $progress->postedFinalReply();
+            $progress->bind(null);
+        }
+
+        if ($ledger->ownsTurnResult()) {
+            $reply = $ledger->report();
         }
 
         if ($reply === '') {
@@ -440,17 +539,34 @@ class AgentOrchestrator
             }
         }
 
-        AiMessage::query()->create([
-            'conversation_id' => $conversation->id,
-            'role' => 'assistant',
-            'content' => $reply,
-            'meta' => [
-                'channel' => $channel,
-                'approval_id' => $latestApproval?->id,
-            ],
-        ]);
+        if (! $postedProgressFinal) {
+            AiMessage::query()->create([
+                'conversation_id' => $conversation->id,
+                'role' => 'assistant',
+                'content' => $reply,
+                'meta' => [
+                    'channel' => $channel,
+                    'approval_id' => $latestApproval?->id,
+                ],
+            ]);
+        }
 
         return $this->payload($user, $organizationId, $conversation->id, $reply, $latestApproval, $settings);
+    }
+
+    private function userFacingAgentError(Throwable $e): string
+    {
+        $blob = strtolower($e->getMessage().' '.$e->getPrevious()?->getMessage());
+
+        if (str_contains($blob, 'no credits') || str_contains($blob, 'insufficient_quota') || str_contains($blob, 'billing')) {
+            return 'Soci could not finish that — the OpenAI account has no credits left. Add credits at platform.openai.com, or add an OPENROUTER_API_KEY so Soci can switch models, then send the message again.';
+        }
+
+        if (str_contains($blob, 'rate limit') || str_contains($blob, '429')) {
+            return 'Soci hit a model limit and no backup model is configured. Add an OPENROUTER_API_KEY (and credits) so the next attempt can switch providers, then try again.';
+        }
+
+        return 'I hit an error processing that. Please try again in a moment.';
     }
 
     private function maybeAutoLaunchOutreachPlan(
@@ -458,8 +574,17 @@ class AgentOrchestrator
         int $organizationId,
         string &$reply,
         ?AiActionApproval $latestApproval,
+        string $promptMessage = '',
     ): ?AiActionApproval {
         if (! $latestApproval || $latestApproval->status !== 'pending') {
+            return $latestApproval;
+        }
+
+        if (app(UserTurnIntentService::class)->wantsCampaignSetupOnly($promptMessage)) {
+            return $latestApproval;
+        }
+
+        if ((bool) data_get($latestApproval->payload, 'setup_only')) {
             return $latestApproval;
         }
 

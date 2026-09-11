@@ -17,9 +17,30 @@ class OnboardingWizardService
 {
     /** @var array<string, array<string, mixed>> */
     private const GOALS = [
+        'get_customers' => [
+            'label' => 'Get more customers',
+            'prompt' => 'Find my ideal customers and start qualified conversations that turn into paying clients',
+            'required_channels' => ['linkedin', 'email'],
+            'optional_channels' => ['whatsapp', 'instagram', 'telegram', 'google_calendar', 'outlook_calendar'],
+            'featured' => true,
+        ],
+        'find_prospects' => [
+            'label' => 'Find ideal customers',
+            'prompt' => 'Find my ideal customers on LinkedIn and Instagram, then start conversation-first outreach',
+            'required_channels' => ['linkedin'],
+            'optional_channels' => ['instagram', 'email'],
+            'featured' => true,
+        ],
+        'follow_up' => [
+            'label' => 'Turn replies into customers',
+            'prompt' => 'Who replied? Help me qualify these conversations and convert interested prospects into customers',
+            'required_channels' => ['linkedin', 'email'],
+            'optional_channels' => ['whatsapp', 'instagram', 'telegram'],
+            'featured' => true,
+        ],
         'book_meetings' => [
-            'label' => 'Book more meetings',
-            'prompt' => 'Book 20 meetings with US SaaS founders this month',
+            'label' => 'Win more clients',
+            'prompt' => 'Get me qualified client conversations this month — research prospects, earn replies, then book meetings with the right ones',
             'required_channels' => ['linkedin', 'email'],
             'optional_channels' => ['google_calendar', 'outlook_calendar'],
             'featured' => true,
@@ -29,35 +50,20 @@ class OnboardingWizardService
             'prompt' => 'Build a LinkedIn audience of ~100 ideal prospects via search, then prepare outreach',
             'required_channels' => ['linkedin'],
             'optional_channels' => ['email'],
-            'featured' => true,
+            'featured' => false,
         ],
         'reactivate_old_leads' => [
             'label' => 'Reactivate old leads',
             'prompt' => "Who's due for nurture follow-up? Help me reactivate cold and past leads",
             'required_channels' => ['linkedin', 'email'],
             'optional_channels' => ['whatsapp'],
-            'featured' => true,
-        ],
-        'follow_up' => [
-            'label' => 'Follow up with replies',
-            'prompt' => 'Who needs my attention? Draft replies for hot leads',
-            'required_channels' => ['linkedin', 'email'],
-            'optional_channels' => ['whatsapp', 'instagram', 'telegram'],
-            'featured' => true,
+            'featured' => false,
         ],
         'multichannel_outreach' => [
             'label' => 'Multichannel outreach',
             'prompt' => 'Launch multichannel outreach',
             'required_channels' => ['linkedin', 'email'],
             'optional_channels' => ['whatsapp', 'instagram', 'telegram'],
-            'featured' => true,
-        ],
-        // Available via free-text / chat — not shown as quick picks (keeps the wizard simple).
-        'find_prospects' => [
-            'label' => 'Find ideal prospects',
-            'prompt' => 'Find my ideal customers and build a prospect list',
-            'required_channels' => ['linkedin'],
-            'optional_channels' => ['email'],
             'featured' => false,
         ],
         'competitor_audience' => [
@@ -97,6 +103,8 @@ class OnboardingWizardService
         private readonly CallCalendarService $calendar,
         private readonly ZernioClient $zernio,
         private readonly AiChannelPolicyService $channelPolicy,
+        private readonly WorkspaceContextService $workspaceContext,
+        private readonly BusinessProfileOnboardingService $businessProfile,
     ) {}
 
     /**
@@ -110,19 +118,50 @@ class OnboardingWizardService
         $goal = $this->resolvedGoal($goalKey, $meta);
         $connections = $goal ? $this->connectionSteps($user, $organizationId, $goal, $meta) : [];
         $outreachReady = $goal ? $this->outreachChannelsReady($user, $goal, $meta) : false;
+        $businessProfileComplete = $this->workspaceContext->businessProfileComplete($settings);
+        $conversionAssetsComplete = $this->workspaceContext->conversionAssetsComplete($settings);
         $waCommand = $this->whatsAppCommandStatus($user, $organizationId);
         $skipWaCommand = (bool) ($meta['skip_whatsapp_command'] ?? false);
+        $connectionsComplete = $goal
+            ? $this->connectionsSetupComplete($user, $organizationId, $goal, $meta)
+            : false;
 
         $phase = 'ask';
         if ($goalKey !== '') {
-            $phase = ! $outreachReady ? 'connect_outreach' : ((! $waCommand['linked'] && ! $skipWaCommand) ? 'link_whatsapp' : 'ready');
+            if (! $connectionsComplete) {
+                $phase = 'connect_outreach';
+            } elseif (! $businessProfileComplete) {
+                $phase = 'describe_business';
+            } elseif (! $conversionAssetsComplete) {
+                $phase = 'conversion_assets';
+            } else {
+                $phase = 'ready';
+            }
         }
+
+        $composerMode = match (true) {
+            $goalKey === '' => 'goal',
+            ! $connectionsComplete => 'connect',
+            ! $businessProfileComplete => 'business',
+            ! $conversionAssetsComplete => 'conversion',
+            default => 'chat',
+        };
+
+        $businessProfile = $this->workspaceContext->businessProfile($settings);
+        $conversionAssets = $this->workspaceContext->conversionAssets($settings);
 
         return [
             'show' => $this->shouldShow($settings, $user, $organizationId),
             'completed' => $this->isComplete($settings),
             'step' => (string) ($meta['step'] ?? 'welcome'),
             'phase' => $phase,
+            'business_profile_complete' => $businessProfileComplete,
+            'conversion_assets_complete' => $conversionAssetsComplete,
+            'business_profile_summary' => trim((string) ($businessProfile['summary'] ?? '')) ?: null,
+            'conversion_assets' => [
+                'sales_page_url' => $conversionAssets['sales_page_url'] ?? null,
+                'webinar_url' => $conversionAssets['webinar_url'] ?? null,
+            ],
             'goal' => $goalKey !== '' ? $goalKey : null,
             'goal_label' => $goal['label'] ?? null,
             'custom_goal' => $meta['custom_goal'] ?? null,
@@ -131,11 +170,10 @@ class OnboardingWizardService
             'goal_options' => collect(self::GOALS)
                 ->filter(fn ($g) => (bool) ($g['featured'] ?? false))
                 ->sortBy(fn ($g, $key) => match ($key) {
-                    'book_meetings' => 0,
-                    'build_linkedin_audience' => 1,
-                    'reactivate_old_leads' => 2,
-                    'follow_up' => 3,
-                    'multichannel_outreach' => 4,
+                    'get_customers' => 0,
+                    'find_prospects' => 1,
+                    'follow_up' => 2,
+                    'book_meetings' => 3,
                     default => 10,
                 })
                 ->map(fn ($g, $key) => [
@@ -143,12 +181,15 @@ class OnboardingWizardService
                     'label' => $g['label'],
                 ])->values()->all(),
             'connections' => $connections,
+            'connections_complete' => $connectionsComplete,
+            'required_progress' => $this->requiredProgress($connections),
+            'composer_mode' => $composerMode,
             'whatsapp_command' => $waCommand,
             'skip_whatsapp_command' => $skipWaCommand,
             'outreach_ready' => $outreachReady,
             'show_whatsapp_command' => $goalKey !== '' && $outreachReady && ! $skipWaCommand,
-            'ready' => $goal ? $this->isReady($user, $organizationId, $goalKey, $goal, $meta) : false,
-            'can_open_command_center' => $outreachReady,
+            'ready' => $goal ? $this->isReady($user, $organizationId, $goalKey, $goal, $meta, $settings) : false,
+            'can_open_command_center' => $outreachReady && $businessProfileComplete && $conversionAssetsComplete,
             'workspace_configured' => (bool) ($meta['workspace_configured_at'] ?? false),
             'autonomy_level' => (int) $settings->autonomy_level,
         ];
@@ -181,7 +222,7 @@ class OnboardingWizardService
 
             return [
                 'role' => 'assistant',
-                'content' => "No problem — you can control me from the web Command Center. Tap **Open Command Center** when your outreach connections are ready.",
+                'content' => 'No problem — WhatsApp control is optional. You can link your phone anytime later from settings.',
             ];
         }
 
@@ -215,7 +256,7 @@ class OnboardingWizardService
 
             return [
                 'role' => 'assistant',
-                'content' => "Hey — I'm **{$name}**.\n\nWhat do you want SociFusion to do? Pick one below, or type your own (e.g. *WhatsApp campaign*, *competitors' audience*).",
+                'content' => "Hey — I'm **{$name}**.\n\nWhat's your customer goal? Pick one below, or type your own (e.g. *get more SaaS clients*, *find agency owners*, *convert inbox replies*).",
             ];
         }
 
@@ -228,10 +269,24 @@ class OnboardingWizardService
             ];
         }
 
-        if ($state['show_whatsapp_command'] && ! ($state['whatsapp_command']['linked'] ?? false)) {
+        if (($state['phase'] ?? '') === 'describe_business') {
             return [
                 'role' => 'assistant',
-                'content' => "Last step — link **WhatsApp** so you can talk to me from your phone (same Alex, same plans).\n\nTap **Connect** on *WhatsApp — control Alex* below, or say *skip whatsapp* if you only want the web app.",
+                'content' => "Tell me about **your business** — who you help, what you sell, and what makes you different.\n\n**One is enough** — paste a short description **or** drop your website link **or** tap **attach** for a PDF. You can also combine any of these. I'll build your ICP from whatever you share.",
+            ];
+        }
+
+        if (($state['phase'] ?? '') === 'conversion_assets') {
+            return [
+                'role' => 'assistant',
+                'content' => "Next — add your **sales page** and/or **webinar** link in the fields below.\n\n**One is enough**, or fill both — then tap **Continue**. I only send these after a prospect shows real interest.",
+            ];
+        }
+
+        if (($state['phase'] ?? '') === 'connect_outreach' && ($state['outreach_ready'] ?? false)) {
+            return [
+                'role' => 'assistant',
+                'content' => "Your outreach channels are connected. Tell me about **your business** — who you help, what you sell, and what makes you different.\n\n**One is enough** — paste a short description **or** drop your website link **or** tap **attach** for a PDF. You can combine them too. WhatsApp control is optional — link your phone anytime later.",
             ];
         }
 
@@ -249,7 +304,7 @@ class OnboardingWizardService
 
         return [
             'role' => 'assistant',
-            'content' => 'Connect the items in the checklist below, then link WhatsApp to control me from your phone — or skip that step.',
+            'content' => 'Work through the checklist below — connect what you need for outreach. When required channels are ready, I\'ll ask about your business. WhatsApp phone control is optional and can wait.',
         ];
     }
 
@@ -259,6 +314,61 @@ class OnboardingWizardService
         $this->saveMeta($settings, ['skip_whatsapp_command' => true]);
 
         return $this->status($user, $organizationId);
+    }
+
+    /**
+     * @return array{message:string, status:array<string,mixed>}
+     */
+    public function submitBusinessProfile(
+        User $user,
+        int $organizationId,
+        ?string $description = null,
+        ?string $websiteUrl = null,
+        ?\Illuminate\Http\UploadedFile $file = null,
+    ): array {
+        $settings = $this->settingsService->for($user, $organizationId);
+        $meta = $this->onboardingMeta($settings);
+        $goalKey = (string) ($meta['goal'] ?? '');
+        $goal = $this->resolvedGoal($goalKey, $meta);
+
+        if ($goalKey === '' || ! $this->connectionsSetupComplete($user, $organizationId, $goal, $meta)) {
+            throw new \InvalidArgumentException('Connect your channels first — then I\'ll ask about your business.');
+        }
+
+        $result = $this->businessProfile->submitBusinessProfile(
+            $user,
+            $organizationId,
+            $description,
+            $websiteUrl,
+            $file,
+        );
+
+        return [
+            'message' => $result['message'],
+            'status' => $this->status($user, $organizationId),
+        ];
+    }
+
+    /**
+     * @return array{message:string, status:array<string,mixed>}
+     */
+    public function submitConversionAssets(
+        User $user,
+        int $organizationId,
+        ?string $salesPageUrl = null,
+        ?string $webinarUrl = null,
+    ): array {
+        $result = $this->businessProfile->submitConversionAssets(
+            $user,
+            $organizationId,
+            $salesPageUrl,
+            $webinarUrl,
+        );
+
+        return [
+            'message' => $result['message'],
+            'status' => $this->status($user, $organizationId),
+        ];
     }
 
     public function complete(User $user, int $organizationId): void
@@ -354,6 +464,7 @@ class OnboardingWizardService
         $has = fn (string $ch): bool => in_array($ch, $mentioned, true);
 
         $wantsMeeting = str_contains($hay, 'meeting') || str_contains($hay, 'book a call') || str_contains($hay, 'demo');
+        $wantsCustomer = str_contains($hay, 'customer') || str_contains($hay, 'client') || str_contains($hay, 'get more');
         $wantsCompetitor = str_contains($hay, 'competitor');
         $wantsReactivate = str_contains($hay, 'reactivat') || str_contains($hay, 'cold lead') || str_contains($hay, 'old lead') || str_contains($hay, 'nurture');
         $wantsFollowUp = str_contains($hay, 'follow up') || str_contains($hay, 'inbox') || str_contains($hay, 'repl');
@@ -400,14 +511,21 @@ class OnboardingWizardService
         if ($wantsFollowUp) {
             return [
                 'key' => 'follow_up',
-                'reply' => $this->goalAckReply('inbox follow-up', '**LinkedIn + Email** (and WhatsApp if you reply there)'),
+                'reply' => $this->goalAckReply('turning replies into customers', '**LinkedIn + Email** (and WhatsApp if you reply there)'),
+            ];
+        }
+
+        if ($wantsCustomer) {
+            return [
+                'key' => 'get_customers',
+                'reply' => $this->goalAckReply('getting more customers', '**LinkedIn + Email** to find, research, and qualify prospects'),
             ];
         }
 
         if ($wantsMeeting) {
             return [
                 'key' => 'book_meetings',
-                'reply' => $this->goalAckReply('booking meetings', '**LinkedIn + Email** for outreach, calendar for booking links'),
+                'reply' => $this->goalAckReply('winning more clients', '**LinkedIn + Email** for outreach, calendar for booking links'),
             ];
         }
 
@@ -420,8 +538,8 @@ class OnboardingWizardService
 
         if ($wantsFind) {
             return [
-                'key' => 'build_linkedin_audience',
-                'reply' => $this->goalAckReply('finding prospects', '**LinkedIn** to start — Email optional'),
+                'key' => 'find_prospects',
+                'reply' => $this->goalAckReply('finding ideal customers', '**LinkedIn** to start — Instagram or Email optional'),
             ];
         }
 
@@ -444,7 +562,7 @@ class OnboardingWizardService
 
     private function goalAckReply(string $label, string $needs): string
     {
-        return "Got it — **{$label}**.\n\nYou'll need {$needs}. Connect below — I'll watch for completion.\n\nAfter that, link WhatsApp to control me from your phone (optional).";
+        return "Got it — **{$label}**.\n\nYou'll need {$needs}. Connect below — then tell me about your business and add your sales page/webinar links.\n\nAfter that, link WhatsApp to control me from your phone (optional).";
     }
 
     /**
@@ -483,22 +601,73 @@ class OnboardingWizardService
     private function connectionSteps(User $user, int $organizationId, array $goal, array $meta): array
     {
         $steps = [];
-        $outreachReady = $this->outreachChannelsReady($user, $goal, $meta);
 
-        foreach ($goal['required_channels'] ?? [] as $channelKey) {
-            if (! OutreachChannelRegistry::isEnabled($channelKey)) {
-                continue;
-            }
-
+        foreach ($this->gatedChannelKeys($user, $goal, $meta) as $channelKey) {
             $steps[] = $this->connectionRow($user, $channelKey, true);
         }
 
-        foreach ($goal['optional_channels'] ?? [] as $channelKey) {
+        if (! ($meta['skip_whatsapp_command'] ?? false)) {
+            $wa = $this->whatsAppCommandStatus($user, $organizationId);
+            $steps[] = [
+                'key' => 'whatsapp_command',
+                'label' => 'WhatsApp — control Soci from your phone',
+                'connected' => $wa['linked'],
+                'required' => false,
+                'kind' => 'whatsapp_command',
+                'phase' => 'climax',
+                'highlight' => false,
+            ];
+        }
+
+        return $steps;
+    }
+
+    /**
+     * The number on the checklist is the gate. 0/3 means all 3 shown channels
+     * must be connected. 0/1 means that one channel is enough. WhatsApp phone
+     * control is never in the count.
+     *
+     * @param  list<array<string, mixed>>  $connections
+     * @return array{connected:int, total:int, complete:bool, remaining:list<string>}
+     */
+    private function requiredProgress(array $connections): array
+    {
+        $gated = array_values(array_filter(
+            $connections,
+            fn (array $row) => ($row['key'] ?? '') !== 'whatsapp_command',
+        ));
+        $done = array_values(array_filter($gated, fn (array $row) => ($row['connected'] ?? false) === true));
+        $remaining = array_values(array_map(
+            fn (array $row) => (string) ($row['label'] ?? $row['key'] ?? ''),
+            array_filter($gated, fn (array $row) => ($row['connected'] ?? false) !== true),
+        ));
+        $total = count($gated);
+        $connected = count($done);
+
+        return [
+            'connected' => $connected,
+            'total' => $total,
+            'complete' => $total === 0 || $connected >= $total,
+            'remaining' => $remaining,
+        ];
+    }
+
+    /**
+     * Channels that appear in the connect counter. Excludes WhatsApp command.
+     *
+     * @param  array<string, mixed>  $goal
+     * @param  array<string, mixed>  $meta
+     * @return list<string>
+     */
+    private function gatedChannelKeys(User $user, array $goal, array $meta): array
+    {
+        $keys = [];
+
+        foreach (array_merge($goal['required_channels'] ?? [], $goal['optional_channels'] ?? []) as $channelKey) {
             if (! OutreachChannelRegistry::isEnabled($channelKey)) {
                 continue;
             }
-
-            $steps[] = $this->connectionRow($user, $channelKey, false);
+            $keys[] = $channelKey;
         }
 
         $goalKey = (string) ($meta['goal'] ?? '');
@@ -507,31 +676,11 @@ class OnboardingWizardService
                 if (! OutreachChannelRegistry::isEnabled($cal)) {
                     continue;
                 }
-                $steps[] = [
-                    'key' => $cal,
-                    'label' => OutreachChannelRegistry::channelLabel($cal),
-                    'connected' => $this->isChannelConnected($user, $cal),
-                    'required' => false,
-                    'kind' => 'calendar',
-                    'phase' => 'outreach',
-                ];
+                $keys[] = $cal;
             }
         }
 
-        if (! ($meta['skip_whatsapp_command'] ?? false)) {
-            $wa = $this->whatsAppCommandStatus($user, $organizationId);
-            $steps[] = [
-                'key' => 'whatsapp_command',
-                'label' => 'WhatsApp — control Alex from your phone',
-                'connected' => $wa['linked'],
-                'required' => false,
-                'kind' => 'whatsapp_command',
-                'phase' => 'climax',
-                'highlight' => ! $wa['linked'] && $outreachReady,
-            ];
-        }
-
-        return $steps;
+        return array_values(array_unique($keys));
     }
 
     /**
@@ -553,12 +702,23 @@ class OnboardingWizardService
      * @param  array<string, mixed>  $goal
      * @param  array<string, mixed>  $meta
      */
+    private function connectionsSetupComplete(User $user, int $organizationId, array $goal, array $meta): bool
+    {
+        return $this->outreachChannelsReady($user, $goal, $meta);
+    }
+
+    /**
+     * @param  array<string, mixed>  $goal
+     * @param  array<string, mixed>  $meta
+     */
     private function outreachChannelsReady(User $user, array $goal, array $meta): bool
     {
-        foreach ($goal['required_channels'] ?? [] as $channelKey) {
-            if (! OutreachChannelRegistry::isEnabled($channelKey)) {
-                continue;
-            }
+        $keys = $this->gatedChannelKeys($user, $goal, $meta);
+        if ($keys === []) {
+            return true;
+        }
+
+        foreach ($keys as $channelKey) {
             if (! $this->isChannelConnected($user, $channelKey)) {
                 return false;
             }
@@ -571,9 +731,23 @@ class OnboardingWizardService
      * @param  array<string, mixed>  $goal
      * @param  array<string, mixed>  $meta
      */
-    private function isReady(User $user, int $organizationId, string $goalKey, array $goal, array $meta): bool
-    {
+    private function isReady(
+        User $user,
+        int $organizationId,
+        string $goalKey,
+        array $goal,
+        array $meta,
+        AiEmployeeSetting $settings,
+    ): bool {
         if (! $this->outreachChannelsReady($user, $goal, $meta)) {
+            return false;
+        }
+
+        if (! $this->workspaceContext->businessProfileComplete($settings)) {
+            return false;
+        }
+
+        if (! $this->workspaceContext->conversionAssetsComplete($settings)) {
             return false;
         }
 
@@ -581,11 +755,6 @@ class OnboardingWizardService
             if (! $this->calendar->isAvailable($user->id)) {
                 return false;
             }
-        }
-
-        $skipWa = (bool) ($meta['skip_whatsapp_command'] ?? false);
-        if (! $skipWa && ! $this->whatsAppCommandStatus($user, $organizationId)['linked']) {
-            return false;
         }
 
         return true;

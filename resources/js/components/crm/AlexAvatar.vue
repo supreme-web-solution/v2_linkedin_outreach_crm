@@ -11,7 +11,7 @@ const props = withDefaults(
     }>(),
     {
         size: 'md',
-        alt: 'Alex',
+        alt: 'Soci',
     },
 );
 

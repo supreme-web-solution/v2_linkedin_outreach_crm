@@ -16,7 +16,7 @@ class WhatsAppMediaIngestService
     ) {}
 
     /**
-     * Download a WhatsApp image and attach to the Command Center conversation for Alex tools.
+     * Download a WhatsApp image and attach to the Command Center conversation for Soci tools.
      *
      * @param  array{type?:string,url?:string,mime?:string}  $media
      * @return array{ai_image_url:string,ai_image_path:string}|null

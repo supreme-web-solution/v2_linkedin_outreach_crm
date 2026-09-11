@@ -327,7 +327,7 @@ class OutreachLeadSyncService
                 'twitter_provider_id' => trim((string) ($row->twitter_provider_id ?? '')),
             ];
             $attrs = $this->resolver->toLeadAttributes($contactRow);
-            $meta = array_merge(['list_hash' => $list->list_hash, 'import_list' => true], $attrs['meta']);
+            $meta = $this->baseLeadMeta($campaign, $list->list_hash, array_merge(['import_list' => true], $attrs['meta']));
             $profileId = trim((string) ($row->linkedin_id ?? ''));
 
             $lead = V2OutreachLead::firstOrCreate(
@@ -338,7 +338,10 @@ class OutreachLeadSyncService
                     'phone' => $attrs['phone'],
                     'full_name' => trim((string) ($row->full_name ?? '')) ?: 'Contact',
                     'headline' => null,
-                    'profile_url' => $row->profile_url,
+                    'profile_url' => $row->profile_url
+                        ?: (trim((string) ($row->instagram_handle ?? '')) !== ''
+                            ? 'https://www.instagram.com/'.ltrim(trim((string) $row->instagram_handle), '@').'/'
+                            : null),
                     'status' => 'pending',
                     'meta' => $meta,
                 ]
@@ -414,7 +417,7 @@ class OutreachLeadSyncService
                 'twitter_provider_id' => '',
             ], $overlays[strtolower($linkedinKey)] ?? null);
             $attrs = $this->resolver->toLeadAttributes($contactRow);
-            $meta = array_merge(['list_hash' => $list->list_hash], $attrs['meta']);
+            $meta = $this->baseLeadMeta($campaign, $list->list_hash, $attrs['meta']);
 
             $lead = V2OutreachLead::firstOrCreate(
                 ['outreach_campaign_id' => $campaign->id, 'source_list_src' => 'aud', 'source_record_id' => $row->id],
@@ -509,7 +512,7 @@ class OutreachLeadSyncService
                 'twitter_provider_id' => trim((string) ($row->twitter_provider_id ?? '')),
             ], $overlays[strtolower($linkedinKey)] ?? null);
             $attrs = $this->resolver->toLeadAttributes($contactRow);
-            $meta = array_merge(['list_hash' => $list->list_hash], $attrs['meta']);
+            $meta = $this->baseLeadMeta($campaign, $list->list_hash, $attrs['meta']);
 
             $lead = V2OutreachLead::firstOrCreate(
                 ['outreach_campaign_id' => $campaign->id, 'source_list_src' => 'sn', 'source_record_id' => $row->id],
@@ -554,5 +557,29 @@ class OutreachLeadSyncService
             'after_id' => $lastId,
             'exhausted' => $rows->count() < self::CHUNK_SIZE,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $extra
+     * @return array<string, mixed>
+     */
+    private function baseLeadMeta(V2OutreachCampaign $campaign, string $listHash, array $extra = []): array
+    {
+        $meta = array_merge(['list_hash' => $listHash], $extra);
+        $channel = $this->primaryChannelForCampaign($campaign);
+        if ($channel !== null) {
+            $meta['primary_channel'] = $channel;
+        }
+
+        return $meta;
+    }
+
+    private function primaryChannelForCampaign(V2OutreachCampaign $campaign): ?string
+    {
+        $meta = is_array($campaign->meta) ? $campaign->meta : [];
+        $plan = is_array($meta['ai_plan'] ?? null) ? $meta['ai_plan'] : [];
+        $channel = trim((string) ($plan['primary_channel'] ?? $meta['primary_channel'] ?? ''));
+
+        return $channel !== '' ? $channel : null;
     }
 }

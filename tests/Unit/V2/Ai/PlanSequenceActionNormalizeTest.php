@@ -131,6 +131,28 @@ class PlanSequenceActionNormalizeTest extends TestCase
         $this->assertNull(collect($resolved['node_model'])->firstWhere('condition', 'invite_accepted'));
     }
 
+    public function test_instagram_prose_follow_up_stays_on_instagram_channel(): void
+    {
+        $resolved = app(PlanSequenceNodeBuilder::class)->resolve([
+            'channels' => 'Instagram',
+            'primary_channel' => 'instagram',
+            'sequence' => [
+                'Instagram DM — personalized after research, no pitch',
+                'Wait 4 days',
+                'Light follow-up if no reply',
+            ],
+        ]);
+
+        $actions = collect($resolved['node_model'])
+            ->where('type', 'action')
+            ->values();
+
+        $this->assertCount(2, $actions);
+        $this->assertSame('instagram', $actions[0]['channel']);
+        $this->assertSame('instagram', $actions[1]['channel']);
+        $this->assertSame('send_message', $actions[1]['action']);
+    }
+
     public function test_one_shot_email_has_no_waits_or_followups(): void
     {
         $resolved = app(PlanSequenceNodeBuilder::class)->resolve([

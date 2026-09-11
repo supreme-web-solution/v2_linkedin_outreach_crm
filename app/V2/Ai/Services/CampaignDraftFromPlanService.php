@@ -15,6 +15,7 @@ class CampaignDraftFromPlanService
 {
     public function __construct(
         private readonly ProspectAudienceResolverService $audienceResolver,
+        private readonly SingleChannelOutreachService $singleChannel,
     ) {}
 
     /**
@@ -71,6 +72,14 @@ class CampaignDraftFromPlanService
             $audience['list_name'],
         );
 
+        $primaryChannel = $this->singleChannel->primaryChannelFromList($audience);
+        if ($primaryChannel !== null) {
+            $payload['primary_channel'] = $primaryChannel;
+            $payload = $this->singleChannel->applyPrimaryChannel($payload);
+        } elseif (! empty($payload['primary_channel'])) {
+            $payload = $this->singleChannel->applyPrimaryChannel($payload);
+        }
+
         $resolved = app(PlanSequenceNodeBuilder::class)->resolve($payload);
         $templateType = $resolved['template_type'];
         $nodeModel = $resolved['node_model'];
@@ -87,6 +96,8 @@ class CampaignDraftFromPlanService
             'ai_personalize_first_touch' => true,
             'ai_custom_sequence' => $resolved['custom'],
             'one_shot' => $isOneShot,
+            'primary_channel' => $payload['primary_channel'] ?? null,
+            'single_channel_only' => ! empty($payload['single_channel_only']),
             // Cap how many leads sync from a large source list when the plan asked for N.
             'max_leads' => $isOneShot
                 ? 1
@@ -153,6 +164,11 @@ class CampaignDraftFromPlanService
      */
     public function resolveTemplateType(array $payload): string
     {
+        $single = app(SingleChannelOutreachService::class)->resolveTemplateType($payload);
+        if ($single !== null) {
+            return $single;
+        }
+
         $channels = Str::lower((string) ($payload['preferred_channels'] ?? $payload['channels'] ?? ''));
         $policy = app(AiChannelPolicyService::class);
         $mentioned = $policy->mentionedInText($channels !== '' ? $channels : $policy->defaultChannelsLabel());
@@ -226,7 +242,7 @@ class CampaignDraftFromPlanService
 
     /**
      * Seed pause-on-reply (and optional auto-reply context) for every channel in the sequence.
-     * Replies pause automation so Alex can handle prospects in inbox chat context.
+     * Replies pause automation so Soci can handle prospects in inbox chat context.
      *
      * @param  list<array<string, mixed>>  $nodeModel
      * @param  array<string, mixed>  $payload

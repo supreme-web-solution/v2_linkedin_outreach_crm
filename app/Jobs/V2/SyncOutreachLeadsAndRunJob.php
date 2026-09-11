@@ -97,7 +97,7 @@ class SyncOutreachLeadsAndRunJob implements ShouldQueue
                 $fresh = $fresh->fresh() ?? $fresh;
             }
 
-            if ($fresh && ! empty(($fresh->meta['ai_personalize_first_touch'] ?? false))) {
+            if ($fresh && ! empty(($fresh->meta['ai_personalize_first_touch'] ?? false)) && ! $this->waitsForInviteAccept($fresh)) {
                 PersonalizeCampaignFirstTouchJob::dispatch($fresh->id, 40);
             }
 
@@ -125,5 +125,35 @@ class SyncOutreachLeadsAndRunJob implements ShouldQueue
 
             throw $e;
         }
+    }
+
+    private function waitsForInviteAccept(\App\Models\V2OutreachCampaign $campaign): bool
+    {
+        $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
+
+        return $this->nodeTreeHasInviteAccept($nodes);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $nodes
+     */
+    private function nodeTreeHasInviteAccept(array $nodes): bool
+    {
+        foreach ($nodes as $node) {
+            if (! is_array($node)) {
+                continue;
+            }
+            if (($node['type'] ?? '') === 'condition' && ($node['condition'] ?? '') === 'invite_accepted') {
+                return true;
+            }
+            foreach (['accepted', 'not_accepted'] as $branch) {
+                $kids = $node['branches'][$branch] ?? null;
+                if (is_array($kids) && $this->nodeTreeHasInviteAccept($kids)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

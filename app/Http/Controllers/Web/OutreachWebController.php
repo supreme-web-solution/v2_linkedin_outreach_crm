@@ -639,7 +639,7 @@ class OutreachWebController extends Controller
     }
 
     /**
-     * Analyze campaign performance and persist Alex recommendations on the campaign page.
+     * Analyze campaign performance and persist Soci recommendations on the campaign page.
      */
     public function optimize(Request $request, int $id): RedirectResponse
     {
@@ -688,7 +688,7 @@ class OutreachWebController extends Controller
         ];
         $campaign->update(['meta' => $meta]);
 
-        $message = $analysis['summary'] ?? 'Alex reviewed this campaign.';
+        $message = $analysis['summary'] ?? 'Soci reviewed this campaign.';
         if ($autoApplied !== []) {
             $message .= ' '.implode(' ', $autoApplied);
         }

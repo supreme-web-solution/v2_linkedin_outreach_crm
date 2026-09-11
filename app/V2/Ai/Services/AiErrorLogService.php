@@ -11,7 +11,7 @@ use Throwable;
 class AiErrorLogService
 {
     /**
-     * Persist what Alex was doing when an error happened (admin diagnostics).
+     * Persist what Soci was doing when an error happened (admin diagnostics).
      *
      * @param  array<string, mixed>  $context
      */

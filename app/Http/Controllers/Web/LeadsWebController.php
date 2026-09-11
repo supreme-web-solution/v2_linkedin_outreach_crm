@@ -69,14 +69,17 @@ class LeadsWebController extends Controller
                 'src' => 'csv',
                 'created_at' => $list['created_at'],
             ])
-            ->sortBy('list_name')
             ->values();
+
+        $instagramListCount = $importLists->where('channel', 'instagram')->count();
+        $spreadsheetListCount = $importLists->count() - $instagramListCount;
 
         $stats = [
             'total_lists' => $lists->count() + $importLists->count(),
             'audience_lists' => $lists->where('src', 'aud')->count(),
             'sn_lists' => $lists->where('src', 'sn')->count(),
-            'import_lists' => $importLists->count(),
+            'import_lists' => $spreadsheetListCount,
+            'instagram_lists' => $instagramListCount,
             'total_leads' => $dashboardStats->leadCountForUser($userId),
             'linkedin_leads' => $dashboardStats->linkedinLeadCountForUser($userId),
             'imported_leads' => $dashboardStats->importedLeadCountForUser($userId),
@@ -246,7 +249,7 @@ class LeadsWebController extends Controller
     {
         $data = $request->validate([
             'query' => ['required', 'string', 'max:500'],
-            'limit' => ['nullable', 'integer', 'min:1', 'max:250'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
             'list_name' => ['nullable', 'string', 'max:120'],
         ]);
 
@@ -254,7 +257,7 @@ class LeadsWebController extends Controller
         $user = Auth::user();
         $wantsJson = $request->expectsJson() || $request->ajax();
         $query = trim($data['query']);
-        $limit = (int) ($data['limit'] ?? 25);
+        $limit = max(1, min(100, (int) ($data['limit'] ?? 25)));
 
         if (! app(MindcaseClient::class)->configured()) {
             $msg = 'Add MINDCASE_API_KEY from https://console.mindcase.co to search Instagram.';
@@ -266,7 +269,8 @@ class LeadsWebController extends Controller
         }
 
         try {
-            $built = app(InstagramAudienceBuilderService::class)->searchAndPersist(
+            $builder = app(InstagramAudienceBuilderService::class);
+            $built = $builder->searchAndPersist(
                 $user,
                 $query,
                 $limit,
@@ -274,7 +278,9 @@ class LeadsWebController extends Controller
                 $data['list_name'] ?? null,
             );
             if ($built === null) {
-                throw new \RuntimeException('No Instagram profiles found for that keyword. Try a broader phrase.');
+                throw new \RuntimeException(
+                    $builder->lastError() ?? 'No Instagram profiles found for that keyword. Try a broader phrase.'
+                );
             }
         } catch (\Throwable $e) {
             if ($wantsJson) {

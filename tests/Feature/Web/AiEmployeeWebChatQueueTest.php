@@ -3,6 +3,7 @@
 namespace Tests\Feature\Web;
 
 use App\Jobs\V2\ProcessWebAiChatJob;
+use App\Jobs\V2\RunWebAgentTurnJob;
 use App\Models\AiMessage;
 use App\Models\User;
 use App\Models\V2Organization;
@@ -55,6 +56,52 @@ class AiEmployeeWebChatQueueTest extends TestCase
                 && $job->conversationId === (int) $response->json('conversation_id')
                 && $job->userMessageId === (int) $response->json('after_message_id');
         });
+    }
+
+    public function test_process_web_chat_job_dispatches_agent_turn_job(): void
+    {
+        Queue::fake([RunWebAgentTurnJob::class]);
+        [$user, $org] = $this->userWithOrg();
+        $conversation = app(CommandCenterService::class)->conversation($user, $org->id);
+
+        $job = new ProcessWebAiChatJob(
+            $user->id,
+            $org->id,
+            (int) $conversation->id,
+            99,
+            'find customers',
+        );
+
+        $job->handle(app(\App\V2\Ai\Services\WebChatProcessingService::class));
+
+        Queue::assertPushed(RunWebAgentTurnJob::class, function (RunWebAgentTurnJob $agentJob) use ($user, $org, $conversation) {
+            return $agentJob->userId === $user->id
+                && $agentJob->organizationId === $org->id
+                && $agentJob->conversationId === (int) $conversation->id
+                && $agentJob->userMessageId === 99;
+        });
+    }
+
+    public function test_widget_bootstrap_returns_pending_turn(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $conversation = app(CommandCenterService::class)->conversation($user, $org->id);
+
+        $userMessage = AiMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'role' => 'user',
+            'content' => 'find customers',
+            'meta' => ['channel' => 'web', 'queued' => true],
+        ]);
+
+        app(\App\V2\Ai\Services\WebChatProcessingService::class)->markPending($conversation, (int) $userMessage->id);
+        app(\App\V2\Ai\Services\WebChatProcessingService::class)->start($conversation->fresh(), 'Searching prospects…');
+
+        $response = $this->actingAs($user)->getJson('/ai-employee/widget/bootstrap');
+
+        $response->assertOk()
+            ->assertJsonPath('pending_turn.after_message_id', $userMessage->id)
+            ->assertJsonPath('processing.label', 'Searching prospects…');
     }
 
     public function test_messages_after_id_returns_only_newer_rows(): void
@@ -112,6 +159,114 @@ class AiEmployeeWebChatQueueTest extends TestCase
                 ->where('id', '>', $userMessage->id)
                 ->exists()
         );
+
+        $conversation->refresh();
+        $this->assertNull(app(\App\V2\Ai\Services\WebChatProcessingService::class)->snapshot($conversation));
+    }
+
+    public function test_stale_pending_turn_is_redispatched_when_no_queue_job(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $conversation = app(CommandCenterService::class)->conversation($user, $org->id);
+
+        $userMessage = AiMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'role' => 'user',
+            'content' => 'find customers',
+            'meta' => ['channel' => 'web', 'queued' => true],
+            'created_at' => now()->subMinutes(5),
+        ]);
+
+        $staleAt = now()->subMinutes(5)->toIso8601String();
+        $conversation->forceFill([
+            'meta' => [
+                'web_chat_pending' => [
+                    'user_message_id' => $userMessage->id,
+                    'prompt_message' => 'find customers',
+                    'organization_id' => $org->id,
+                    'queued_at' => $staleAt,
+                    'redispatch_attempts' => 0,
+                ],
+                'web_chat_processing' => [
+                    'active' => true,
+                    'stage' => 'thinking',
+                    'label' => 'Thinking…',
+                    'updated_at' => $staleAt,
+                ],
+            ],
+        ])->save();
+
+        config()->set('socifusion_ai.web_chat_stale_seconds', 30);
+
+        Queue::fake();
+
+        $response = $this->actingAs($user)->getJson('/ai-employee/widget/bootstrap');
+
+        $response->assertOk()
+            ->assertJsonPath('pending_turn.processing.label', 'Resuming…');
+
+        Queue::assertPushed(RunWebAgentTurnJob::class, function (RunWebAgentTurnJob $job) use ($user, $org, $conversation, $userMessage) {
+            return $job->userId === $user->id
+                && $job->organizationId === $org->id
+                && $job->conversationId === (int) $conversation->id
+                && $job->userMessageId === (int) $userMessage->id;
+        });
+    }
+
+    public function test_fail_queued_web_turn_writes_error_reply_and_clears_processing(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $conversation = app(CommandCenterService::class)->conversation($user, $org->id);
+
+        app(\App\V2\Ai\Services\WebChatProcessingService::class)->start($conversation, 'Thinking…');
+
+        $userMessage = AiMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'role' => 'user',
+            'content' => 'find customers',
+            'meta' => ['channel' => 'web', 'queued' => true],
+        ]);
+
+        app(AgentOrchestrator::class)->failQueuedWebTurn(
+            user: $user,
+            organizationId: $org->id,
+            conversationId: (int) $conversation->id,
+            userMessageId: (int) $userMessage->id,
+            exception: new \RuntimeException('timeout'),
+        );
+
+        $conversation->refresh();
+        $this->assertNull(app(\App\V2\Ai\Services\WebChatProcessingService::class)->snapshot($conversation));
+        $this->assertTrue(
+            AiMessage::query()
+                ->where('conversation_id', $conversation->id)
+                ->where('role', 'assistant')
+                ->where('id', '>', $userMessage->id)
+                ->where('content', 'like', '%too long%')
+                ->exists()
+        );
+    }
+
+    public function test_messages_after_id_includes_processing_snapshot(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $conversation = app(CommandCenterService::class)->conversation($user, $org->id);
+        app(\App\V2\Ai\Services\WebChatProcessingService::class)->start($conversation, 'Searching prospects…');
+
+        $first = AiMessage::query()->create([
+            'conversation_id' => $conversation->id,
+            'role' => 'user',
+            'content' => 'hello',
+            'meta' => ['channel' => 'web'],
+        ]);
+
+        $response = $this->actingAs($user)->getJson(
+            '/ai-employee/messages?conversation_id='.$conversation->id.'&after_id='.$first->id
+        );
+
+        $response->assertOk()
+            ->assertJsonPath('processing.active', true)
+            ->assertJsonPath('processing.label', 'Searching prospects…');
     }
 
     public function test_clear_chat_archives_thread_and_starts_fresh(): void

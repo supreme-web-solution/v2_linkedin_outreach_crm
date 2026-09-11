@@ -8,6 +8,10 @@ use App\Models\V2Message;
 use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
+use App\V2\Ai\Services\ConversionStageService;
+use App\V2\Ai\Services\ProspectIntelligenceService;
+use App\V2\Ai\Services\ProspectMemoryService;
+use App\V2\Ai\Services\WorkspaceContextService;
 use App\V2\Outreach\OutreachActivityLogger;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Outreach\OutreachWebhookProgressService;
@@ -36,6 +40,10 @@ class UnifiedInboxReplyService
         private readonly AutoResponseService $autoResponses,
         private readonly OpenAIContentService $openai,
         private readonly OutreachActivityLogger $logger,
+        private readonly ProspectIntelligenceService $prospectIntelligence,
+        private readonly ProspectMemoryService $prospectMemory,
+        private readonly ConversionStageService $conversionStages,
+        private readonly WorkspaceContextService $workspaceContext,
     ) {}
 
     /**
@@ -121,7 +129,10 @@ class UnifiedInboxReplyService
         ]);
         \App\V2\Ai\Support\RecipientFacingCopyGuard::assertSendable($body);
 
-        return $this->inbox->sendMessage($user, $conversation, $body);
+        $message = $this->inbox->sendMessage($user, $conversation, $body);
+        $this->recordOutboundConversionStage($user, $conversation, $body);
+
+        return $message;
     }
 
     public function handleInbound(V2Conversation $conversation, string $inboundBody, int $userId): void
@@ -143,6 +154,15 @@ class UnifiedInboxReplyService
 
         $lead = $leadId > 0 ? V2OutreachLead::query()->find($leadId) : null;
         $campaign = $campaignId > 0 ? V2OutreachCampaign::query()->find($campaignId) : null;
+
+        if ($lead) {
+            try {
+                $this->prospectIntelligence->processInbound($lead, $conversation, $inboundBody);
+                $lead = $lead->fresh() ?? $lead;
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
 
         if ($lead && $campaign) {
             $channel = OutreachChannelRegistry::normalizeChannelKey((string) $conversation->provider);
@@ -188,8 +208,34 @@ class UnifiedInboxReplyService
 
         try {
             $this->inbox->sendMessage($user, $conversation, $reply);
+            $this->recordOutboundConversionStage($user, $conversation, $reply);
         } catch (\Throwable) {
             return;
+        }
+    }
+
+    private function recordOutboundConversionStage(User $user, V2Conversation $conversation, string $body): void
+    {
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        if ($orgId <= 0) {
+            return;
+        }
+
+        $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $leadId = (int) (Arr::get($meta, 'outreach_lead_id') ?? 0);
+        if ($leadId <= 0) {
+            return;
+        }
+
+        $lead = V2OutreachLead::query()->find($leadId);
+        if (! $lead) {
+            return;
+        }
+
+        try {
+            $this->conversionStages->recordOutbound($lead, $body, $user, $orgId);
+        } catch (\Throwable $e) {
+            report($e);
         }
     }
 
@@ -280,6 +326,35 @@ class UnifiedInboxReplyService
         $context = $this->buildAiConversationContext($conversation, $leadName);
 
         try {
+            $orgId = (int) ($user->current_organization_id ?? 0);
+            $agentNotes = [];
+
+            if ($orgId > 0) {
+                $businessBrief = $this->workspaceContext->inboxBusinessBrief($user, $orgId);
+                if ($businessBrief !== '') {
+                    $agentNotes[] = $businessBrief;
+                }
+
+                $conversionGuide = $this->workspaceContext->inboxConversionGuide($user, $orgId);
+                if ($conversionGuide !== '') {
+                    $agentNotes[] = $conversionGuide;
+                }
+            }
+
+            if ($lead) {
+                $stageGuide = $orgId > 0
+                    ? $this->conversionStages->replyGuide($lead, $user, $orgId)
+                    : '';
+                if ($stageGuide !== '') {
+                    $agentNotes[] = $stageGuide;
+                }
+
+                $dossierBrief = $this->prospectMemory->agentBrief($lead);
+                if ($dossierBrief !== '') {
+                    $agentNotes[] = $dossierBrief;
+                }
+            }
+
             return $this->openai->generateInboxReply(
                 (string) $conversation->provider,
                 $aiContext,
@@ -292,8 +367,9 @@ class UnifiedInboxReplyService
                     'thread_summary' => $context['summary'],
                     'sender_name' => \App\V2\Ai\Support\SenderIdentity::displayName(
                         $user,
-                        (int) ($user->current_organization_id ?? 0),
+                        $orgId,
                     ),
+                    'agent_notes' => trim(implode("\n\n", array_filter($agentNotes))),
                 ],
             );
         } catch (\Throwable) {

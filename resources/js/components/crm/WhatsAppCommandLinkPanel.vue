@@ -94,7 +94,7 @@ async function copy(value: string, kind: 'number' | 'code'): Promise<void> {
                                 <OutreachChannelIcon channel="whatsapp" :size="14" />
                             </div>
                             <div class="min-w-0 flex-1">
-                                <p class="truncate text-[11px] font-semibold">SociFusion Alex</p>
+                                <p class="truncate text-[11px] font-semibold">Soci</p>
                                 <p class="truncate text-[9px] text-emerald-100/90">online</p>
                             </div>
                             <div class="flex items-center gap-1 text-emerald-100/80">

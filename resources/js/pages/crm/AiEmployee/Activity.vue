@@ -95,7 +95,7 @@ async function undoAction(item: ActionHistoryItem) {
 </script>
 
 <template>
-    <Head title="Alex Activity" />
+    <Head title="Soci Activity" />
 
     <div class="mx-auto flex max-w-3xl flex-col gap-5 p-4 md:p-6">
         <div class="flex flex-wrap items-start justify-between gap-3">

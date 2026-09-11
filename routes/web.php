@@ -69,6 +69,8 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     Route::post('onboarding/complete', [OnboardingWebController::class, 'complete'])->name('onboarding.complete');
     Route::post('onboarding/dismiss', [OnboardingWebController::class, 'dismiss'])->name('onboarding.dismiss');
     Route::post('onboarding/skip-whatsapp', [OnboardingWebController::class, 'skipWhatsappCommand'])->name('onboarding.skip-whatsapp');
+    Route::post('onboarding/business-profile', [OnboardingWebController::class, 'businessProfile'])->name('onboarding.business-profile');
+    Route::post('onboarding/conversion-assets', [OnboardingWebController::class, 'conversionAssets'])->name('onboarding.conversion-assets');
 
     Route::inertia('tutorials', 'Tutorials')->name('tutorials');
 

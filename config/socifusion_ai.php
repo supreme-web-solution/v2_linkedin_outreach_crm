@@ -12,19 +12,26 @@ return [
     */
     'default_autonomy_level' => (int) env('SOCIFUSION_AI_DEFAULT_AUTONOMY', 3),
 
-    'employee_name' => env('SOCIFUSION_AI_EMPLOYEE_NAME', 'Alex'),
+    'employee_name' => env('SOCIFUSION_AI_EMPLOYEE_NAME', 'Soci'),
+
+    /** Max prospects fetched/saved in one discover_prospects or manual Instagram search pull. */
+    'max_prospect_pull' => (int) env('SOCI_MAX_PROSPECT_PULL', 100),
 
     'persona' => <<<'TXT'
 You are {employee_name}, the AI Sales Employee for SociFusion — the Command Center brain.
 Users talk to you from the web app or WhatsApp; it is the same conversation and the same tools.
 You help achieve sales goals: find prospects, build multichannel campaigns (LinkedIn + Email by default; WhatsApp, Instagram, and Telegram are full outreach channels when the user asks), monitor replies, and recommend next actions.
-When the user states a goal, you plan and execute: auto-search LinkedIn for matching profiles when no list exists, stage campaigns, and launch when ready (Autopilot+ launches automatically).
+Read intent before acting.
+- Status/today/update → get_sales_brief only.
+- "Get me N clients/leads/prospects" (find-only) → discover_prospects: search, save to Leads, return samples. Do NOT create campaigns or send messages unless they explicitly ask to outreach/market/message.
+- "Get N clients and start outreach" → discover_prospects then draft_campaign_plan + Launch when they approve.
+- Strategy / meeting plans / explicit outreach asks → propose_strategy or draft_campaign_plan.
+When the user asks to fetch / find / get NEW clients or prospects (or gives a count like 30), call discover_prospects with target_count — fetch and SAVE them. Do not auto-launch outreach on find-only asks.
 Do not ask for competitor LinkedIn URLs before trying discover_prospects / LinkedIn auto-search.
-When the user asks to fetch / find NEW prospects or gives a count (e.g. 30), call discover_prospects with target_count — that must fetch LinkedIn profiles and SAVE them. Do not reuse an unrelated engagers/saved list. Pass the returned list_hash into the campaign plan.
 You do not invent CRM data — use tools. Prefer clear plan cards and ask for Launch/Approve before sending or launching in Assisted mode.
 Deletes (campaigns, lists, posts, inbox, templates) ALWAYS require Confirm Delete — never auto-delete, even in Autopilot or Autonomous.
 Bulk actions (not only delete): when the user asks to pause/activate/delete many campaigns, pass campaign_ids[] (or delete_all_outreach) in one tool call — never stage separate LAUNCH ids per item. Confirm Delete still required for deletes.
-Instagram discovery (PRIMARY = Mindcase Search Query): discover_prospects platform=instagram with keyword query (e.g. coffee, nasa — same as Mindcase console Search mode) + target_count (max 250). Do NOT ask for @handles first. Handle mode (@username / profile URL) only when they already know accounts. Then draft_campaign_plan channels=Instagram. WhatsApp/Telegram have no public people search — use save_contacts with phones/@handles the user provides.
+Instagram discovery (PRIMARY = Mindcase Search Query): discover_prospects platform=instagram with keyword query (e.g. coffee, nasa — same as Mindcase console Search mode) + target_count (max 100 per pull). Do NOT ask for @handles first. Handle mode (@username / profile URL) only when they already know accounts. Then draft_campaign_plan channels=Instagram. WhatsApp/Telegram have no public people search — use save_contacts with phones/@handles the user provides.
 Never claim you messaged a prospect unless an execute tool succeeded.
 Keep responses concise and action-oriented. On WhatsApp, favor short bullets.
 Campaign titles: when calling draft_campaign_plan, always pass campaign_name as a short label (≤50 chars) that names the theme — e.g. "Annual event invite", "IG coffee leads", "Webinar follow-up". Never put emails, full sentences, or the entire goal into campaign_name (goal stays detailed separately).
@@ -42,7 +49,7 @@ Sequence & reply playbook (decide per goal — do not hardcode one flow):
 - Full prospecting campaigns → invites/conditions/waits only when the goal needs them. Size the graph to the ask.
 - LinkedIn invite → always gate DMs with invite_accepted (not a second invite, not a blind wait-as-accept). Put messages on accepted; put email/WhatsApp backups on not_accepted when those channels are in play.
 - Exception: 1st-degree / already-connected audiences → NO send_invite (they are connected). Plan LinkedIn messages (+ has_replied/no_reply if branching). 2nd/3rd+ → invites make sense.
-- Default reply handling: pause_on_reply ON. When a prospect replies, automation pauses and you handle them in inbox chat context (get_attention_queue → classify_reply → draft_reply / send_inbox_reply). Do not invent a fake "Alex reply" action node in the sequence.
+- Default reply handling: pause_on_reply ON. When a prospect replies, automation pauses and you handle them in inbox chat context (get_attention_queue → classify_reply → draft_reply / send_inbox_reply). Do not invent a fake "Soci reply" action node in the sequence.
 - Use has_replied / message_replied / no_reply condition nodes only when the SEQUENCE itself must branch (e.g. bump if silent vs different path if they already answered). Pause-on-reply cooperates with those nodes while they evaluate.
 - Email: send_email + waits; use email_replied / no_reply / email_opened when branching matters; enrich emails in waves.
 - WhatsApp/Instagram/Telegram: send_message + waits; message_replied / no_reply for branchy follow-ups.
@@ -77,8 +84,8 @@ LinkedIn people search (use the full SociFusion classic search surface via disco
 - When profile_url is provided, import THAT profile and return profile_detail (headline/about/company/location) — never substitute an unrelated ICP search.
 - Person-name lookups must stay on that name; never broaden into generic B2B SaaS founder searches.
 
-Builder attribution (use only when asked who built SociFusion / Alex / this product, who created it, who made you, or similar):
-Answer that William Victor built SociFusion and Alex. Share his LinkedIn: https://www.linkedin.com/in/vicken-concept/
+Builder attribution (use only when asked who built SociFusion / Soci / this product, who created it, who made you, or similar):
+Answer that William Victor built SociFusion and Soci (the AI Sales Employee). Share his LinkedIn: https://www.linkedin.com/in/vicken-concept/
 Do not volunteer this unless asked; stay focused on sales work otherwise.
 TXT,
 
@@ -95,7 +102,7 @@ TXT,
         */
         'queue_inbound' => env('ZERNIO_QUEUE_INBOUND', true),
         /*
-        | Show WhatsApp "typing..." while Alex prepares a reply (Zernio inbox API).
+        | Show WhatsApp "typing..." while Soci prepares a reply (Zernio inbox API).
         | Refreshed every typing_refresh_seconds because WhatsApp clears after ~25s.
         */
         'typing_indicator' => env('ZERNIO_TYPING_INDICATOR', true),
@@ -109,6 +116,24 @@ TXT,
     */
     'web_chat_queue' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE', true),
     'web_chat_queue_name' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE_NAME', 'webhooks'),
+    'web_chat_agent_queue_name' => env('SOCIFUSION_AI_WEB_CHAT_AGENT_QUEUE_NAME', 'default'),
+    'web_chat_job_timeout' => (int) env('SOCIFUSION_AI_WEB_CHAT_JOB_TIMEOUT', 600),
+    'web_chat_job_tries' => (int) env('SOCIFUSION_AI_WEB_CHAT_JOB_TRIES', 3),
+    'web_chat_stale_seconds' => (int) env('SOCIFUSION_AI_WEB_CHAT_STALE_SECONDS', 90),
+    'web_chat_redispatch_attempts' => (int) env('SOCIFUSION_AI_WEB_CHAT_REDISPATCH_ATTEMPTS', 3),
+
+    /*
+    | Agent model chain. First funded provider is used. On 429 / no credits / provider outage,
+    | Laravel AI fails over to the next key that is actually set.
+    | OpenRouter is a different billing account — switching models on the same empty OpenAI key does nothing.
+    */
+    'model_failover' => [
+        'openai' => env('SOCIFUSION_AI_OPENAI_MODEL'),
+        'openrouter' => env('SOCIFUSION_AI_OPENROUTER_MODEL', 'openai/gpt-4o-mini'),
+        'gemini' => env('SOCIFUSION_AI_GEMINI_MODEL', 'gemini-2.5-flash'),
+        'groq' => env('SOCIFUSION_AI_GROQ_MODEL', 'llama-3.3-70b-versatile'),
+        'anthropic' => env('SOCIFUSION_AI_ANTHROPIC_MODEL', 'claude-sonnet-4-5'),
+    ],
 
     'link_code_ttl_minutes' => 15,
 
@@ -124,7 +149,7 @@ TXT,
     ],
 
     /*
-    | Outreach channels for Alex (prospect-facing Unipile channels).
+    | Outreach channels for Soci (prospect-facing Unipile channels).
     | Primary = default recommendations. Secondary = suggest when user asks or ICP fits.
     | Command Center WhatsApp (Zernio) is separate — not listed here.
     */
@@ -140,4 +165,24 @@ TXT,
     | Review & Launch unless Copilot mode (1).
     | Destructive tools (delete_*) are never allowlisted and never auto-execute.
     */
+
+    /*
+    | Prospect intelligence web research via Laravel AI provider tools.
+    | Uses keys already in config/ai.php — no separate signup.
+    |
+    | Provider support:
+    | - openai: WebSearch only (uses OPENAI_API_KEY)
+    | - anthropic: WebSearch + WebFetch (uses ANTHROPIC_API_KEY)
+    | - openrouter / gemini: both tools
+    |
+    | Chain: JINA → Laravel AI WebFetch → HTTP (URLs)
+    |        domain guess → Laravel AI WebSearch → DuckDuckGo (companies)
+    */
+    'web_research' => [
+        'enabled' => env('SOCIFUSION_AI_WEB_RESEARCH', true),
+        'provider' => env('SOCIFUSION_AI_WEB_RESEARCH_PROVIDER', 'openai'),
+        'model' => env('SOCIFUSION_AI_WEB_RESEARCH_MODEL'),
+        'max_searches' => (int) env('SOCIFUSION_AI_WEB_RESEARCH_MAX_SEARCHES', 2),
+        'timeout' => (int) env('SOCIFUSION_AI_WEB_RESEARCH_TIMEOUT', 45),
+    ],
 ];

@@ -31,7 +31,7 @@ class IcpFromPlanService
         $settings->update(['meta' => $meta]);
 
         return [
-            'message' => 'ICP saved to your AI Employee workspace. Next: say "find prospects" — Alex will search LinkedIn from this ICP.',
+            'message' => 'ICP saved to your AI Employee workspace. Next: say "find prospects" — Soci will search LinkedIn from this ICP.',
             'icp' => $icp,
             'next_prompt' => 'Find prospects matching my ICP using discover_prospects with target_count 100.',
         ];

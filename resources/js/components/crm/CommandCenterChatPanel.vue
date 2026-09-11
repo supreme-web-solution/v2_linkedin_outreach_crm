@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Eraser, Loader2, Rocket, Send, X } from '@lucide/vue';
-import ChatTypingIndicator from '@/components/crm/ChatTypingIndicator.vue';
+import { Eraser, Loader2, Send } from '@lucide/vue';
+import ChatProcessingIndicator from '@/components/crm/ChatProcessingIndicator.vue';
 import CommandCenterChannelLabel from '@/components/crm/CommandCenterChannelLabel.vue';
 import CommandCenterMessageContent from '@/components/crm/CommandCenterMessageContent.vue';
+import CommandCenterReviewLaunchInline from '@/components/crm/CommandCenterReviewLaunchInline.vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { useCommandCenterChat } from '@/composables/useCommandCenterChat';
@@ -21,6 +22,7 @@ const {
     settings,
     sending,
     awaitingReply,
+    processingLabel,
     decidingApprovalId,
     clearingChat,
     pendingApprovals,
@@ -31,9 +33,6 @@ const {
     send,
     clearChat,
     decideApproval,
-    approvalApproveLabel,
-    approvalRejectLabel,
-    approvalSummary,
     loadOlderMessages,
     onChatScroll,
     formatMessageHtml,
@@ -46,13 +45,18 @@ const chatBusy = computed(
     () => sending.value || awaitingReply.value || decidingApprovalId.value !== null || clearingChat.value,
 );
 
-const actionableApprovals = computed(() => (pendingApprovals.value ?? []).slice(0, 1));
-
-function approvalDetail(approval: { card_text?: string }): string {
-    const raw = (approval.card_text ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!raw) return '';
-    return raw.length > 120 ? raw.slice(0, 117) + '…' : raw;
-}</script>
+const inlineApprovals = computed(() =>
+    (pendingApprovals.value ?? []).map((approval) => ({
+        id: approval.id,
+        tool: approval.tool ?? 'plan',
+        status: approval.status ?? 'pending',
+        payload: approval.payload ?? {},
+        card_text: approval.card_text ?? '',
+        funnel: (approval as { funnel?: unknown }).funnel as import('@/components/crm/CommandCenterReviewLaunchInline.vue').PlanFunnelStep[] | undefined,
+        actions: approval.actions,
+    })),
+);
+</script>
 
 <template>
     <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -152,64 +156,33 @@ function approvalDetail(approval: { card_text?: string }): string {
                     </div>
                 </template>
 
-                <ChatTypingIndicator
+                <div
+                    v-if="inlineApprovals.length && !chatBusy"
+                    class="flex w-full justify-start"
+                >
+                    <div class="w-full max-w-[92%] space-y-2">
+                        <CommandCenterReviewLaunchInline
+                            :approvals="inlineApprovals"
+                            :deciding-id="decidingApprovalId"
+                            :format-message-html="formatMessageHtml"
+                            @decide="(id, decision) => decideApproval(id, decision)"
+                        />
+                    </div>
+                </div>
+
+                <ChatProcessingIndicator
                     v-if="chatBusy && !clearingChat"
                     :name="settings.employee_name"
                     :show-label="!compact"
+                    :status-label="processingLabel"
                 />
             </template>
-        </div>
-
-        <div
-            v-if="actionableApprovals.length"
-            class="shrink-0 space-y-2 border-t bg-amber-50/70 px-3 py-2.5 dark:bg-amber-950/30"
-        >
-            <div
-                v-for="approval in actionableApprovals"
-                :key="approval.id"
-                class="space-y-1.5"
-            >
-                <p class="text-[11px] font-medium text-amber-950 dark:text-amber-100">
-                    {{ approvalSummary(approval) }}
-                </p>
-                <p
-                    v-if="approvalDetail(approval)"
-                    class="line-clamp-2 text-[10px] leading-snug text-amber-900/80 dark:text-amber-100/70"
-                >
-                    {{ approvalDetail(approval) }}
-                </p>
-                <div class="flex gap-2">
-                    <Button
-                        size="sm"
-                        class="h-8 flex-1 text-xs"
-                        :disabled="chatBusy"
-                        @click="decideApproval(approval.id, 'approve')"
-                    >
-                        <Loader2
-                            v-if="decidingApprovalId === approval.id"
-                            class="mr-1 size-3.5 animate-spin"
-                        />
-                        <Rocket v-else class="mr-1 size-3.5" />
-                        {{ approvalApproveLabel(approval) }}
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        class="h-8 text-xs"
-                        :disabled="chatBusy"
-                        @click="decideApproval(approval.id, 'reject')"
-                    >
-                        <X class="size-3.5" />
-                        <span class="ml-1">{{ approvalRejectLabel(approval) }}</span>
-                    </Button>
-                </div>
-            </div>
         </div>
 
         <form class="flex shrink-0 gap-2 border-t p-3" @submit.prevent="send()">
             <Input
                 v-model="draft"
-                placeholder="Message Alex…"
+                placeholder="Message Soci…"
                 class="flex-1"
                 :disabled="chatBusy || bootstrapping || !settings.enabled || settings.kill_switch"
             />

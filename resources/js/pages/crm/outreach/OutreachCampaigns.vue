@@ -90,7 +90,7 @@ function formatCreatedAt(iso: string | null | undefined): string {
             </div>
             <div class="flex flex-wrap items-center gap-2">
                 <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-950/20 ring-1 ring-inset ring-white/15 hover:from-blue-500 hover:to-blue-700">
-                    <Bot class="h-4 w-4" /> Ask Alex
+                    <Bot class="h-4 w-4" /> Ask Soci
                 </Link>
                 <Link href="/outreach/create" class="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted">
                     <Plus class="h-4 w-4" /> New outreach
@@ -149,7 +149,7 @@ function formatCreatedAt(iso: string | null | undefined): string {
                 </div>
                 <div class="flex flex-wrap justify-center gap-2">
                     <Link href="/ai-employee" class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-blue-500 to-blue-600 px-4 py-2 text-sm font-medium text-primary-foreground">
-                        <Bot class="h-4 w-4" /> Ask Alex
+                        <Bot class="h-4 w-4" /> Ask Soci
                     </Link>
                     <Link href="/outreach/create" class="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-muted">Create outreach</Link>
                 </div>

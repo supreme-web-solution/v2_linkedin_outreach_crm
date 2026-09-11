@@ -10,7 +10,7 @@ use Laravel\Ai\Tools\Request;
 use Stringable;
 
 /**
- * Update the human sender name Alex uses when signing emails/DMs.
+ * Update the human sender name Soci uses when signing emails/DMs.
  */
 class UpdateSenderProfileTool extends GatedTool
 {

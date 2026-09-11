@@ -12,7 +12,7 @@ final class RecipientFacingCopyGuard
 {
     /**
      * Fill sender/lead placeholders from profile + lead before send checks.
-     * Prefer an explicit name the user told Alex, then preferred sender, then profile.
+     * Prefer an explicit name the user told Soci, then preferred sender, then profile.
      *
      * @param  array{
      *     user?: ?User,
@@ -148,7 +148,7 @@ final class RecipientFacingCopyGuard
             return false;
         }
 
-        // Imperative briefing to Alex / the operator, not the prospect.
+        // Imperative briefing to Soci / the operator, not the prospect.
         $openers = [
             '/^Reply with\b/i',
             '/^Thank them\b/i',

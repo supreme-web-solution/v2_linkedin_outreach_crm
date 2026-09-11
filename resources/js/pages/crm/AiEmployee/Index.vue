@@ -2,14 +2,15 @@
 import { Head, usePage } from '@inertiajs/vue3';
 import AlexAvatar from '@/components/crm/AlexAvatar.vue';
 import CommandCenterEmployeeSettings from '@/components/crm/CommandCenterEmployeeSettings.vue';
-import { Check, Bot, ChevronDown, Eraser, History, Inbox, Link2, Loader2, MessageCircle, PauseCircle, RefreshCw, Rocket, Send, Undo2, X } from '@lucide/vue';
+import { Check, Bot, ChevronDown, Eraser, History, Inbox, Link2, Loader2, MessageCircle, PauseCircle, RefreshCw, Send, Undo2 } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import CommandCenterChannelLabel from '@/components/crm/CommandCenterChannelLabel.vue';
 import CommandCenterMessageContent from '@/components/crm/CommandCenterMessageContent.vue';
+import CommandCenterReviewLaunchInline from '@/components/crm/CommandCenterReviewLaunchInline.vue';
 import WhatsAppCommandLinkPanel, { type WhatsAppCommandLink } from '@/components/crm/WhatsAppCommandLinkPanel.vue';
-import ChatTypingIndicator from '@/components/crm/ChatTypingIndicator.vue';
+import ChatProcessingIndicator from '@/components/crm/ChatProcessingIndicator.vue';
 import { Input } from '@/components/ui/input';
 import {
     formatChatDateDivider,
@@ -151,6 +152,7 @@ const props = defineProps<{
     messages: ChatMessage[];
     has_older_messages?: boolean;
     pending_approvals: Approval[];
+    pending_turn?: { after_message_id?: number; processing?: { label?: string } } | null;
     attention_queue: AttentionQueue;
     action_history?: ActionHistoryItem[];
     integrations: IntegrationChannel[];
@@ -163,6 +165,7 @@ const {
     conversationId,
     sending,
     awaitingReply,
+    processingLabel,
     clearingChat,
     scrollEl,
     hasOlderMessages,
@@ -184,6 +187,7 @@ hydrateFromPage({
     messages: props.messages,
     has_older_messages: props.has_older_messages,
     pending_approvals: props.pending_approvals,
+    pending_turn: props.pending_turn,
     settings: props.settings,
 });
 
@@ -205,7 +209,7 @@ const whatsappLinked = ref(props.whatsapp.linked);
 const whatsappPhone = ref<string | null>(props.whatsapp.phone);
 let linkPollTimer: ReturnType<typeof setInterval> | null = null;
 
-// Sidebar panels collapse by default so Review & Launch stays in view.
+// Sidebar panels collapse by default to keep the chat in focus.
 const whatsappOpen = ref(!props.whatsapp.linked);
 const activityOpen = ref(false);
 const attentionOpen = ref(false);
@@ -327,63 +331,7 @@ function isEditableDraft(a: Approval) {
     return isDraftReply(a) || isPersonalizedMessage(a);
 }
 
-function funnelStatusClass(status: PlanFunnelStep['status']) {
-    if (status === 'ready') return 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100';
-    if (status === 'blocked') return 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100';
-    return 'border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-border dark:bg-muted/40 dark:text-muted-foreground';
-}
-
-function planFunnel(a: Approval): PlanFunnelStep[] {
-    if (Array.isArray(a.funnel) && a.funnel.length) {
-        return a.funnel;
-    }
-    const payloadFunnel = a.payload.funnel;
-    return Array.isArray(payloadFunnel) ? (payloadFunnel as PlanFunnelStep[]) : [];
-}
-
-function isOutreachPlan(a: Approval) {
-    return (
-        a.tool === 'propose_strategy'
-        || a.tool === 'draft_campaign_plan'
-        || a.payload.type === 'strategy'
-        || a.payload.type === 'campaign'
-    );
-}
-
-function approveLabelFor(a: Approval): string {
-    if (a.actions?.approve_label) return a.actions.approve_label;
-    if (isDraftReply(a)) return 'Send';
-    if (isPersonalizedMessage(a)) return 'Save';
-    return 'Launch';
-}
-
-function rejectLabelFor(a: Approval): string {
-    return a.actions?.reject_label || 'Reject';
-}
-
-function missingIntegrationsForPlan(a: Approval): string[] {
-    const channels = String(
-        a.payload.preferred_channels ?? a.payload.channels ?? 'linkedin + email',
-    ).toLowerCase();
-    const missing: string[] = [];
-
-    for (const integration of props.integrations) {
-        const key = integration.key;
-        const mentioned =
-            channels.includes(key)
-            || (key === 'linkedin' && channels.includes('linked'))
-            || (key === 'email' && channels.includes('mail'))
-            || (key === 'instagram' && (channels.includes('insta') || channels.includes('ig')))
-            || (key === 'telegram' && channels.includes('telegram'))
-            || (key === 'whatsapp' && (channels.includes('whats') || channels.includes(' wa')));
-
-        if (mentioned && !integration.connected) {
-            missing.push(integration.label);
-        }
-    }
-
-    return missing;
-}
+const chatBusy = computed(() => sending.value || awaitingReply.value || clearingChat.value);
 
 const primaryIntegrations = computed(() =>
     props.integrations.filter((i) => i.tier === 'primary'),
@@ -676,8 +624,6 @@ function startLinkPolling() {
     }, 3000);
 }
 
-const chatBusy = computed(() => sending.value || awaitingReply.value || clearingChat.value);
-
 watch(chatBusy, (isBusy, wasBusy) => {
     // After queued reply lands, refresh side panels.
     if (wasBusy && !isBusy) {
@@ -875,9 +821,26 @@ async function disconnectWhatsApp() {
                         </div>
                     </template>
 
-                    <ChatTypingIndicator
+                    <div
+                        v-if="pending.length && !chatBusy"
+                        class="flex w-full justify-start"
+                    >
+                        <div class="w-full max-w-[90%] space-y-2">
+                            <CommandCenterReviewLaunchInline
+                                :approvals="pending"
+                                :deciding-id="decidingId"
+                                v-model:draft-edits="draftEdits"
+                                :integrations="integrations"
+                                :format-message-html="formatMessageHtml"
+                                @decide="(id, decision) => decide(id, decision)"
+                            />
+                        </div>
+                    </div>
+
+                    <ChatProcessingIndicator
                         v-if="chatBusy"
                         :name="employeeSettings.employee_name"
+                        :status-label="processingLabel"
                     />
                 </div>
                 <form class="flex shrink-0 gap-2 border-t p-3" @submit.prevent="send()">
@@ -901,117 +864,6 @@ async function disconnectWhatsApp() {
                 :is-platform-admin="isPlatformAdmin"
                 @updated="onEmployeeSettingsUpdated"
             />
-
-            <div class="flex min-h-[14rem] flex-1 flex-col overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">
-                <div class="flex shrink-0 items-center justify-between border-b px-4 py-3">
-                    <div class="text-sm font-medium">Review & Launch</div>
-                    <span
-                        v-if="pending.length"
-                        class="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200"
-                    >
-                        {{ pending.length }} pending
-                    </span>
-                </div>
-                <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-                    <p v-if="!pending.length" class="text-muted-foreground text-xs">
-                        No pending plans. In <strong>Assisted</strong> mode Alex stages plans here with Launch buttons.
-                        <strong>Copilot</strong> never stages. <strong>Autopilot+</strong> auto-launches when audience exists.
-                        Connect LinkedIn first or plans stay blocked.
-                    </p>
-                    <div v-for="a in pending" :key="a.id" class="space-y-2 rounded-lg border bg-zinc-50 p-3 text-sm dark:bg-muted/40">
-                        <div class="text-muted-foreground text-[10px] uppercase tracking-wide">
-                            #{{ a.id }} · {{ a.tool }}
-                        </div>
-                        <div
-                            v-if="isOutreachPlan(a) && missingIntegrationsForPlan(a).length"
-                            class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100"
-                        >
-                            Launch is blocked until you connect
-                            {{ missingIntegrationsForPlan(a).join(' and ') }}.
-                            <a href="/integrations" class="underline">Open Integrations</a>
-                        </div>
-                        <div
-                            v-if="planFunnel(a).length"
-                            class="overflow-x-auto rounded-md border bg-white/80 p-2 dark:bg-background/40"
-                        >
-                            <div class="flex min-w-max items-stretch gap-1">
-                                <div
-                                    v-for="(step, index) in planFunnel(a)"
-                                    :key="step.step"
-                                    class="flex items-center gap-1"
-                                >
-                                    <div
-                                        class="flex w-28 flex-col rounded-md border px-2 py-1.5 text-[10px]"
-                                        :class="funnelStatusClass(step.status)"
-                                    >
-                                        <div class="font-semibold uppercase tracking-wide">{{ step.label }}</div>
-                                        <div class="mt-0.5 line-clamp-2 leading-snug">{{ step.detail }}</div>
-                                    </div>
-                                    <span
-                                        v-if="index < planFunnel(a).length - 1"
-                                        class="text-muted-foreground px-0.5"
-                                    >→</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div
-                            v-if="!isEditableDraft(a)"
-                            class="font-sans text-xs whitespace-pre-wrap [&_strong]:font-semibold"
-                            v-html="formatMessageHtml(a.card_text)"
-                        />
-                        <template v-else-if="isDraftReply(a)">
-                            <div class="space-y-1 text-xs">
-                                <div class="font-medium">{{ a.payload.prospect_name ?? 'Prospect' }}</div>
-                                <div class="text-muted-foreground">{{ a.payload.channel_label ?? a.payload.channel }}</div>
-                                <div v-if="a.payload.inbound_preview" class="text-muted-foreground italic">
-                                    "{{ a.payload.inbound_preview }}"
-                                </div>
-                            </div>
-                            <textarea
-                                v-model="draftEdits[a.id]"
-                                rows="4"
-                                class="border-input bg-background w-full resize-y rounded-md border px-2 py-1.5 text-xs"
-                                placeholder="Edit reply before Launch…"
-                            />
-                        </template>
-                        <template v-else-if="isPersonalizedMessage(a)">
-                            <div class="space-y-1 text-xs">
-                                <div class="font-medium">{{ a.payload.prospect_name ?? 'Prospect' }}</div>
-                                <div class="text-muted-foreground">{{ a.payload.channel_label ?? a.payload.channel }}</div>
-                                <div v-if="a.payload.evidence" class="text-muted-foreground text-[10px]">
-                                    Evidence: {{ JSON.stringify(a.payload.evidence) }}
-                                </div>
-                            </div>
-                            <textarea
-                                v-model="draftEdits[a.id]"
-                                rows="4"
-                                class="border-input bg-background w-full resize-y rounded-md border px-2 py-1.5 text-xs"
-                                placeholder="Edit message before Launch…"
-                            />
-                        </template>
-                        <div class="flex gap-2">
-                            <Button
-                                size="sm"
-                                class="flex-1"
-                                :disabled="decidingId === a.id"
-                                @click="decide(a.id, 'approve')"
-                            >
-                                <Rocket class="mr-1 size-3.5" />
-                                {{ approveLabelFor(a) }}
-                            </Button>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                :disabled="decidingId === a.id"
-                                @click="decide(a.id, 'reject')"
-                            >
-                                <X class="mr-1 size-3.5" />
-                                {{ rejectLabelFor(a) }}
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <Collapsible v-model:open="whatsappOpen" class="shrink-0 overflow-visible rounded-xl border bg-white shadow-sm dark:bg-card">
                 <CollapsibleTrigger class="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-muted/30">
@@ -1047,7 +899,7 @@ async function disconnectWhatsApp() {
                         </Button>
                     </template>
                     <template v-else>
-                        <p class="text-muted-foreground text-xs">Same Alex brain from your phone.</p>
+                        <p class="text-muted-foreground text-xs">Same Soci brain from your phone.</p>
                         <Button
                             v-if="!linkInfo"
                             class="mt-3 w-full border-0 bg-[#25D366] text-white hover:bg-[#1da851]"
@@ -1324,7 +1176,7 @@ async function disconnectWhatsApp() {
                                     @click="askAlexNurture(item.alex_starter)"
                                 >
                                     <Bot class="mr-1 size-3" />
-                                    Ask Alex
+                                    Ask Soci
                                 </Button>
                                 <Button v-if="item.inbox_url" size="sm" class="h-6 text-[10px]" variant="outline" as-child>
                                     <a :href="item.inbox_url">Open</a>

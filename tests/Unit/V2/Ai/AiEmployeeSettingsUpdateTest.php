@@ -64,7 +64,7 @@ class AiEmployeeSettingsUpdateTest extends TestCase
             'enabled' => true,
             'kill_switch' => false,
             'autonomy_level' => AiAutonomyLevel::Copilot->value,
-            'employee_name' => 'Alex',
+            'employee_name' => 'Soci',
         ]);
 
         app(AiEmployeeSettingsService::class)->updateForUser(
@@ -90,7 +90,7 @@ class AiEmployeeSettingsUpdateTest extends TestCase
             'enabled' => false,
             'kill_switch' => false,
             'autonomy_level' => AiAutonomyLevel::Assisted->value,
-            'employee_name' => 'Alex',
+            'employee_name' => 'Soci',
         ]);
 
         $updated = app(AiEmployeeSettingsService::class)->enableUnlessUserOptedOut($user, $org->id);

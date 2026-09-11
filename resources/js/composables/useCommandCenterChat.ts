@@ -11,6 +11,7 @@ export type CommandCenterChatMessage = {
     role: 'user' | 'assistant';
     content: string;
     channel?: string | null;
+    progress?: boolean;
     created_at?: string | null;
 };
 
@@ -26,6 +27,12 @@ type ApprovalLite = {
     status?: string;
     payload?: Record<string, unknown>;
     card_text?: string;
+    funnel?: Array<{
+        step: string;
+        label: string;
+        detail: string;
+        status: 'ready' | 'blocked' | 'pending';
+    }>;
     actions?: {
         approve_label?: string;
         reject_label?: string;
@@ -36,8 +43,10 @@ type ApprovalLite = {
 };
 
 const POLL_MS = 1200;
-const POLL_TIMEOUT_MS = 3 * 60 * 1000;
+const POLL_TIMEOUT_MS = 12 * 60 * 1000;
 const PENDING_SYNC_MS = 4000;
+
+const DEFAULT_PROCESSING_LABEL = 'Thinking…';
 
 function xsrf(): string {
     return decodeURIComponent(
@@ -86,7 +95,7 @@ const conversationId = ref<number | null>(null);
 const settings = ref<CommandCenterSettings>({
     enabled: true,
     kill_switch: false,
-    employee_name: 'Alex',
+    employee_name: 'Soci',
 });
 const pendingApprovalsCount = ref(0);
 const pendingApprovals = ref<ApprovalLite[]>([]);
@@ -100,6 +109,7 @@ const loadingOlder = ref(false);
 const preserveScrollOnPrepend = ref(false);
 const scrollEl = ref<HTMLElement | null>(null);
 const awaitingReply = ref(false);
+const processingLabel = ref(DEFAULT_PROCESSING_LABEL);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pollDeadline = 0;
@@ -109,6 +119,10 @@ let pollInFlight = false;
 let pendingSyncTimer: ReturnType<typeof setInterval> | null = null;
 let pendingSyncInFlight = false;
 let pendingSyncSubscribers = 0;
+
+function resetProcessingLabel(): void {
+    processingLabel.value = DEFAULT_PROCESSING_LABEL;
+}
 
 function clearPollTimer() {
     if (pollTimer !== null) {
@@ -123,6 +137,7 @@ function stopPolling() {
     pollAfterId = 0;
     pollDeadline = 0;
     pollInFlight = false;
+    resetProcessingLabel();
 }
 
 async function scrollBottom() {
@@ -247,26 +262,33 @@ async function pollOnce(generation: number): Promise<boolean> {
         const newer = Array.isArray(data.messages) ? (data.messages as CommandCenterChatMessage[]) : [];
         applyApprovals(data);
 
-        if (newer.length) {
-            chat.value = mergeNewerMessages(chat.value, newer);
+        const processing = data.processing as { active?: boolean; label?: string } | null | undefined;
+        if (processing?.active && typeof processing.label === 'string' && processing.label.trim() !== '') {
+            processingLabel.value = processing.label.trim();
         }
 
-        const assistant = newer.find((m) => {
+        if (newer.length) {
+            chat.value = mergeNewerMessages(chat.value, newer);
+            await scrollBottom();
+        }
+
+        const finalAssistant = newer.find((m) => {
             if (m.role !== 'assistant' || typeof m.content !== 'string') {
                 return false;
             }
+            if (m.progress) {
+                return false;
+            }
             const text = m.content.trim();
-            // Ignore empty / ellipsis placeholders until a real reply lands.
             return text !== '' && !/^\.{1,3}$|^…$/.test(text);
         });
 
-        if (assistant) {
+        if (finalAssistant) {
             clearPollTimer();
             awaitingReply.value = false;
             pollAfterId = 0;
             pollDeadline = 0;
             sending.value = false;
-            await scrollBottom();
             return true;
         }
 
@@ -290,6 +312,7 @@ function startPolling(afterMessageId: number) {
     awaitingReply.value = true;
     sending.value = true;
     pollInFlight = false;
+    resetProcessingLabel();
 
     void pollOnce(generation);
 
@@ -306,7 +329,8 @@ function startPolling(afterMessageId: number) {
                 ...chat.value,
                 {
                     role: 'assistant',
-                    content: 'Still working on that — refresh if the reply does not appear shortly.',
+                    content:
+                        'This is taking longer than expected. Soci may still be working in the background — wait a moment, then refresh the page. If nothing appears, send your message again and make sure the queue worker is running.',
                     channel: 'web',
                     created_at: new Date().toISOString(),
                 },
@@ -317,6 +341,25 @@ function startPolling(afterMessageId: number) {
 
         void pollOnce(generation);
     }, POLL_MS);
+}
+
+function resumePendingTurn(pending: {
+    after_message_id?: number;
+    processing?: { label?: string };
+} | null | undefined): void {
+    const afterId = Number(pending?.after_message_id ?? 0);
+    if (afterId <= 0) {
+        return;
+    }
+
+    const label = pending?.processing?.label;
+    if (typeof label === 'string' && label.trim() !== '') {
+        processingLabel.value = label.trim();
+    } else {
+        resetProcessingLabel();
+    }
+
+    startPolling(afterId);
 }
 
 async function bootstrap(force = false) {
@@ -338,7 +381,7 @@ async function bootstrap(force = false) {
         settings.value = {
             enabled: Boolean(data.settings?.enabled),
             kill_switch: Boolean(data.settings?.kill_switch),
-            employee_name: data.settings?.employee_name ?? 'Alex',
+            employee_name: data.settings?.employee_name ?? 'Soci',
         };
         pendingApprovalsCount.value = Number(data.pending_approvals_count ?? 0);
         if (Array.isArray(data.pending_approvals)) {
@@ -363,6 +406,11 @@ async function bootstrap(force = false) {
         }
 
         bootstrapped.value = true;
+
+        if (data.pending_turn?.after_message_id && !awaitingReply.value) {
+            resumePendingTurn(data.pending_turn);
+        }
+
         await scrollBottom();
     } finally {
         bootstrapping.value = false;
@@ -378,6 +426,7 @@ function hydrateFromPage(payload: {
     messages: CommandCenterChatMessage[];
     has_older_messages?: boolean;
     pending_approvals?: ApprovalLite[];
+    pending_turn?: { after_message_id?: number; processing?: { label?: string } } | null;
     settings?: Partial<CommandCenterSettings> & { autonomy_level?: number };
 }) {
     conversationId.value = payload.conversation_id;
@@ -416,6 +465,10 @@ function hydrateFromPage(payload: {
         };
     }
     bootstrapped.value = true;
+
+    if (payload.pending_turn?.after_message_id && !awaitingReply.value) {
+        resumePendingTurn(payload.pending_turn);
+    }
 }
 
 async function loadOlderMessages() {
@@ -738,6 +791,7 @@ export function useCommandCenterChat() {
         pendingApprovals,
         sending,
         awaitingReply,
+        processingLabel,
         decidingApprovalId,
         clearingChat,
         bootstrapping,

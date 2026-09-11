@@ -45,13 +45,16 @@ const props = defineProps<{
         audience_lists: number;
         sn_lists: number;
         import_lists: number;
+        instagram_lists: number;
         total_leads: number;
         linkedin_leads: number;
         imported_leads: number;
     };
 }>();
 
-const activeTab = ref<'linkedin' | 'imported'>('linkedin');
+type LeadTab = 'all' | 'linkedin' | 'instagram' | 'imported';
+
+const activeTab = ref<LeadTab>('all');
 const importModalOpen = ref(false);
 const profileModalOpen = ref(false);
 const igSearchModalOpen = ref(false);
@@ -77,7 +80,7 @@ async function searchInstagram() {
         igError.value = 'Enter a keyword (e.g. coffee, nasa).';
         return;
     }
-    const limit = Math.min(250, Math.max(1, Number(igLimit.value) || 25));
+    const limit = Math.min(100, Math.max(1, Number(igLimit.value) || 25));
     igBusy.value = true;
     try {
         const res = await fetch('/leads/search-instagram', {
@@ -102,6 +105,7 @@ async function searchInstagram() {
         igQuery.value = '';
         igListName.value = '';
         igLimit.value = 25;
+        activeTab.value = 'instagram';
         if (data.redirect) {
             window.location.href = data.redirect;
             return;
@@ -156,10 +160,63 @@ async function importProfile() {
 }
 
 onMounted(() => {
-    if (new URLSearchParams(window.location.search).get('tab') === 'imported') {
-        activeTab.value = 'imported';
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab === 'linkedin' || tab === 'instagram' || tab === 'imported' || tab === 'all') {
+        activeTab.value = tab;
     }
 });
+
+function isInstagramList(list: LeadList): boolean {
+    return list.channel === 'instagram'
+        || list.source === 'Instagram'
+        || /^IG:/i.test(list.list_name);
+}
+
+function isSpreadsheetImport(list: LeadList): boolean {
+    return list.src === 'csv' && !isInstagramList(list);
+}
+
+function isLinkedInList(list: LeadList): boolean {
+    return list.src === 'aud' || list.src === 'sn';
+}
+
+function displaySource(list: LeadList): string {
+    if (isInstagramList(list)) return 'Instagram';
+    if (isSpreadsheetImport(list)) return 'Imported';
+    if (isLinkedInList(list)) return 'LinkedIn';
+    return list.source;
+}
+
+function sortListsLatestFirst(lists: LeadList[]): LeadList[] {
+    return [...lists].sort((a, b) => {
+        const aTime = a.created_at ? Date.parse(a.created_at) : 0;
+        const bTime = b.created_at ? Date.parse(b.created_at) : 0;
+        return bTime - aTime;
+    });
+}
+
+const instagramLists = computed(() => props.importLists.filter(isInstagramList));
+const spreadsheetLists = computed(() => props.importLists.filter(isSpreadsheetImport));
+
+const tabLists = computed(() => {
+    switch (activeTab.value) {
+        case 'linkedin':
+            return props.lists;
+        case 'instagram':
+            return instagramLists.value;
+        case 'imported':
+            return spreadsheetLists.value;
+        default:
+            return sortListsLatestFirst([...props.lists, ...props.importLists]);
+    }
+});
+
+const tabCounts = computed(() => ({
+    all: props.lists.length + props.importLists.length,
+    linkedin: props.lists.length,
+    instagram: instagramLists.value.length,
+    imported: spreadsheetLists.value.length,
+}));
 
 const {
     search,
@@ -167,75 +224,58 @@ const {
     paginated,
     totalPages,
     total,
-} = useClientList(computed(() => props.lists), {
-    perPage: 10,
-    searchKeys: (l) => [l.list_name, l.source, l.list_hash],
-});
-
-const {
-    search: importSearch,
-    page: importPage,
-    paginated: importPaginated,
-    totalPages: importTotalPages,
-    total: importTotal,
-} = useClientList(computed(() => props.importLists), {
+} = useClientList(tabLists, {
     perPage: 10,
     searchKeys: (l) => [l.list_name, l.source, l.list_hash],
 });
 
 const renameForm = useForm({ list_name: '', src: 'aud' as 'aud' | 'sn' | 'csv' });
 const renaming = ref<LeadList | null>(null);
-const selectedLinkedinLists = ref<Set<string>>(new Set());
-const selectedImportLists = ref<Set<string>>(new Set());
+const selectedLists = ref<Set<string>>(new Set());
 
 watch(activeTab, (tab) => {
     const url = new URL(window.location.href);
-    if (tab === 'imported') {
-        url.searchParams.set('tab', 'imported');
-    } else {
+    if (tab === 'all') {
         url.searchParams.delete('tab');
+    } else {
+        url.searchParams.set('tab', tab);
     }
     window.history.replaceState({}, '', url.toString());
-    selectedLinkedinLists.value = new Set();
-    selectedImportLists.value = new Set();
+    selectedLists.value = new Set();
 });
 
 function listKey(list: LeadList): string {
     return `${list.src}:${list.list_hash}`;
 }
 
-const currentLists = computed(() => (activeTab.value === 'linkedin' ? paginated.value : importPaginated.value));
-const selectedLists = computed(() => (activeTab.value === 'linkedin' ? selectedLinkedinLists : selectedImportLists));
-
 const allListsSelected = computed(() => {
-    const lists = currentLists.value;
-    const selected = selectedLists.value;
-    return lists.length > 0 && lists.every((l) => selected.value.has(listKey(l)));
+    const lists = paginated.value;
+    return lists.length > 0 && lists.every((l) => selectedLists.value.has(listKey(l)));
 });
 
 function toggleListSelection(list: LeadList) {
     const key = listKey(list);
     const set = selectedLists.value;
-    if (set.value.has(key)) set.value.delete(key);
-    else set.value.add(key);
-    set.value = new Set(set.value);
+    if (set.has(key)) set.delete(key);
+    else set.add(key);
+    selectedLists.value = new Set(set);
 }
 
 function toggleAllLists() {
     const set = selectedLists.value;
     if (allListsSelected.value) {
-        set.value = new Set();
+        selectedLists.value = new Set();
     } else {
-        set.value = new Set(currentLists.value.map((l) => listKey(l)));
+        selectedLists.value = new Set(paginated.value.map((l) => listKey(l)));
     }
 }
 
 function deleteSelectedLists() {
     const set = selectedLists.value;
-    if (set.value.size === 0) return;
-    if (!confirm(`Delete ${set.value.size} selected list(s) and all their contacts? This cannot be undone.`)) return;
+    if (set.size === 0) return;
+    if (!confirm(`Delete ${set.size} selected list(s) and all their contacts? This cannot be undone.`)) return;
 
-    const lists = Array.from(set.value).map((key) => {
+    const lists = Array.from(set).map((key) => {
         const [src, ...hashParts] = key.split(':');
         return { src, list_hash: hashParts.join(':') };
     });
@@ -244,7 +284,7 @@ function deleteSelectedLists() {
         data: { lists },
         preserveScroll: true,
         onSuccess: () => {
-            set.value = new Set();
+            selectedLists.value = new Set();
         },
     });
 }
@@ -284,18 +324,52 @@ function listHref(list: LeadList): string {
     return `/leads/${encodeURIComponent(list.list_hash)}?src=${list.src}`;
 }
 
-function sourceBadgeClass(): string {
-    return 'bg-blue-500/10 text-blue-600';
+function sourceBadgeClass(list: LeadList): string {
+    if (isInstagramList(list)) {
+        return 'bg-pink-500/10 text-pink-700 dark:text-pink-300';
+    }
+    if (isLinkedInList(list)) {
+        return 'bg-sky-500/10 text-sky-700 dark:text-sky-300';
+    }
+    if (isSpreadsheetImport(list)) {
+        return 'bg-blue-500/10 text-blue-600';
+    }
+
+    return 'bg-muted text-muted-foreground';
 }
 
-function isInstagramList(list: LeadList): boolean {
-    return list.channel === 'instagram'
-        || list.source === 'Instagram'
-        || /^IG:/i.test(list.list_name);
-}
+const emptyState = computed(() => {
+    switch (activeTab.value) {
+        case 'linkedin':
+            return {
+                icon: Layers,
+                title: 'No LinkedIn lists yet',
+                description: 'Harvest audiences from Competitor Active Followers or import leads via the extension.',
+            };
+        case 'instagram':
+            return {
+                icon: null,
+                title: 'No Instagram lists yet',
+                description: 'Use Find Instagram leads to search by keyword, or add a profile URL.',
+            };
+        case 'imported':
+            return {
+                icon: FileSpreadsheet,
+                title: 'No imported lists yet',
+                description: 'Upload a spreadsheet with contacts for WhatsApp, email, or social outreach.',
+            };
+        default:
+            return {
+                icon: Layers,
+                title: 'No lead lists yet',
+                description: 'Find LinkedIn audiences, search Instagram, or import a spreadsheet to get started.',
+            };
+    }
+});
 
 const audienceListCount = computed(() => props.stats.audience_lists + props.stats.sn_lists);
 const igIcon = brandIconSrc('instagram');
+const liIcon = brandIconSrc('linkedin');
 </script>
 
 <template>
@@ -320,7 +394,7 @@ const igIcon = brandIconSrc('instagram');
             </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
             <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
                 <div class="rounded-lg bg-primary/10 p-2 text-primary"><Layers class="h-5 w-5" /></div>
                 <div>
@@ -333,6 +407,13 @@ const igIcon = brandIconSrc('instagram');
                 <div>
                     <p class="text-xs text-muted-foreground">Audience lists</p>
                     <p class="text-xl font-semibold">{{ audienceListCount.toLocaleString() }}</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
+                <div class="rounded-lg bg-pink-500/10 p-2 text-pink-600"><Users2 class="h-5 w-5" /></div>
+                <div>
+                    <p class="text-xs text-muted-foreground">Instagram lists</p>
+                    <p class="text-xl font-semibold">{{ stats.instagram_lists.toLocaleString() }}</p>
                 </div>
             </div>
             <div class="flex items-center gap-3 rounded-xl border border-border bg-card p-4">
@@ -358,11 +439,38 @@ const igIcon = brandIconSrc('instagram');
             <button
                 type="button"
                 class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors"
-                :class="activeTab === 'linkedin' ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground'"
+                :class="activeTab === 'all' ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground'"
+                @click="activeTab = 'all'"
+            >
+                <span class="inline-flex items-center gap-1.5">
+                    <Layers class="h-3.5 w-3.5" />
+                    All
+                </span>
+                <span class="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">{{ tabCounts.all }}</span>
+            </button>
+            <button
+                type="button"
+                class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors"
+                :class="activeTab === 'linkedin' ? 'border-b-2 border-sky-600 text-foreground' : 'text-muted-foreground hover:text-foreground'"
                 @click="activeTab = 'linkedin'"
             >
-                LinkedIn lists
-                <span class="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">{{ lists.length }}</span>
+                <span class="inline-flex items-center gap-1.5">
+                    <img :src="liIcon" alt="" class="h-3.5 w-3.5" />
+                    LinkedIn
+                </span>
+                <span class="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">{{ tabCounts.linkedin }}</span>
+            </button>
+            <button
+                type="button"
+                class="rounded-t-lg px-4 py-2 text-sm font-medium transition-colors"
+                :class="activeTab === 'instagram' ? 'border-b-2 border-pink-600 text-foreground' : 'text-muted-foreground hover:text-foreground'"
+                @click="activeTab = 'instagram'"
+            >
+                <span class="inline-flex items-center gap-1.5">
+                    <img :src="igIcon" alt="" class="h-3.5 w-3.5" />
+                    Instagram
+                </span>
+                <span class="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">{{ tabCounts.instagram }}</span>
             </button>
             <button
                 type="button"
@@ -370,186 +478,140 @@ const igIcon = brandIconSrc('instagram');
                 :class="activeTab === 'imported' ? 'border-b-2 border-blue-600 text-foreground' : 'text-muted-foreground hover:text-foreground'"
                 @click="activeTab = 'imported'"
             >
-                Imported lists
-                <span class="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">{{ importLists.length }}</span>
+                <span class="inline-flex items-center gap-1.5">
+                    <FileSpreadsheet class="h-3.5 w-3.5" />
+                    Imported
+                </span>
+                <span class="ml-1.5 rounded-full bg-muted px-2 py-0.5 text-xs">{{ tabCounts.imported }}</span>
             </button>
         </div>
 
-        <!-- LinkedIn lists tab -->
-        <template v-if="activeTab === 'linkedin'">
-            <div class="flex flex-wrap items-center gap-2">
-                <div class="flex min-w-[200px] flex-1 max-w-md items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
-                    <Search class="h-4 w-4 text-muted-foreground" />
-                    <input v-model="search" type="search" placeholder="Search lists…" class="w-full bg-transparent text-sm outline-none" />
-                </div>
+        <div class="flex flex-wrap items-center gap-2">
+            <div class="flex min-w-[200px] flex-1 max-w-md items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+                <Search class="h-4 w-4 text-muted-foreground" />
+                <input v-model="search" type="search" placeholder="Search lists…" class="w-full bg-transparent text-sm outline-none" />
             </div>
+            <Button v-if="activeTab === 'imported'" class="gap-2" @click="importModalOpen = true">
+                <Upload class="h-4 w-4" />
+                Import spreadsheet
+            </Button>
+        </div>
 
-            <div v-if="selectedLinkedinLists.size > 0" class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
-                <span class="font-medium">{{ selectedLinkedinLists.size }} list(s) selected</span>
-                <button
-                    type="button"
-                    class="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-b from-red-500 to-red-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm"
-                    @click="deleteSelectedLists"
-                >
-                    <Trash2 class="h-3.5 w-3.5" /> Delete lists
-                </button>
-                <button type="button" class="ml-auto text-xs text-muted-foreground hover:text-foreground" @click="selectedLinkedinLists = new Set()">Clear</button>
-            </div>
+        <div v-if="selectedLists.size > 0" class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
+            <span class="font-medium">{{ selectedLists.size }} list(s) selected</span>
+            <button
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-b from-red-500 to-red-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm"
+                @click="deleteSelectedLists"
+            >
+                <Trash2 class="h-3.5 w-3.5" /> Delete lists
+            </button>
+            <button type="button" class="ml-auto text-xs text-muted-foreground hover:text-foreground" @click="selectedLists = new Set()">Clear</button>
+        </div>
 
-            <div v-if="total === 0" class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-12 text-center">
-                <Layers class="h-10 w-10 text-muted-foreground/40" />
-                <p class="font-medium">No LinkedIn lists yet</p>
-                <p class="text-sm text-muted-foreground">Harvest audiences from Competitor Active Followers or import leads via the extension.</p>
+        <div v-if="total === 0" class="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border bg-muted/20 p-12 text-center">
+            <img v-if="activeTab === 'instagram'" :src="igIcon" alt="" class="h-10 w-10 opacity-60" />
+            <component :is="emptyState.icon" v-else-if="emptyState.icon" class="h-10 w-10 text-muted-foreground/40" />
+            <Layers v-else class="h-10 w-10 text-muted-foreground/40" />
+            <div>
+                <p class="font-medium">{{ emptyState.title }}</p>
+                <p class="mt-1 text-sm text-muted-foreground">{{ emptyState.description }}</p>
             </div>
+            <Button v-if="activeTab === 'imported'" class="gap-2" @click="importModalOpen = true">
+                <Plus class="h-4 w-4" />
+                Import spreadsheet
+            </Button>
+            <Button v-else-if="activeTab === 'instagram'" class="gap-2" @click="igSearchModalOpen = true">
+                <img :src="igIcon" alt="" class="h-4 w-4" />
+                Find Instagram leads
+            </Button>
+        </div>
 
-            <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
-                <table class="w-full text-sm">
-                    <thead class="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-                        <tr>
-                            <th class="px-4 py-3 font-medium">
-                                <button type="button" class="inline-flex" @click="toggleAllLists">
-                                    <AppSelectionCheckbox :checked="allListsSelected" />
-                                </button>
-                            </th>
-                            <th class="px-4 py-3 font-medium">List name</th>
-                            <th class="px-4 py-3 font-medium">Source</th>
-                            <th class="px-4 py-3 text-right font-medium">Leads</th>
-                            <th class="px-4 py-3 font-medium">Created</th>
-                            <th class="px-4 py-3 text-right font-medium">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-border">
-                        <tr v-for="list in paginated" :key="list.src + list.id" class="hover:bg-muted/30">
-                            <td class="px-4 py-3">
-                                <button type="button" class="inline-flex" @click="toggleListSelection(list)">
-                                    <AppSelectionCheckbox :checked="selectedLinkedinLists.has(listKey(list))" />
-                                </button>
-                            </td>
-                            <td class="px-4 py-3">
-                                <Link :href="listHref(list)" class="font-medium text-foreground hover:text-blue-600 hover:underline">
-                                    {{ list.list_name }}
-                                </Link>
-                            </td>
-                            <td class="px-4 py-3">
-                                <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="sourceBadgeClass()">{{ list.source }}</span>
-                            </td>
-                            <td class="px-4 py-3 text-right tabular-nums">{{ list.total_leads.toLocaleString() }}</td>
-                            <td class="px-4 py-3 text-muted-foreground">{{ fmtDate(list.created_at) }}</td>
-                            <td class="px-4 py-3">
-                                <div class="flex items-center justify-end gap-1">
-                                    <Link :href="listHref(list)" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-blue-600" title="View"><Eye class="h-4 w-4" /></Link>
-                                    <button type="button" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Rename" @click="openRename(list)"><Pencil class="h-4 w-4" /></button>
-                                    <button type="button" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-red-500" title="Delete" @click="destroy(list)"><Trash2 class="h-4 w-4" /></button>
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-                <ClientPagination v-model:page="page" :total-pages="totalPages" :total="total" :per-page="10" label="lists" />
-            </div>
-        </template>
-
-        <!-- Imported lists tab -->
-        <template v-else>
-            <div class="flex flex-wrap items-center gap-2">
-                <div class="flex min-w-[200px] flex-1 max-w-md items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
-                    <Search class="h-4 w-4 text-muted-foreground" />
-                    <input v-model="importSearch" type="search" placeholder="Search imported lists…" class="w-full bg-transparent text-sm outline-none" />
-                </div>
-                <Button class="gap-2" @click="importModalOpen = true">
-                    <Upload class="h-4 w-4" />
-                    Import spreadsheet
-                </Button>
-            </div>
-
-            <div v-if="selectedImportLists.size > 0" class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2 text-sm">
-                <span class="font-medium">{{ selectedImportLists.size }} list(s) selected</span>
-                <button
-                    type="button"
-                    class="inline-flex items-center gap-1.5 rounded-md bg-gradient-to-b from-red-500 to-red-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm"
-                    @click="deleteSelectedLists"
-                >
-                    <Trash2 class="h-3.5 w-3.5" /> Delete lists
-                </button>
-                <button type="button" class="ml-auto text-xs text-muted-foreground hover:text-foreground" @click="selectedImportLists = new Set()">Clear</button>
-            </div>
-
-            <div v-if="importTotal === 0" class="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border bg-muted/20 p-12 text-center">
-                <FileSpreadsheet class="h-10 w-10 text-blue-500/60" />
-                <div>
-                    <p class="font-medium">No imported lists yet</p>
-                    <p class="mt-1 text-sm text-muted-foreground">Upload a spreadsheet with contacts for WhatsApp, email, or social outreach.</p>
-                </div>
-                <Button class="gap-2" @click="importModalOpen = true">
-                    <Plus class="h-4 w-4" />
-                    Import spreadsheet
-                </Button>
-            </div>
-
-            <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
-                <table class="w-full text-sm">
-                    <thead class="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-                        <tr>
-                            <th class="px-4 py-3 font-medium">
-                                <button type="button" class="inline-flex" @click="toggleAllLists">
-                                    <AppSelectionCheckbox :checked="allListsSelected" />
-                                </button>
-                            </th>
-                            <th class="px-4 py-3 font-medium">List name</th>
-                            <th class="px-4 py-3 font-medium">Source</th>
-                            <th class="px-4 py-3 text-right font-medium">Contacts</th>
-                            <th class="px-4 py-3 font-medium">Created</th>
-                            <th class="px-4 py-3 text-right font-medium">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-border">
-                        <tr v-for="list in importPaginated" :key="list.list_hash" class="hover:bg-muted/30">
-                            <td class="px-4 py-3">
-                                <button type="button" class="inline-flex" @click="toggleListSelection(list)">
-                                    <AppSelectionCheckbox :checked="selectedImportLists.has(listKey(list))" />
-                                </button>
-                            </td>
-                            <td class="px-4 py-3">
-                                <Link :href="listHref(list)" class="inline-flex items-center gap-2 font-medium text-foreground hover:text-blue-600 hover:underline">
-                                    <img
-                                        v-if="isInstagramList(list)"
-                                        :src="igIcon"
-                                        alt=""
-                                        class="h-4 w-4 shrink-0"
-                                        title="Instagram"
-                                    />
-                                    {{ list.list_name }}
-                                </Link>
-                            </td>
-                            <td class="px-4 py-3">
-                                <span
-                                    class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
-                                    :class="isInstagramList(list) ? 'bg-pink-500/10 text-pink-700 dark:text-pink-300' : 'bg-blue-500/10 text-blue-600'"
-                                >
-                                    <img
-                                        v-if="isInstagramList(list)"
-                                        :src="igIcon"
-                                        alt=""
-                                        class="h-3 w-3"
-                                    />
-                                    {{ list.source }}
-                                </span>
-                            </td>
-                            <td class="px-4 py-3 text-right tabular-nums">{{ list.total_leads.toLocaleString() }}</td>
-                            <td class="px-4 py-3 text-muted-foreground">{{ fmtDate(list.created_at) }}</td>
-                            <td class="px-4 py-3">
-                                <div class="flex items-center justify-end gap-1">
-                                    <Link :href="listHref(list)" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-blue-600" title="View"><Eye class="h-4 w-4" /></Link>
-                                    <button type="button" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Rename" @click="openRename(list)"><Pencil class="h-4 w-4" /></button>
-                                    <button type="button" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-red-500" title="Delete" @click="destroy(list)"><Trash2 class="h-4 w-4" /></button>
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-                <ClientPagination v-model:page="importPage" :total-pages="importTotalPages" :total="importTotal" :per-page="10" label="lists" />
-            </div>
-        </template>
+        <div v-else class="overflow-hidden rounded-xl border border-border bg-card">
+            <table class="w-full text-sm">
+                <thead class="border-b border-border bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                    <tr>
+                        <th class="px-4 py-3 font-medium">
+                            <button type="button" class="inline-flex" @click="toggleAllLists">
+                                <AppSelectionCheckbox :checked="allListsSelected" />
+                            </button>
+                        </th>
+                        <th class="px-4 py-3 font-medium">List name</th>
+                        <th class="px-4 py-3 font-medium">Source</th>
+                        <th class="px-4 py-3 text-right font-medium">{{ activeTab === 'imported' || activeTab === 'instagram' ? 'Contacts' : 'Leads' }}</th>
+                        <th class="px-4 py-3 font-medium">Created</th>
+                        <th class="px-4 py-3 text-right font-medium">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-border">
+                    <tr v-for="list in paginated" :key="list.src + list.list_hash" class="hover:bg-muted/30">
+                        <td class="px-4 py-3">
+                            <button type="button" class="inline-flex" @click="toggleListSelection(list)">
+                                <AppSelectionCheckbox :checked="selectedLists.has(listKey(list))" />
+                            </button>
+                        </td>
+                        <td class="px-4 py-3">
+                            <Link :href="listHref(list)" class="inline-flex items-center gap-2 font-medium text-foreground hover:text-blue-600 hover:underline">
+                                <img
+                                    v-if="isInstagramList(list)"
+                                    :src="igIcon"
+                                    alt=""
+                                    class="h-4 w-4 shrink-0"
+                                    title="Instagram"
+                                />
+                                <img
+                                    v-else-if="isLinkedInList(list)"
+                                    :src="liIcon"
+                                    alt=""
+                                    class="h-4 w-4 shrink-0"
+                                    title="LinkedIn"
+                                />
+                                <FileSpreadsheet
+                                    v-else-if="isSpreadsheetImport(list)"
+                                    class="h-4 w-4 shrink-0 text-blue-600"
+                                    title="Imported"
+                                />
+                                {{ list.list_name }}
+                            </Link>
+                        </td>
+                        <td class="px-4 py-3">
+                            <span
+                                class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
+                                :class="sourceBadgeClass(list)"
+                            >
+                                <img
+                                    v-if="isInstagramList(list)"
+                                    :src="igIcon"
+                                    alt=""
+                                    class="h-3 w-3"
+                                />
+                                <img
+                                    v-else-if="isLinkedInList(list)"
+                                    :src="liIcon"
+                                    alt=""
+                                    class="h-3 w-3"
+                                />
+                                <FileSpreadsheet
+                                    v-else-if="isSpreadsheetImport(list)"
+                                    class="h-3 w-3"
+                                />
+                                {{ displaySource(list) }}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 text-right tabular-nums">{{ list.total_leads.toLocaleString() }}</td>
+                        <td class="px-4 py-3 text-muted-foreground">{{ fmtDate(list.created_at) }}</td>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center justify-end gap-1">
+                                <Link :href="listHref(list)" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-blue-600" title="View"><Eye class="h-4 w-4" /></Link>
+                                <button type="button" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Rename" @click="openRename(list)"><Pencil class="h-4 w-4" /></button>
+                                <button type="button" class="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-red-500" title="Delete" @click="destroy(list)"><Trash2 class="h-4 w-4" /></button>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <ClientPagination v-model:page="page" :total-pages="totalPages" :total="total" :per-page="10" label="lists" />
+        </div>
     </div>
 
     <Dialog v-model:open="importModalOpen">
@@ -572,7 +634,7 @@ const igIcon = brandIconSrc('instagram');
                     Find Instagram leads
                 </DialogTitle>
                 <DialogDescription>
-                    Mindcase Search mode — keyword to find Instagram accounts (e.g. coffee, nasa). Max 250 results. Instagram handle is filled; other channels stay empty.
+                    Mindcase Search mode — keyword to find Instagram accounts (e.g. coffee, nasa). Max 100 results. Instagram handle is filled; other channels stay empty.
                 </DialogDescription>
             </DialogHeader>
             <div class="flex flex-col gap-3">
@@ -589,10 +651,10 @@ const igIcon = brandIconSrc('instagram');
                         v-model.number="igLimit"
                         type="number"
                         min="1"
-                        max="250"
+                        max="100"
                         class="w-24 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                     />
-                    <span class="text-xs text-muted-foreground">max 250</span>
+                    <span class="text-xs text-muted-foreground">max 100</span>
                 </div>
                 <input
                     v-model="igListName"

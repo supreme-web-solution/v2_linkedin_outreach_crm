@@ -40,8 +40,16 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
         // Never attach first-touch personalization to connection invites — a note
         // triggers LinkedIn's ~5 noted-invite/day limit. Personalize DMs only.
         if ($action === 'send_message') {
-            $message = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
-                ->resolveMessageText($lead, $message);
+            $personalize = ! empty($node['config']['personalize_before_send']);
+            $prepared = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
+                ->messageForFirstSend($lead, $campaign, $message);
+            if ($prepared === null && $personalize) {
+                return [
+                    'status' => 'deferred',
+                    'error_message' => 'Waiting to research this profile before the first message.',
+                ];
+            }
+            $message = $prepared ?? $message;
             $owner = \App\Models\User::query()->find((int) $campaign->user_id);
             $message = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound($message, [
                 'user' => $owner,

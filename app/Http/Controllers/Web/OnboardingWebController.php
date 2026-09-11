@@ -128,4 +128,64 @@ class OnboardingWebController extends Controller
 
         return response()->json($wizard->skipWhatsappCommand($user, $orgId));
     }
+
+    public function businessProfile(Request $request, OnboardingWizardService $wizard): JsonResponse
+    {
+        $user = auth()->user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        abort_unless($orgId > 0, 403);
+
+        $data = $request->validate([
+            'description' => ['nullable', 'string', 'max:10000'],
+            'website_url' => ['nullable', 'string', 'max:500'],
+            'file' => ['nullable', 'file', 'max:10240', 'mimes:pdf,txt'],
+        ]);
+
+        try {
+            $result = $wizard->submitBusinessProfile(
+                $user,
+                $orgId,
+                $data['description'] ?? null,
+                $data['website_url'] ?? null,
+                $request->file('file'),
+            );
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($result);
+    }
+
+    public function conversionAssets(Request $request, OnboardingWizardService $wizard): JsonResponse
+    {
+        $user = auth()->user();
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        abort_unless($orgId > 0, 403);
+
+        $data = $request->validate([
+            'sales_page_url' => ['nullable', 'string', 'max:500'],
+            'webinar_url' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        if (trim((string) ($data['sales_page_url'] ?? '')) === '' && trim((string) ($data['webinar_url'] ?? '')) === '') {
+            return response()->json(['message' => 'Add at least one — a sales page URL or a webinar URL.'], 422);
+        }
+
+        try {
+            $result = $wizard->submitConversionAssets(
+                $user,
+                $orgId,
+                $data['sales_page_url'] ?? null,
+                $data['webinar_url'] ?? null,
+            );
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($result);
+    }
 }

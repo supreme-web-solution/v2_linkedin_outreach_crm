@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Web;
 use App\Http\Controllers\Controller;
 use App\Models\V2Organization;
 use App\Models\V2UserActivity;
+use App\V2\Ai\Services\AcquisitionExperimentService;
 use App\V2\Ai\Services\OnboardingWizardService;
 use App\V2\Outreach\OutreachChannelRegistry;
+use App\V2\Services\AcquisitionFunnelService;
 use App\V2\Services\ChannelConnectionService;
 use App\V2\Services\DashboardStatsService;
 use App\V2\Services\IntegrationUserErrorMapper;
@@ -22,6 +24,8 @@ class DashboardController extends Controller
         DashboardStatsService $stats,
         OnboardingWizardService $onboarding,
         ChannelConnectionService $channels,
+        AcquisitionFunnelService $funnel,
+        AcquisitionExperimentService $experiment,
     ): Response|RedirectResponse {
         $user = auth()->user();
         $orgId = (int) ($user->current_organization_id ?? 0);
@@ -80,6 +84,8 @@ class DashboardController extends Controller
 
         return Inertia::render('Dashboard', [
             'stats' => $stats->forUser($user),
+            'acquisitionFunnel' => $funnel->forUser($user),
+            'acquisitionExperiment' => $orgId > 0 ? $experiment->activeExperiment($user, $orgId) : null,
             'recentActivity' => $recentActivity,
             'organization' => $org,
             'hasOrg' => (bool) $orgId,

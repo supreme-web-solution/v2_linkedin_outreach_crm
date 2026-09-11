@@ -35,7 +35,7 @@ defineProps<{
         class="rounded-xl border border-blue-100 bg-gradient-to-r from-blue-50/90 to-white p-4 shadow-sm dark:border-blue-900/40 dark:from-blue-950/30 dark:to-zinc-900"
     >
         <div class="flex items-start gap-3">
-            <AlexAvatar size="sm" :alt="employeeName ?? 'Alex'" class="mt-0.5 shrink-0" />
+            <AlexAvatar size="sm" :alt="employeeName ?? 'Soci'" class="mt-0.5 shrink-0" />
             <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 text-xs font-semibold tracking-wide text-blue-700 uppercase dark:text-blue-300">
                     <Bot class="size-3.5" />
@@ -88,7 +88,7 @@ defineProps<{
                     href="/ai-employee?starter=Who%20needs%20my%20attention%3F"
                     class="mt-3 inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
                 >
-                    <Bot class="size-3.5" /> Ask Alex to triage →
+                    <Bot class="size-3.5" /> Ask Soci to triage →
                 </Link>
             </div>
         </div>

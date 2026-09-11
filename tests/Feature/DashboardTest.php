@@ -12,6 +12,7 @@ use App\Models\V2Campaign;
 use App\Models\V2Conversation;
 use App\Models\V2Lead;
 use App\Models\V2OutreachCampaign;
+use App\Models\V2OutreachLead;
 use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
 use App\Models\V2Organization;
@@ -191,6 +192,34 @@ class DashboardTest extends TestCase
                 ->where('stats.campaigns', 2)
                 ->where('stats.linkedin_campaigns', 1)
                 ->where('stats.outreach_campaigns', 1)
+                ->has('acquisitionFunnel.stages', 7)
+            );
+    }
+
+    public function test_dashboard_includes_acquisition_funnel_with_outreach_data(): void
+    {
+        $user = $this->userWithOrg();
+
+        $campaign = V2OutreachCampaign::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'name' => 'Funnel test',
+            'template_type' => 'linkedin_only',
+            'status' => 'active',
+            'node_model' => [],
+        ]);
+
+        V2OutreachLead::query()->create([
+            'outreach_campaign_id' => $campaign->id,
+            'full_name' => 'Lead One',
+            'status' => 'replied',
+            'meta' => [],
+        ]);
+
+        $this->actingAs($user)->get(route('dashboard'))
+            ->assertInertia(fn ($page) => $page
+                ->where('acquisitionFunnel.summary.targeted', 1)
+                ->where('acquisitionFunnel.summary.responses', 1)
             );
     }
 

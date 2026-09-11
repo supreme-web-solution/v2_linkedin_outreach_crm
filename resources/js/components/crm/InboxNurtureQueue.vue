@@ -107,11 +107,11 @@ function askAlex(starter: string) {
             <PauseCircle class="size-10 opacity-40" />
             <p class="text-sm">No one in nurture yet.</p>
             <p class="max-w-sm text-xs">
-                When Alex moves a lead to nurture from the inbox, they’ll appear here with their follow-up date.
+                When Soci moves a lead to nurture from the inbox, they’ll appear here with their follow-up date.
             </p>
             <Button size="sm" variant="outline" class="mt-2 rounded-full" as-child>
                 <Link href="/ai-employee?starter=Who%20needs%20my%20attention%3F" class="inline-flex items-center gap-1.5">
-                    <Bot class="size-3.5" /> Ask Alex to triage inbox
+                    <Bot class="size-3.5" /> Ask Soci to triage inbox
                 </Link>
             </Button>
         </div>
@@ -181,14 +181,14 @@ function askAlex(starter: string) {
                         @click="askAlex(item.alex_starter)"
                     >
                         <Bot class="mr-1 size-3" />
-                        Ask Alex
+                        Ask Soci
                     </Button>
                 </div>
             </article>
         </div>
 
         <p v-if="items.length" class="text-xs text-muted-foreground">
-            Alex can also follow up automatically when nurture dates arrive — say
+            Soci can also follow up automatically when nurture dates arrive — say
             <button type="button" class="font-medium text-primary hover:underline" @click="askAlex('Who is due for nurture follow-up?')">
                 “Who is due for nurture follow-up?”
             </button>

@@ -49,13 +49,27 @@ class LinkedInAudienceBuilderService
             return $this->importSingleProfileUrl($user, $organizationId, $profileUrl, $plan);
         }
 
+        $needed = isset($plan['target_count']) ? max(1, (int) $plan['target_count']) : 1;
+        $reused = empty($plan['prefer_fresh_audience'])
+            ? $this->reuseRecentSearch($user, $needed)
+            : null;
+        if ($reused !== null) {
+            Log::info('[Soci] Reusing recent LinkedIn list — not searching again', [
+                'user_id' => $user->id,
+                'list_hash' => $reused['list_hash'],
+                'total_leads' => $reused['total_leads'],
+            ]);
+
+            return $reused;
+        }
+
         if ($query === '') {
             return null;
         }
 
         // Never treat an email-only audience string as LinkedIn ICP keywords.
         if (preg_match('/^[^\s@]+@[^\s@]+\.[^\s@]+$/', $query) || preg_match('/@gmail\.|@yahoo\.|@outlook\./i', $query)) {
-            Log::info('[Alex] LinkedIn audience search skipped — audience looks like email, not LinkedIn ICP', [
+            Log::info('[Soci] LinkedIn audience search skipped — audience looks like email, not LinkedIn ICP', [
                 'user_id' => $user->id,
                 'query' => Str::limit($query, 120),
             ]);
@@ -65,7 +79,7 @@ class LinkedInAudienceBuilderService
 
         $accountId = V2IntegrationAccount::activeUnipileAccountId($user->id);
         if (! $accountId) {
-            Log::warning('[Alex] LinkedIn audience search skipped — no connected Unipile LinkedIn account', [
+            Log::warning('[Soci] LinkedIn audience search skipped — no connected Unipile LinkedIn account', [
                 'user_id' => $user->id,
             ]);
 
@@ -80,7 +94,7 @@ class LinkedInAudienceBuilderService
             $targetCount = min($targetCount ?? 10, 10);
         }
         $limit = $targetCount !== null
-            ? ($personLookup ? max(1, min(25, $targetCount)) : max(10, min(100, $targetCount)))
+            ? ($personLookup ? max(1, min(25, $targetCount)) : max(1, min(100, $targetCount)))
             : null;
         $explicit = array_filter([
             'geography' => $plan['geography'] ?? null,
@@ -105,7 +119,7 @@ class LinkedInAudienceBuilderService
         );
 
         if ($targetCount !== null) {
-            $cap = $personLookup ? max(1, min(25, $targetCount)) : max(10, min(100, $targetCount));
+            $cap = $personLookup ? max(1, min(25, $targetCount)) : max(1, min(100, $targetCount));
             foreach ($variants as $i => $variant) {
                 $variants[$i]['limit'] = $cap;
                 $variants[$i]['audience_name'] = Str::limit(
@@ -129,7 +143,7 @@ class LinkedInAudienceBuilderService
             ];
 
             if ($built !== null) {
-                Log::info('[Alex] LinkedIn audience search succeeded', [
+                Log::info('[Soci] LinkedIn audience search succeeded', [
                     'user_id' => $user->id,
                     'attempt' => $index + 1,
                     'filters' => $filters,
@@ -148,11 +162,50 @@ class LinkedInAudienceBuilderService
             }
         }
 
-        Log::warning('[Alex] LinkedIn audience search returned no profiles after variants', [
+        Log::warning('[Soci] LinkedIn audience search returned no profiles after variants', [
             'user_id' => $user->id,
             'query' => Str::limit($query, 200),
             'attempts' => $attempts,
         ]);
+
+        return null;
+    }
+
+    /**
+     * A restarted chat job must not pull another LinkedIn page of the same request.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function reuseRecentSearch(User $user, int $needed): ?array
+    {
+        $needed = max(1, $needed);
+        $sources = V2LeadSource::query()
+            ->where('source_type', 'sales_navigator')
+            ->where('source_external_id', 'like', 'search-'.$user->id.'-%')
+            ->where('created_at', '>=', now()->subMinutes(30))
+            ->orderByDesc('id')
+            ->limit(300)
+            ->get(['source_external_id', 'source_payload']);
+
+        foreach ($sources->groupBy('source_external_id') as $hash => $rows) {
+            if ($rows->count() < $needed) {
+                continue;
+            }
+
+            $payload = $rows->first()?->source_payload;
+            $name = is_array($payload) ? (string) ($payload['source_name'] ?? 'LinkedIn Search') : 'LinkedIn Search';
+
+            return [
+                'list_hash' => (string) $hash,
+                'list_src' => 'sn',
+                'list_name' => $name,
+                'total_leads' => $rows->count(),
+                'match_score' => 100,
+                'auto_sourced' => true,
+                'reused_recent' => true,
+                'do_not_search_again' => true,
+            ];
+        }
 
         return null;
     }
@@ -184,7 +237,7 @@ class LinkedInAudienceBuilderService
                 'organization_id' => $organizationId,
             ]);
         } catch (Throwable $e) {
-            Log::warning('[Alex] LinkedIn audience search failed', [
+            Log::warning('[Soci] LinkedIn audience search failed', [
                 'user_id' => $user->id,
                 'filters' => $filters,
                 'error' => $e->getMessage(),
@@ -195,7 +248,7 @@ class LinkedInAudienceBuilderService
 
         $elements = Arr::get($result, 'items', Arr::get($result, 'data.items', []));
         if (! is_array($elements) || $elements === []) {
-            Log::info('[Alex] LinkedIn search empty for filters', [
+            Log::info('[Soci] LinkedIn search empty for filters', [
                 'user_id' => $user->id,
                 'filters' => $filters,
             ]);
@@ -263,7 +316,7 @@ class LinkedInAudienceBuilderService
                         'source_payload' => [
                             'source_name' => $audienceName,
                             'imported_at' => now()->toIso8601String(),
-                            'auto_sourced_by' => 'alex',
+                            'auto_sourced_by' => 'Soci',
                             'search_filters' => [
                                 'keywords' => $filters['keywords'] ?? null,
                                 'title' => $filters['title'] ?? null,
@@ -279,7 +332,7 @@ class LinkedInAudienceBuilderService
         }
 
         if ($stored === 0) {
-            Log::warning('[Alex] LinkedIn search returned items but none could be saved', [
+            Log::warning('[Soci] LinkedIn search returned items but none could be saved', [
                 'user_id' => $user->id,
                 'raw_count' => count($elements),
                 'skipped_no_id' => $skippedNoId,
@@ -336,7 +389,7 @@ class LinkedInAudienceBuilderService
             $provider = $this->providerManager->search($this->providerManager->defaultProvider());
             $profile = $provider->getProfileByUrl($profileUrl, $accountId);
         } catch (Throwable $e) {
-            Log::warning('[Alex] LinkedIn profile URL import failed', [
+            Log::warning('[Soci] LinkedIn profile URL import failed', [
                 'user_id' => $user->id,
                 'url' => $profileUrl,
                 'error' => $e->getMessage(),
@@ -396,7 +449,7 @@ class LinkedInAudienceBuilderService
                 'source_payload' => [
                     'source_name' => $audienceName,
                     'imported_at' => now()->toIso8601String(),
-                    'auto_sourced_by' => 'alex',
+                    'auto_sourced_by' => 'Soci',
                     'profile_url' => $profileUrl,
                 ],
             ],
@@ -430,7 +483,7 @@ class LinkedInAudienceBuilderService
     }
 
     /**
-     * Pull readable fields from a Unipile full-profile payload for Alex replies.
+     * Pull readable fields from a Unipile full-profile payload for Soci replies.
      *
      * @param  array<string, mixed>  $profile
      * @return array<string, mixed>

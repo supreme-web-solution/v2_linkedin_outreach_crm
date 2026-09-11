@@ -21,7 +21,7 @@ class DiagnoseAiCommand extends Command
         $enabled = (bool) config('socifusion_ai.enabled', true);
         $killSwitch = (bool) config('socifusion_ai.kill_switch', false);
         $autonomy = (int) config('socifusion_ai.default_autonomy', 2);
-        $employee = (string) config('socifusion_ai.employee_name', 'Alex');
+        $employee = (string) config('socifusion_ai.employee_name', 'Soci');
 
         $this->line('Employee: '.$employee);
         $this->line('Enabled: '.($enabled ? 'yes' : 'no'));

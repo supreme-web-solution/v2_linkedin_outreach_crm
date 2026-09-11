@@ -10,7 +10,7 @@ use Laravel\Ai\Transcription;
 class WhatsAppVoiceTranscriptionService
 {
     /**
-     * Download a WhatsApp voice note and transcribe it for Alex.
+     * Download a WhatsApp voice note and transcribe it for Soci.
      *
      * @param  array{type?:string,url?:string,mime?:string}  $media
      */

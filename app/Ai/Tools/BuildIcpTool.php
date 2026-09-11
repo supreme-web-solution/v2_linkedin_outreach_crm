@@ -68,7 +68,7 @@ class BuildIcpTool extends GatedTool
             'follow_up_days' => 21,
             'steps' => [
                 'Launch to save ICP to workspace',
-                'Say "find prospects" — Alex searches LinkedIn from this ICP',
+                'Say "find prospects" — Soci searches LinkedIn from this ICP',
                 'Draft outreach campaign with the discovered list',
                 'Qualify replies and book meetings',
             ],

@@ -5,7 +5,7 @@ namespace App\V2\Ai\Support;
 use Illuminate\Support\Str;
 
 /**
- * Turn Alex goals / ICP prose into Unipile classic people-search filters.
+ * Turn Soci goals / ICP prose into Unipile classic people-search filters.
  * Long product pitches must NOT be sent as LinkedIn keywords.
  *
  * Unipile classic filters we support: keywords, title, location, current_company,

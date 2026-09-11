@@ -64,7 +64,9 @@ class LeadListService
             'created_at' => optional($l->created_at)->toIso8601String(),
         ]);
 
-        return $mappedAudiences->concat($mappedSn)->sortBy('list_name')->values();
+        return $mappedAudiences->concat($mappedSn)
+            ->sortByDesc(fn (array $list) => $list['created_at'] ?? '')
+            ->values();
     }
 
     /**

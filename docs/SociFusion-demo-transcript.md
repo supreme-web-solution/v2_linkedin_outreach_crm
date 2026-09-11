@@ -1,556 +1,338 @@
-# SociFusion — Full Product Demo Transcript
 
-**Product:** SociFusion  
-**Format:** Screen-recorded walkthrough (full feature tour)  
-**Estimated length:** 18–25 minutes  
-**Tone:** Confident, educational, strategic — same angle as premium LinkedIn automation demos  
-**Demo niche example:** SEO agency owners (swap for your target ICP)
 
----
-
-## How to use this script
-
-- **[SCREEN: …]** = what to show on screen  
-- **[PAUSE]** = let UI load or let a process finish  
-- Replace `[YOUR NAME]` with the presenter’s name  
-- Replace example audience/campaign names with your demo data
-- **Plain language:** Say **LinkedIn, email, WhatsApp, Instagram** — not vague phrases like "channels" or "multichannel" unless you're naming the **Multi-Channel Outreach** menu item (then explain it immediately).
-
----
-
-## Marketing angle (internal reference)
-
-| Layer | Message |
-|-------|---------|
-| **Hook** | Free traffic, premium leads, booked calls, high-ticket sales — no ads |
-| **Promise** | LinkedIn plus email, WhatsApp, and Instagram as a predictable client-acquisition machine |
-| **Trust** | Official platform connections, daily limits respected, leads queue — never dropped |
-| **Method** | Strategic audiences → warm prospects → social selling → automated funnels |
-| **Differentiator** | Extension + cloud CRM + LinkedIn/email/WhatsApp/Instagram automation + one inbox + AI + call pipeline |
-
----
-
-# FULL SCRIPT
-
----
-
-## 0. INTRO (0:00 – 1:00)
+## 0. INTRO — SET THE STAGE (0:00 – 1:00)
 
 **[SCREEN: SociFusion logo → Dashboard]**
 
-> Hello there, and welcome. I'm [YOUR NAME], and I'm truly excited to walk you through the **SociFusion** demo today.
+> Hello — I'm [YOUR NAME], and I'm genuinely excited to show you **SociFusion**.
 >
-> SociFusion is a powerful, **all-in-one platform** designed to help you generate **free traffic**, **premium leads**, **book calls**, and **close high-ticket sales** — starting on **LinkedIn**, and continuing on **email, WhatsApp, Instagram**, and other social platforms you connect — **completely on autopilot**, without spending a dime on ads.
+> If you've ever tried to grow a business online, you know the chaos: LinkedIn over here… email over there… WhatsApp on your phone… Instagram in another tab… and the deal dies in the gap between them.
 >
-> It brings together **advanced automation**, **intelligent targeting**, **AI-powered content**, and **streamlined workflows** to help you turn LinkedIn into a **predictable client-acquisition machine**.
+> SociFusion is the **multichannel client-acquisition machine** built for how people actually buy:
 >
-> At its core, SociFusion automates lead generation and relationship marketing through a **built-in CRM**, a **Chrome extension** that works seamlessly with LinkedIn, and **automated outreach campaigns** that keep running in SociFusion even when your browser is closed.
+> **LinkedIn. Email. WhatsApp. Instagram.**  
+> Free traffic. Premium leads. Booked calls. High-ticket conversations — **without buying ads**.
 >
-> The system eliminates manual tasks, simplifies outreach, and lets you focus on what truly matters — **closing deals and delivering value**.
+> Today I'll show you two things:
 >
-> SociFusion connects through **official, platform-approved connections** — your real **LinkedIn**, **Gmail or Outlook email**, **WhatsApp**, and **Instagram** accounts. Activity limits are **automatically respected**. When you hit a daily cap, leads **queue for the next day**. They are **never dropped**. Your accounts stay secure while outreach runs efficiently in the background.
+> **First** — the power of the platform: connect your accounts, work from the LinkedIn extension, grow with AI content, pull warm audiences from competitors, reach every channel, convert replies into calls.  
+> **Then** — the beautiful part: we took away the hassle. You don't have to operate it like a complex dashboard. You talk to **Soci**, your AI Sales Employee — on the web *and* on WhatsApp — and Soci runs the app for you.
 >
-> Let's dive in.
+> Let's start with the power. Then I'll show you how Soci makes it feel unfair.
 
 ---
 
-## 1. DASHBOARD & GETTING STARTED (1:00 – 2:00)
+## 1. THE POWER OF THE APP — WHAT IT CAN DO (AND HOW IT CONVERTS) (1:00 – 6:30)
 
-**[SCREEN: `/dashboard` — Dashboard]**
+**[SCREEN: Quick tour — stay energetic, don't drown in clicks]**
 
-> When you log in, you land on the **Dashboard** — your command center.
+> Before the AI magic, I want you to *feel* the engine — because Soci is powerful **because this stack is real**.
+
+### 1a. Start here — connect what you need (AI wizard → Integrations)
+
+**[SCREEN: Onboarding / AI connect wizard sliding in → then `/integrations`]**
+
+> Before anything runs, you connect the accounts you'll actually use.
 >
-> Here you get a quick snapshot of your workspace: total contacts, active campaigns, inbox activity, and your call pipeline. Quick-action buttons take you straight to the tools you'll use most — build an audience, launch a campaign, or open your inbox.
+> We make that easy: a **slide-in AI wizard** talks you through it. Tell Soci what you want to do — *LinkedIn outreach, email campaigns, WhatsApp, Instagram, book calls* — or just tap what you need. The wizard points you to **connect those socials and inboxes** right there.
 >
-> **[SCREEN: `/tutorials` — Tutorials]**
+> One guided setup. Official connections. Campaigns, inbox, and Soci then run through *your* real accounts.
 >
-> New to SociFusion? Head to **Tutorials** for step-by-step video walkthroughs — getting started, competitor audiences, AI content, campaigns, leads, and extension features.
+> And when you're ready to tweak later? Everything lives on the **Integrations** page — add, reconnect, or manage LinkedIn, Gmail or Outlook, WhatsApp, Instagram, calendar — all in one place.
 >
-> **[SCREEN: `/integrations` — Integrations]**
+> Start with the wizard. Manage anytime in Integrations. That's the foundation of the whole machine.
+
+### 1b. Your LinkedIn sidekick — the Chrome extension
+
+**[SCREEN: LinkedIn open with SociFusion extension sidebar / floating AI comment]**
+
+> And while you're *on* LinkedIn itself — you still have SociFusion with you.
 >
-> Before you automate, connect your accounts on **Integrations**. Link **LinkedIn** via the extension or hosted login. Connect **Gmail or Outlook** for email outreach. Connect **WhatsApp** and **Instagram** for direct messages. Add **Google or Outlook Calendar** for call booking. Everything lives in one place — no switching between apps.
+> The **Chrome extension** lives right in your LinkedIn account as you navigate. Browse normally. The extension works beside you.
+>
+> Reply to posts with **AI comments** in seconds. Run **bulk LinkedIn actions** — invites, profile views, messages, endorsements, withdraw invites — without copy-paste chaos.
+>
+> Auto-import profiles as you visit them. Control campaigns from the sidebar.
+>
+> So you're not stuck only in the CRM — **LinkedIn becomes your workstation**, and SociFusion is sitting there, ready.
+
+### 1c. Grow the audience with content — AI Content + Inspiration
+
+**[SCREEN: `/content` Content Studio → brief `/inspiration`]**
+
+> Pipeline isn't only DMs. On LinkedIn, **visibility creates inbound**.
+>
+> **AI Content Studio** — write or paste a draft, then let AI generate, improve with hooks, add CTAs, shorten, expand. Generate **AI images**. Schedule or publish straight to LinkedIn.
+>
+> **Inspiration** — find viral posts by keyword, save favorites, **remix with AI**, and send the result into Content Studio.
+>
+> So you're not only chasing people — you're **growing an audience** that comes toward you. Content feeds trust. Trust converts when outreach lands.
+
+### 1d. Steal the warm list — Competitor Active Followers
+
+**[SCREEN: `/competitor-followers` — paste URL / harvest running / list ready]**
+
+> Now one of the most powerful audience plays in SociFusion: **Competitor Active Followers**.
+>
+> Paste a **competitor's LinkedIn company URL** — or a person who's already attracting your buyers — and SociFusion harvests their **active follower base** into a list you can enrich and campaign.
+>
+> These people already care about your niche. They're not ice-cold. They're **warm, aligned prospects** — which is why this converts so hard.
+>
+> Watch it run, open the list, attach it to outreach. That's strategic audience building — not guessing keywords and hoping.
+
+### 1e. More ways to find the right people
+
+**[SCREEN: `/leads` — Audience lists / Imported / Instagram flash]**
+
+> Beyond competitors, you can also build lists from **LinkedIn** search, auto-import as you browse profiles, post engagers, **Instagram** keyword discovery, or a **CSV** of emails and phones for WhatsApp and email.
+>
+> Not spam lists — people who match your offer. That's where conversion starts.
+
+### 1f. Reach them on every channel that converts
+
+**[SCREEN: `/outreach` — multi-platform campaign / sequence canvas]**
+
+> **Outreach that mirrors real buying.**
+>
+> One campaign can warm on **LinkedIn**, follow up by **email**, continue on **WhatsApp**, or run **Instagram DMs** — alone or combined.
+>
+> Invite → message → wait → follow-up. Branch when they accept or reply. If they reply, the sequence can **pause** so you don't look like a robot.
+>
+> Hit a daily limit? Leads **queue for tomorrow** — never dropped.
+>
+> This is how you convert: **show up where they actually answer**, not where your tool forces you to live.
+
+### 1g. Catch every reply → book the call
+
+**[SCREEN: `/inbox` mixed platforms → brief `/calls`]**
+
+> **The money moment.**
+>
+> Every reply — LinkedIn, email, WhatsApp, Instagram — lands in **one Unified Inbox**.
+>
+> No more “I missed that DM.” You reply, qualify, and move hot leads into **Call Manager** with booking links and calendar.
+>
+> That's the conversion loop:
+>
+> **Connect → Grow (content) → Find (including competitors) → Reach on the right channels → Reply in one inbox → Book → Close.**
+>
+> Analytics and team workspaces — more horsepower when you want it.
+>
+> **[PAUSE — smile at camera]**
+>
+> Now… imagine doing all of that *without* living in twenty screens.
+>
+> Because that's what we built next.
 
 ---
 
-## 2. AUDIENCE & LEAD CREATION (2:00 – 5:30)
+## 2. THE TWIST — SOCI DOES THE JOB FOR YOU (6:30 – 10:00)
 
-**[SCREEN: `/leads` — Leads hub, Audience lists tab]**
+**[SCREEN: Dashboard → open Command Center / Soci widget]**
 
-> Let's build your first audience. Navigate to **Leads**.
+> Here's the truth: the features are powerful — but clicking through builders, lists, and settings is still work.
 >
-> An audience is a **curated group of potential clients** highly likely to be interested in your offer. Instead of reaching out blindly, SociFusion lets you build a **strategic list** that matches your ideal customer profile.
+> So we removed the hassle.
 >
-> You'll see two tabs: **Audience lists** — built from LinkedIn search, **auto-import as you visit profiles**, or the extension — and **Imported lists** — from CSV, Excel, or spreadsheet upload when you want to reach people by **email or WhatsApp** as well as LinkedIn.
-
-### 2a. Create audience from search (Extension)
-
-**[SCREEN: Chrome extension on LinkedIn — Search tab]**
-
-> Open the **SociFusion Chrome extension** on LinkedIn. The **Search** tab is your audience builder. You have **three ways** to add leads.
-
-**Method 1 — Search by filters**
-
-> Switch to **Filters** mode. Enter precise criteria: **keywords**, **job title**, **company**, **location**, **connection degree**, and **audience size**. The more precise your filters, the more refined your list.
+> Meet **Soci** — your **AI Sales Employee**.
 >
-> Set a **delay between profile lookups** — this mimics natural human behavior so activity looks organic.
+> Soci is not a chatbot that only gives advice. Soci **runs SociFusion for you**.
 >
-> Click to start the scan. SociFusion compiles matching profiles in real time and syncs them to your CRM.
-
-**[SCREEN: Extension — From URL mode]**
-
-**Method 2 — Import from a LinkedIn search URL**
-
-> Switch to **From URL** and paste a **LinkedIn people search URL** — SociFusion imports everyone from that search automatically.
-
-**[SCREEN: Extension — Profile mode + Auto-import toggle]**
-
-**Method 3 — Auto-import as you visit profiles**
-
-> Switch to **Profile** mode. Give your list a name — for example, **SEO Agency Owners** — then turn on **Auto-import profiles**.
+> You open the **Command Center**, you prompt Soci in plain English — and Soci:
 >
-> From that moment on, **every LinkedIn profile page you open is saved to your audience automatically**. Browse search results, click through connections, or run **View Profile** actions — each visit adds that person to your CRM. No manual import button. No copy-paste.
+> - Plans the action  
+> - Runs it inside the app  
+> - Gives you the result  
+> - And **when your input is needed** — Soci asks. You review. You click **Launch** or **Execute**. You're always in control.
 >
-> You'll see a live count of how many profiles were saved this session. Want one person saved right now? Click **Import current page** on the profile you're viewing.
+> Watch this.
+
+### 2a. Live on the web (Command Center)
+
+**[SCREEN: Type a prompt in Soci]**
+
+> *[Type one of these — pick what will succeed live:]*  
+> *“Find 20 SEO agency owners and prepare a LinkedIn + email campaign.”*  
+> *“Email [demo@email] inviting them to facilitate our annual event — ask if they're available. Sign as [YOUR NAME].”*  
+> *“What's waiting in my attention queue?”*
 >
-> This is one of the fastest ways to build a list — **collect leads naturally as you research and engage on LinkedIn**, and they're ready for campaigns the moment you sync back to SociFusion.
-
-### 2b. Manage audience in CRM
-
-**[SCREEN: `/leads/{listId}` — Lead list detail]**
-
-> Back in the CRM, open your list — for this demo, **SEO Agency Owners**.
+> **[PAUSE — plan card appears]**
 >
-> Here you see every prospect with full profile details. Search, bulk-select, **export to CSV**, or enrich contacts with **email and phone lookup** — so you're ready to follow up on **LinkedIn, by email, or on WhatsApp**.
+> See that? Soci didn't dump a lecture. Soci built a **plan** — audience, channels, message — and is waiting for you.
 >
-> Track contact stats and daily enrichment quotas right on this page.
-
-### 2c. Import spreadsheet
-
-**[SCREEN: `/leads` — Import modal]**
-
-> For **email or WhatsApp** campaigns, import a **CSV or Excel file** directly. SociFusion maps your columns and creates an **Imported list** ready for automated sequences on those platforms.
-
-### 2d. Competitor Active Followers
-
-**[SCREEN: `/competitor-followers` — Index]**
-
-> Now one of our most powerful features: **Competitor Active Followers**.
+> I tap **Launch**.
 >
-> Paste a **competitor's LinkedIn company URL** and SociFusion harvests their follower base into a qualified audience.
+> **[PAUSE — campaign created / activity starts]**
 >
-> **[SCREEN: `/competitor-followers/{id}` — Detail]**
+> Boom. Soci just did in seconds what used to take a whole afternoon of setup.
 >
-> Watch the harvest run in real time. Once complete, browse every follower, enrich emails in bulk, and export — or attach the list directly to a campaign.
+> **Say it → Soci runs it → you approve when it matters → you get the result.**
+
+### 2b. The punchline
+
+**[SCREEN: Soci chat + a campaign/inbox result briefly]**
+
+> So remember the power we showed — lists, multichannel outreach, inbox, booking?
 >
-> Strategically, these are people **already interested in your niche**. They're not cold. They're **warm, aligned prospects** — which significantly increases conversion probability.
-
-### 2e. From post engagement (Extension / audience expand)
-
-**[SCREEN: Extension or audience — add from post URL]**
-
-> You can also build audiences from **post engagement**. Paste the URL of a high-performing post from a competitor or influencer. SociFusion extracts users who **liked or commented** — people already engaging with relevant content — and adds them to your list.
+> You can still use every screen manually if you want.
+>
+> Or you let **Soci** be the teammate who already knows the app — and you just talk.
 
 ---
 
-## 3. CHROME EXTENSION — QUICK ACTIONS (5:30 – 9:00)
+## 3. THE BEAUTIFUL PART — WHATSAPP ANYWHERE, ANYTIME (10:00 – 13:30)
 
-**[SCREEN: Extension on LinkedIn — Actions tab]**
+**[SCREEN: Integrations briefly → then WhatsApp Desktop]**
 
-> The SociFusion extension is packed with **instant LinkedIn actions**. Let's walk through each one.
-
-### 3a. Bulk message all connections
-
-**[SCREEN: Msg All Connects]**
-
-> **Message All Connects** — send a personalized message to your first-degree connections at scale. Compose your copy, use tags like `{{first_name}}`, set delays, and send.
-
-### 3b. Message targeted users
-
-**[SCREEN: Msg Targeted]**
-
-> **Message Targeted** — select a CRM audience and message every lead on that list. Large-scale outreach without manual copy-paste.
-
-### 3c. Message follow-up
-
-**[SCREEN: Msg Follow-up]**
-
-> **Message Follow-up** — send a second touch to a list that already received your first message. Perfect for bump sequences.
-
-### 3d. View connections
-
-**[SCREEN: View Connects]**
-
-> **View Connections** — social selling works best when you **warm up prospects before you pitch**. Select your audience, set parameters, click **View**, and SociFusion visits profiles on your behalf. If **Auto-import profiles** is on in the extension, those visits also **add each person to your audience list** as you go.
+> And here's the part that makes people lean all the way in.
 >
-> LinkedIn notifies them. Many click back out of curiosity. A simple, powerful way to generate **inbound profile visits** before your outreach lands.
+> You do **not** need to sit on the website to run your pipeline.
+>
+> **Connect once** in SociFusion on the web — LinkedIn, Gmail or Outlook, WhatsApp, Instagram, calendar — whatever you'll use for campaigns.
+>
+> After that? Everything lives in your hand.
+>
+> You chat with **Soci on WhatsApp** — from your phone, in a café, in an Uber, at night after the kids sleep.
+>
+> Text Soci. Send a **voice note**. Soci **transcribes** it, understands it, runs the action, and texts you back with the result — same plans, same **Launch** when approval is needed.
+>
+> I'll demo on **WhatsApp Desktop** so you can see it on screen — but this is the **same connection and same Soci** as on your mobile.
 
-### 3e. Endorse skills
+### 3a. Connection flow (show once)
 
-**[SCREEN: Endorse Skills]**
+**[SCREEN: `/integrations` or onboarding WhatsApp “control Soci” → linked]**
 
-> **Endorse Skills** — automatically endorse first-degree connections. A subtle reciprocity trigger that keeps you visible.
+> One-time setup: connect your social and messaging accounts on the web. Link WhatsApp so Soci can talk to *you* as Command Center.
+>
+> After that — your phone is the remote control for your entire multichannel machine.
 
-### 3f. Add connections (send invites)
+### 3b. Live WhatsApp with Soci
 
-**[SCREEN: Add Connects]**
+**[SCREEN: WhatsApp Desktop chat with Soci]**
 
-> **Add Connects** — send connection requests from a CRM audience. Set limits and delays. SociFusion handles the rest.
-
-### 3g. Open to connect
-
-**[SCREEN: Open to Connect]**
-
-> **Open to Connect** — search LinkedIn members who've signaled they're open to connecting, and invite them in bulk.
-
-### 3h. Withdraw invites
-
-**[SCREEN: Withdraw Invites]**
-
-> **Withdraw Invites** — automatically cancel pending invitations after a set period. Keeps your account clean and optimized.
-
-### 3i. Accept invites
-
-**[SCREEN: Accept Invites]**
-
-> **Accept Invites** — bulk-accept incoming connection requests. Optionally send a **welcome message** the moment someone connects — instant engagement, zero manual effort.
-
-### 3j. Extension campaigns tab
-
-**[SCREEN: Extension — Campaigns tab]**
-
-> The **Campaigns** tab lists your CRM LinkedIn campaigns. **Run**, **pause**, or **stop** them directly from LinkedIn without switching tabs.
-
-### 3k. Extension stats
-
-**[SCREEN: Extension — Stats tab]**
-
-> **Stats** shows your LinkedIn mini-metrics — connections, invites sent, profile views — synced to CRM Analytics.
-
-### 3l. AI comment generator
-
-**[SCREEN: LinkedIn feed — AI comment button on a post]**
-
-> On any LinkedIn post, SociFusion's **AI Comment Generator** floating button lets you draft thoughtful comments in seconds — stay visible in your niche without writer's block.
-
-### 3m. Save inspiration from LinkedIn
-
-**[SCREEN: Extension — Create tab]**
-
-> The **Create** tab links to Content Studio. Paste a post URL and save it as **Inspiration** for later remixing.
+> Let's talk to Soci right here.
+>
+> *[Send a short command — see Section D]*  
+> Example: *“What's waiting for me?”* or *“Find Instagram leads for coffee — 10 results.”*
+>
+> **[PAUSE — Soci replies with plan / result + Launch if needed]**
+>
+> Same brain as the website. Same campaigns. Same inbox. From WhatsApp.
+>
+> Optional wow: hold to speak — send a **voice note**: *“Draft a reply to my latest hot lead.”* Soci hears it, works it, answers in text.
+>
+> **Anywhere. Anytime. Text or voice. Results in your chat.**
 
 ---
 
-## 4. LINKEDIN OUTREACH CAMPAIGNS (9:00 – 12:00)
+## 4. TRUST — YOU'RE STILL THE BOSS (13:30 – 14:00)
 
-**[SCREEN: `/campaigns` — Campaign list]**
+**[SCREEN: Launch / Confirm button on a plan]**
 
-> Now the heart of SociFusion's CRM automation: **LinkedIn Outreach Campaigns**.
+> Quick trust beat: Soci asks when something important needs you — Launch, Approve, Confirm Delete.
 >
-> This is where you build a **complete prospecting funnel** that runs on autopilot through the extension.
-
-**[SCREEN: `/campaigns/create` — Campaign Builder]**
-
-> Click **New Campaign**. The builder walks you through four phases: **Template → Leads → Build → Review & Launch**.
-
-### 4a. Choose a template
-
-**[SCREEN: Template selection]**
-
-> Pick a starting template:
+> Official account connections. Daily limits respected. Leads queue, never drop. Replies can pause sequences.
 >
-> - **Lead Generation** — invite, branch on accept, endorse + messages
-> - **Endorse My Skills** — recurring skill endorsements
-> - **Extra Profile Views** — profile views plus like-post engagement
-> - **Custom Campaign** — blank canvas, full control
-
-### 4b. Attach leads
-
-**[SCREEN: Leads phase — attach list]**
-
-> Attach your audience — **SEO Agency Owners** — and configure launch filters: skip leads already on another campaign, require profile photo, open profiles only, and more.
-
-### 4c. Build the sequence
-
-**[SCREEN: Build phase — flow canvas]**
-
-> In the **Build** phase, design your automation flow.
->
-> Add actions: **Send Invite**, **Send Message**, **View Profile**, **Like Post**, **Endorse Skills**. Insert **Wait** steps — one hour, one day, five days. Add **Invite Accepted?** conditions that split the funnel into **Accepted** and **Not Accepted** paths.
->
-> For accepted connections, run true **social selling**:
->
-> - Wait one day  
-> - View their profile  
-> - Like a post  
-> - Endorse skills  
-> - Send your first message  
-> - Wait three days  
-> - Send follow-up  
->
-> **Engage first. Build familiarity. Then start the conversation.**
->
-> For prospects who don't accept, define a separate path — profile views, likes, a different message angle. **No lead falls through the cracks.**
-
-### 4d. Launch
-
-**[SCREEN: Review & Launch → Activate]**
-
-> Review your funnel, click **Launch**, and SociFusion runs the sequence through the extension — whether you're online or not.
-
-**[SCREEN: `/campaigns/{id}` — Campaign detail]**
-
-> On the **Campaign Detail** page, track every lead's current step, status, and live activity log. See completion rates, reply rates, and step funnel analytics in real time.
+> Powerful automation. Human control.
 
 ---
 
-## 5. MULTI-PLATFORM OUTREACH — LINKEDIN, EMAIL, WHATSAPP & INSTAGRAM (12:00 – 15:00)
+## 5. CLOSE — BRING IT HOME (14:00 – 15:00)
 
-**[SCREEN: `/outreach` — Outreach campaigns list]**
+**[SCREEN: Split — web Soci + WhatsApp Soci + channel icons]**
 
-> SociFusion goes beyond LinkedIn-only automation with **Multi-Channel Outreach** — automated sequences that run in the cloud through your connected **LinkedIn, email, WhatsApp, and Instagram** accounts. No extension required for these flows.
-
-**[SCREEN: `/outreach/create` — Outreach Builder]**
-
-> Click **New Campaign**. Same four-phase builder: **Template → Leads → Build → Review & Launch**.
-
-### 5a. Choose your platforms (templates)
-
-**[SCREEN: Template selection]**
-
-> Choose which **social platforms and email** to include in one automated sequence:
+> So what did we see?
 >
-> - **LinkedIn Outreach** — LinkedIn only  
-> - **LinkedIn → Email** — connect on LinkedIn, follow up by **Gmail or Outlook email**  
-> - **LinkedIn → WhatsApp** — LinkedIn first, then a **WhatsApp message**  
-> - **LinkedIn + Email + WhatsApp** — all three in one funnel  
-> - **Email Sequence** — email-only automation  
-> - **WhatsApp Sequence** — WhatsApp-only automation  
-> - **Instagram DM Sequence** — **Instagram direct messages** only  
-> - **Custom Sequence** — mix any platforms you want  
-
-### 5b. Lead readiness & contact prep
-
-**[SCREEN: Readiness panel in builder]**
-
-> Before launch, SociFusion checks **lead readiness** — missing emails, phone numbers, WhatsApp handles. Run **email lookup**, **phone lookup**, **WhatsApp verification**, and **social handle resolve** in bulk so every step has what it needs.
-
-### 5c. Build a sequence across LinkedIn, email, WhatsApp, and Instagram
-
-**[SCREEN: Outreach flow canvas]**
-
-> Build **one automated funnel** that can use different platforms step by step:
+> **SociFusion** — a real multichannel machine that finds, reaches, replies, and books across LinkedIn, email, WhatsApp, and Instagram.
 >
-> **On LinkedIn:** Visit Profile, Send Invite, Send Message, Like Post, Endorse Skills  
-> **By email:** Send Email — with open, reply, and bounce tracking  
-> **On WhatsApp or Instagram:** Send a direct message — with reply branching  
+> **Soci** — the AI that removes the hassle. Prompt it. It runs the app. It asks when you need to decide. You get results.
 >
-> Each **condition node** splits the path: **Invite accepted**, **Has replied**, **No reply**, **Email opened**, **Email bounced** — the same smart logic as your LinkedIn-only funnels.
+> **WhatsApp** — so the whole system fits in your pocket after one web setup.
 >
-> Insert **Wait** steps between actions. Write messages with personalization tags or generate copy with **AI** directly in the builder.
-
-### 5d. Launch & monitor
-
-**[SCREEN: `/outreach/{id}` — Outreach detail]**
-
-> Launch the campaign. SociFusion processes leads through the **outreach queue** with built-in daily caps. Hit today's invite or message limit? Remaining leads **continue tomorrow automatically**.
+> You focus on **closing**. Soci runs the **grind**.
 >
-> The detail page shows live stats: total leads, completion rate, reply rate, invite acceptance, step funnel, and a real-time activity feed.
-
----
-
-## 6. UNIFIED INBOX (15:00 – 16:00)
-
-**[SCREEN: `/inbox` — Inbox hub]**
-
-> When prospects reply on **LinkedIn, email, WhatsApp, or Instagram**, every conversation lands in the **Unified Inbox**.
+> Connect your channels. Open Soci — on the web or WhatsApp — and send one message.
 >
-> One screen for all your platforms — **LinkedIn messages**, **emails**, **WhatsApp chats**, and **Instagram DMs** — each organized with unread counts so nothing gets missed.
-
-**[SCREEN: `/inbox/{platform}/{id}` — Thread view]**
-
-> Open any thread, read the full history, reply with text or attachments, and manage the conversation — without leaving SociFusion.
->
-> When a lead replies to an outreach campaign, the sequence can **pause automatically** — so you never send an awkward follow-up to someone who already responded.
-
----
-
-## 7. AUTO-RESPONSES (16:00 – 16:30)
-
-**[SCREEN: `/auto-responses` — Auto-Responses]**
-
-> Set up **Auto-Response rules** to handle inbound messages on autopilot.
->
-> Define keyword triggers, choose whether the rule applies to **LinkedIn, email, WhatsApp, Instagram, or all platforms**, write or AI-generate the reply body, and toggle rules on or off. Perfect for FAQs, booking links, or initial qualification — 24/7, without manual monitoring.
-
----
-
-## 8. CALL MANAGER & CONVERSATIONS (16:30 – 18:00)
-
-**[SCREEN: `/calls` — Call Manager]**
-
-> SociFusion includes a full **Call Manager** to turn conversations into booked calls.
->
-> The pipeline shows leads across stages: **Engaged → Scheduling → Booked**. See upcoming calls, stats, and launch new chat flows from any lead list.
-
-**[SCREEN: `/calls/{id}` — Call detail]**
-
-> Open a call record for the full chat thread. Use **AI analyze** to draft replies, toggle **auto-send**, set reminders, and move the lead through pipeline stages.
-
-**[SCREEN: `/calls/settings` — Booking settings]**
-
-> Configure **booking links** — in-app booking pages or Calendly — sync your **Google or Outlook calendar**, customize the message template, and enable auto-send when a prospect is ready to schedule.
-
-**[SCREEN: `/book/{token}` — Public booking page]**
-
-> Prospects land on a clean booking page, pick a time, and the call appears on your calendar automatically.
-
-**[SCREEN: `/conversations` — Conversations]**
-
-> **Conversations** groups your outreach chat flows by batch. See how many prospects are at each stage, toggle auto-send per flow, and launch bulk chats when you're ready.
-
----
-
-## 9. AI & CONTENT STUDIO (18:00 – 19:30)
-
-### 9a. Outreach Templates (AI Messages)
-
-**[SCREEN: `/ai-messages` — Template library]**
-
-> Navigate to **Outreach Templates** under Content. Save and reuse AI-generated outreach copy.
->
-> **[SCREEN: `/ai-messages/new` — Create form]**
->
-> Generate new templates by type: **Cold email**, **Connection message**, **Ice-breaker**, **LinkedIn post**, or **Book-a-call** script. Edit, save, and drop them into any campaign step.
-
-### 9b. AI Content Creation
-
-**[SCREEN: `/content` — Content Studio]**
-
-> **AI Content Creation** is your LinkedIn content engine. Write or paste a draft, then use AI to **generate**, **improve** with viral hooks, add CTAs, shorten, or expand.
->
-> Generate **AI images** for your posts. Schedule or publish directly to LinkedIn — text, image, or video posts — all from one screen.
-
-### 9c. Inspiration
-
-**[SCREEN: `/inspiration` — Inspiration]**
-
-> **Inspiration** finds viral LinkedIn posts by keyword. Save favorites, **remix with AI**, and send the result straight to Content Studio — never run out of post ideas.
-
----
-
-## 10. ANALYTICS & CALENDAR (19:30 – 20:30)
-
-**[SCREEN: `/analytics` — Analytics]**
-
-> **Analytics** gives you the full picture: LinkedIn stats synced from the extension, activity across your **LinkedIn campaigns and email/WhatsApp/Instagram outreach**, daily activity charts, webhook events, and **daily quota usage** — invites sent, messages sent, enrichment credits remaining.
-
-**[SCREEN: `/calendar` — Calendar]**
-
-> The **Calendar** unifies everything on one timeline: **booked calls**, **scheduled messages**, **content posts**, and **reminders**. Drag to reschedule. Nothing falls through the cracks.
-
----
-
-## 11. TEAM & WORKSPACE (20:30 – 21:00)
-
-**[SCREEN: `/team` — Team]**
-
-> Running an agency? **Team** lets you invite members, assign roles, switch workspaces, and collaborate on campaigns — all under one organization.
-
----
-
-## 12. OUTRO (21:00 – 21:30)
-
-**[SCREEN: Dashboard or campaign running with activity feed]**
-
-> And that's **SociFusion**.
->
-> **Strategic audiences** from search, posts, and competitors.  
-> **Chrome extension** for instant LinkedIn actions.  
-> **LinkedIn outreach campaigns** with social-selling funnels.  
-> **Automated outreach on LinkedIn, email, WhatsApp, and Instagram** — all from one CRM.  
-> **One unified inbox** for every reply, plus **auto-responses** and a **call pipeline** that books meetings.  
-> **AI content** and **outreach templates** so you never stare at a blank page.  
-> **Analytics and calendar** to see everything in one place.
->
-> All of it built with **compliance and safety** in mind — official LinkedIn and social platform connections, daily limits respected, leads queued never dropped.
->
-> Whether you're an agency owner, coach, consultant, or B2B service provider — SociFusion gives you the system to turn LinkedIn into a **predictable pipeline** on autopilot.
->
-> Thank you for watching. Build your first audience, connect your **LinkedIn, email, and social accounts**, launch your first campaign — and let SociFusion do the heavy lifting while you focus on **closing deals**.
+> Welcome to **SociFusion**. Meet **Soci**. Let's go get clients.
 
 ---
 
 # APPENDIX
 
-## A. Short trailer script (3 minutes)
+## A. 60-second trailer
 
-> Welcome to **SociFusion** — the all-in-one platform that turns LinkedIn into a client-acquisition machine on autopilot. No ads. No manual grind.
+> Your prospects don't live on one app.  
+> **SociFusion** runs LinkedIn, email, WhatsApp, and Instagram as one client machine — no ads.
 >
-> Build **strategic audiences** from search, **auto-import as you browse profiles**, competitor followers, or post engagement — warm leads, not cold lists.
+> Powerful enough to convert. Smart enough that you don't fight the UI.
 >
-> Use the **Chrome extension** for profile views, bulk messages, invites, and AI comments.
+> Talk to **Soci** in Command Center — or on **WhatsApp** from anywhere.  
+> Text. Voice notes. Soci runs the actions. You Launch when it asks. Results come back to you.
 >
-> Launch **LinkedIn campaigns** and **automated outreach on email, WhatsApp, and Instagram** — with accepted/not-accepted funnels that mirror real social selling.
->
-> Every reply — whether on **LinkedIn, email, WhatsApp, or Instagram** — lands in **one unified inbox**. Auto-responses handle the rest. The **call manager** books meetings. **AI** writes your messages and content.
->
-> Hit a daily limit? Leads queue for tomorrow. Someone replies? The sequence pauses. Your account stays safe.
->
-> Build your audience. Launch your funnel. Close more deals. **SociFusion.**
+> Connect once. Chat forever. **SociFusion. Powered by Soci.**
 
 ---
 
-## B. Screen recording checklist
+## B. Live demo commands (copy-paste)
 
-| # | Section | Route / Location | Done |
-|---|---------|------------------|------|
-| 1 | Dashboard | `/dashboard` | ☐ |
-| 2 | Tutorials | `/tutorials` | ☐ |
-| 3 | Integrations | `/integrations` | ☐ |
-| 4 | Leads hub | `/leads` | ☐ |
-| 5 | Lead list detail | `/leads/{id}` | ☐ |
-| 6 | Import spreadsheet | `/leads` modal | ☐ |
-| 7 | Competitor followers | `/competitor-followers` | ☐ |
-| 8 | Extension — Search | LinkedIn sidebar | ☐ |
-| 9 | Extension — all Actions | Actions tab | ☐ |
-| 10 | Extension — Campaigns | Campaigns tab | ☐ |
-| 11 | Extension — Stats | Stats tab | ☐ |
-| 12 | Extension — AI comment | LinkedIn feed | ☐ |
-| 13 | LinkedIn campaign builder | `/campaigns/create` | ☐ |
-| 14 | LinkedIn campaign detail | `/campaigns/{id}` | ☐ |
-| 15 | Multi-platform outreach builder | `/outreach/create` | ☐ |
-| 16 | Multi-platform outreach detail | `/outreach/{id}` | ☐ |
-| 17 | Unified inbox | `/inbox` | ☐ |
-| 18 | Auto-responses | `/auto-responses` | ☐ |
-| 19 | Call manager | `/calls` | ☐ |
-| 20 | Conversations | `/conversations` | ☐ |
-| 21 | AI messages | `/ai-messages` | ☐ |
-| 22 | Content studio | `/content` | ☐ |
-| 23 | Inspiration | `/inspiration` | ☐ |
-| 24 | Analytics | `/analytics` | ☐ |
-| 25 | Calendar | `/calendar` | ☐ |
-| 26 | Team | `/team` | ☐ |
+Use these so the room *sees* Soci work — on **web Command Center** or **WhatsApp** (same commands).
 
----
+### Fast “it works” (safe / quick)
 
-## C. Feature → SociFusion mapping (vs generic LinkedIn tools)
+| # | Say this | What they should see |
+|---|----------|----------------------|
+| 1 | *What's waiting for me?* | Attention / inbox brief |
+| 2 | *Give me a quick sales brief.* | Snapshot of pipeline |
+| 3 | *What can you help me with?* | Soci lists capabilities |
+| 4 | *Check my integrations.* | What's connected / missing |
 
-| Generic demo feature | SociFusion equivalent |
-|---------------------|----------------------|
-| Create audience from search | Extension Search tab (Filters / URL / Auto-import) + `/leads` |
-| From post engagement | Post URL harvest + Competitor Active Followers |
-| Bulk messaging | Extension Msg Targeted / Msg All Connects |
-| View connections | Extension View Connects + campaign View Profile step |
-| CRM campaigns | `/campaigns` LinkedIn Outreach |
-| Custom funnel / accepted split | Campaign + Outreach condition nodes |
-| LinkedIn-approved API | Unipile integration + daily caps |
-| *(Not in reference)* | LinkedIn + email + WhatsApp + Instagram outreach (`/outreach`) |
-| *(Not in reference)* | Unified Inbox — LinkedIn, email, WhatsApp, Instagram (`/inbox`) |
-| *(Not in reference)* | Call Manager `/calls` |
-| *(Not in reference)* | AI Content `/content` + Inspiration |
-| *(Not in reference)* | Auto-Responses `/auto-responses` |
-| *(Not in reference)* | Analytics + Calendar |
+### Wow actions (use sandbox data)
+
+| # | Say this | Best on |
+|---|----------|---------|
+| 5 | *Find 15 SEO agency owners and prepare a LinkedIn + email campaign.* | Web or WhatsApp |
+| 6 | *Find Instagram leads for coffee — 10 results.* | Web or WhatsApp |
+| 7 | *Email [demo@email.com] — invite them to facilitate our annual event, ask if they're free. Sign as [YOUR NAME].* | Web or WhatsApp |
+| 8 | *Draft a reply to my latest unreplied conversation.* | Web or WhatsApp |
+| 9 | *Prepare a LinkedIn post about [topic] — don't publish yet.* | Web or WhatsApp |
+| 10 | *Harvest active followers from this competitor: [LinkedIn company URL].* | Web or WhatsApp |
+| 11 | *(Voice note)* *“Who needs my attention today?”* | WhatsApp |
+
+### Quiz for the audience (make it interactive)
+
+Ask the room, then prove it live:
+
+1. **“Where do your best leads actually reply — LinkedIn, email, or WhatsApp?”** → Show Unified Inbox with all three.  
+2. **“Who wants to run outreach without opening a laptop?”** → Send Soci a WhatsApp command.  
+3. **“Should AI send without asking?”** → Show Soci's plan + **Launch** button — you're the boss.
 
 ---
 
-*Last updated: August 2026*
+## C. Screen checklist
+
+| # | Moment | Where | Done |
+|---|--------|-------|------|
+| 1 | Intro / Dashboard | `/dashboard` | ☐ |
+| 2 | Power: AI connect wizard → Integrations | Wizard + `/integrations` | ☐ |
+| 3 | Power: Chrome extension on LinkedIn | LinkedIn + extension | ☐ |
+| 4 | Power: AI Content + Inspiration | `/content`, `/inspiration` | ☐ |
+| 5 | Power: Competitor Active Followers | `/competitor-followers` | ☐ |
+| 6 | Power: leads / other audiences | `/leads` | ☐ |
+| 7 | Power: multichannel outreach | `/outreach` | ☐ |
+| 8 | Power: unified inbox + calls | `/inbox`, `/calls` | ☐ |
+| 9 | Twist: Soci Command Center prompt → Launch | Widget / `/ai-employee` | ☐ |
+| 10 | WhatsApp Desktop = same Soci | WhatsApp Desktop | ☐ |
+| 11 | Voice note (optional) | WhatsApp | ☐ |
+| 12 | Close split view | Web + WhatsApp | ☐ |
+
+---
+
+## D. Naming
+
+| Old | Now |
+|-----|-----|
+| Alex | **Soci** |
+
+---
+
+*Last updated: September 2026 — Power → Soci → WhatsApp*

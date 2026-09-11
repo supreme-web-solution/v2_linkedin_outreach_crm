@@ -181,7 +181,7 @@ class OutreachCampaignCommandService
     }
 
     /**
-     * Resume paused campaigns (used by Alex action undo).
+     * Resume paused campaigns (used by Soci action undo).
      *
      * @param  list<int>  $campaignIds
      * @param  array<int|string, string>  $previousStatuses

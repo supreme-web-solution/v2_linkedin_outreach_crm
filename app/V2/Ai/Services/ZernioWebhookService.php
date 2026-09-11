@@ -104,7 +104,7 @@ class ZernioWebhookService
             return $this->ok(['ignored' => true, 'reason' => 'empty_from_or_text']);
         }
 
-        // Voice notes: transcribe → same Alex text path (caption optional).
+        // Voice notes: transcribe → same Soci text path (caption optional).
         if ($mediaType === 'audio' && $text === '') {
             $transcript = app(WhatsAppVoiceTranscriptionService::class)->transcribe($media);
             if ($transcript === null || $transcript === '') {
@@ -124,7 +124,7 @@ class ZernioWebhookService
             ]);
         }
 
-        // Images still need a caption (used as the command for Alex).
+        // Images still need a caption (used as the command for Soci).
         if ($text === '' && $mediaType === 'image') {
             Log::info('[Zernio] inbound image ignored (caption required)', [
                 'from' => $from,

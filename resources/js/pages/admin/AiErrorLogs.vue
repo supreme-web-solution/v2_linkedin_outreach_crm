@@ -8,7 +8,7 @@ defineOptions({
     layout: {
         breadcrumbs: [
             { title: 'Dashboard', href: '/dashboard' },
-            { title: 'Alex errors', href: '/admin/ai-errors' },
+            { title: 'Soci errors', href: '/admin/ai-errors' },
         ],
     },
 });
@@ -74,14 +74,14 @@ function formatWhen(iso: string | null): string {
 </script>
 
 <template>
-    <Head title="Alex error logs" />
+    <Head title="Soci error logs" />
 
     <div class="flex h-full flex-1 flex-col gap-4 p-4 md:p-6">
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
-                <h1 class="text-xl font-semibold tracking-tight">Alex error logs</h1>
+                <h1 class="text-xl font-semibold tracking-tight">Soci error logs</h1>
                 <p class="text-muted-foreground mt-1 text-sm">
-                    Platform admin only — what was happening when Alex hit an error.
+                    Platform admin only — what was happening when Soci hit an error.
                 </p>
             </div>
             <div class="text-muted-foreground text-sm">{{ logs.total }} total</div>
@@ -126,7 +126,7 @@ function formatWhen(iso: string | null): string {
             class="border-border text-muted-foreground flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-16 text-sm"
         >
             <AlertTriangle class="size-8 opacity-40" />
-            <span>No Alex errors logged yet.</span>
+            <span>No Soci errors logged yet.</span>
             <span
                 v-if="filters.source || filters.channel || filters.q"
                 class="text-xs opacity-80"

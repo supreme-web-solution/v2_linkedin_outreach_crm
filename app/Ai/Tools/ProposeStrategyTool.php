@@ -6,6 +6,8 @@ use App\V2\Ai\Enums\AiAutonomyLevel;
 use App\V2\Ai\Enums\AiToolPermission;
 use App\V2\Ai\Services\ActionApprovalService;
 use App\V2\Ai\Services\CommandCenterService;
+use App\V2\Ai\Services\DiscoverProspectsService;
+use App\V2\Ai\Services\MultiChannelCampaignStagingService;
 use App\V2\Ai\Services\PlanContentService;
 use App\V2\Ai\Support\PlanLeadList;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -49,6 +51,16 @@ class ProposeStrategyTool extends GatedTool
 
     protected function run(Request $request): array
     {
+        $ledger = app(\App\V2\Ai\Services\TurnExecutionLedger::class);
+        if ($ledger->ownsTurnResult()) {
+            return [
+                'blocked' => true,
+                'already_executed' => true,
+                'report' => $ledger->report(),
+                'instruction' => 'This request is already executed across platforms. Do not propose another plan. The user reply is the execution report.',
+            ];
+        }
+
         $explicitTarget = array_key_exists('target_count', $request->all());
         $hasList = trim((string) ($request['list_hash'] ?? '')) !== '';
         $goal = (string) $request['goal'];
@@ -58,6 +70,44 @@ class ProposeStrategyTool extends GatedTool
         if ($profileUrl === '' && preg_match('#https?://(?:www\.)?linkedin\.com/in/[\w%-]+/?#i', $goal, $m)) {
             $profileUrl = $m[0];
             $oneShot = true;
+        }
+
+        if (! $oneShot && ! $hasList && $this->isDirectAcquisitionGoal($goal)
+            && ! app(\App\V2\Ai\Services\UserTurnIntentService::class)->isInformational($goal)
+            && app(\App\V2\Ai\Services\UserTurnIntentService::class)->isOutreachCommand($goal)) {
+            $discovery = app(DiscoverProspectsService::class)->discover(
+                user: $this->context->user,
+                query: $goal,
+                targetCount: isset($request['target_count']) ? (int) $request['target_count'] : null,
+                preferFresh: $explicitTarget,
+                platform: 'auto',
+            );
+
+            if (($discovery['mode'] ?? '') === 'parallel' && ! empty($discovery['lists'])) {
+                $staged = app(MultiChannelCampaignStagingService::class)->stage(
+                    $this->context->user,
+                    $this->context->organizationId,
+                    $goal,
+                    is_array($discovery['lists']) ? $discovery['lists'] : [],
+                    $this->context->conversation,
+                );
+
+                if ($staged !== []) {
+                    $ledger->recordOutreach(
+                        $goal,
+                        is_array($discovery['allocation'] ?? null) ? $discovery['allocation'] : [],
+                        is_array($discovery['channel_results'] ?? null) ? $discovery['channel_results'] : [],
+                        $staged,
+                    );
+
+                    return [
+                        'executed' => true,
+                        'staged_campaigns' => $staged,
+                        'execution_report' => $ledger->report(),
+                        'instruction' => 'Execution is complete for this turn. Reply with the execution report only; do not propose another strategy.',
+                    ];
+                }
+            }
         }
 
         $plan = [
@@ -86,7 +136,7 @@ class ProposeStrategyTool extends GatedTool
                     'Find matching companies and decision makers',
                     'Enrich contact information',
                     'Draft personalized outreach campaign',
-                    'Follow up until reply; pause automation on reply (Alex replies in inbox)',
+                    'Follow up until reply; pause automation on reply (Soci replies in inbox)',
                     'Qualify and book meetings',
                 ],
             'status' => 'awaiting_review',
@@ -107,6 +157,11 @@ class ProposeStrategyTool extends GatedTool
             ->attachToPlan($plan, $this->context->user);
 
         return $this->stagePlan($plan);
+    }
+
+    private function isDirectAcquisitionGoal(string $goal): bool
+    {
+        return (bool) preg_match('/\b(get|find|acquire|bring)\b.{0,40}\b(client|customer|prospect|lead)s?\b/i', $goal);
     }
 
     /**

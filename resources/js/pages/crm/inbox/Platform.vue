@@ -51,6 +51,15 @@ type OutreachContext = {
         } | null;
         next_best_action?: { action: string | null; reason: string | null; set_at: string | null } | null;
         personalized_draft?: { text: string | null; channel: string | null; saved_at: string | null } | null;
+        prospect_dossier?: {
+            company: string | null;
+            headline: string | null;
+            conversion_stage: string;
+            updated_at: string;
+            signals: string[];
+            conversation_facts: { fact: string; source: string; recorded_at: string }[];
+            scraped_pages: { url: string; title: string; excerpt: string; scraped_at: string }[];
+        } | null;
         command_center_url?: string;
     } | null;
 };
@@ -73,7 +82,14 @@ const props = defineProps<{
     platformColor: string;
     connected: boolean;
     conversations: ConversationsPaginator;
-    selected: { id: number; prospect_name: string | null; prospect_email?: string | null; has_channel: boolean } | null;
+    selected: {
+        id: number;
+        prospect_name: string | null;
+        prospect_email?: string | null;
+        prospect_headline?: string | null;
+        provider_chat_id?: string | null;
+        has_channel: boolean;
+    } | null;
     messages: MessageItem[];
     has_older_messages?: boolean;
     outreachContext: OutreachContext | null;
@@ -831,7 +847,7 @@ function onComposerKeydown(e: KeyboardEvent) {
 
             <!-- Chat + sidebar (full width on mobile when a thread is open) -->
             <div
-                class="flex min-h-0 flex-col gap-3 lg:col-span-3 lg:flex-row"
+                class="flex min-h-0 flex-col gap-3 overflow-hidden lg:col-span-3 lg:min-h-0 lg:flex-row"
                 :class="selected ? 'flex' : 'hidden lg:flex'"
             >
                 <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm">
@@ -1074,7 +1090,7 @@ function onComposerKeydown(e: KeyboardEvent) {
                 </div>
 
                 <!-- AI + compact outreach sidebar -->
-                <div v-if="localOutreachContext" class="flex w-full shrink-0 flex-col gap-3 lg:w-72 lg:self-start">
+                <div v-if="localOutreachContext" class="flex min-h-0 w-full shrink-0 flex-col gap-3 overflow-y-auto lg:h-full lg:w-72 lg:self-start lg:pr-1">
                     <div class="shrink-0 rounded-xl border border-border bg-card p-3 shadow-sm">
                         <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                             <Bot class="h-3.5 w-3.5" /> {{ platformLabel }} AI
@@ -1163,7 +1179,7 @@ function onComposerKeydown(e: KeyboardEvent) {
                             class="mt-3 rounded-lg border border-border bg-muted/30 px-2.5 py-2 text-xs"
                         >
                             <div class="font-medium">Saved personalized draft</div>
-                            <p class="mt-1 whitespace-pre-wrap">{{ localOutreachContext.ai_insights.personalized_draft.text }}</p>
+                            <p class="mt-1 max-h-36 overflow-y-auto whitespace-pre-wrap pr-1">{{ localOutreachContext.ai_insights.personalized_draft.text }}</p>
                         </div>
                         <Link
                             v-if="localOutreachContext.ai_insights?.command_center_url"
@@ -1189,12 +1205,89 @@ function onComposerKeydown(e: KeyboardEvent) {
                             Replied — sequence paused on {{ platformLabel }}
                         </p>
                     </div>
+
+                    <div
+                        v-if="localOutreachContext.ai_insights?.prospect_dossier"
+                        class="shrink-0 rounded-xl border border-border bg-card p-3 text-sm shadow-sm"
+                    >
+                        <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            <Bot class="h-3.5 w-3.5" /> Prospect memory
+                        </div>
+                        <p class="mt-1 text-[11px] text-muted-foreground">
+                            Read-only intelligence that grows as this conversation continues.
+                        </p>
+                        <div class="mt-2 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2 text-xs">
+                            <div class="font-medium capitalize">
+                                Stage: {{ localOutreachContext.ai_insights.prospect_dossier.conversion_stage }}
+                            </div>
+                            <p v-if="localOutreachContext.ai_insights.prospect_dossier.company" class="mt-1">
+                                Company: {{ localOutreachContext.ai_insights.prospect_dossier.company }}
+                            </p>
+                            <p v-if="localOutreachContext.ai_insights.prospect_dossier.headline" class="mt-1">
+                                Headline: {{ localOutreachContext.ai_insights.prospect_dossier.headline }}
+                            </p>
+                        </div>
+                        <div
+                            v-if="(localOutreachContext.ai_insights.prospect_dossier.signals ?? []).length > 0"
+                            class="mt-2 rounded-lg border border-border/60 bg-background px-2.5 py-2 text-xs"
+                        >
+                            <div class="font-medium">Signals</div>
+                            <ul class="mt-1 list-disc space-y-1 pl-4">
+                                <li v-for="(signal, i) in localOutreachContext.ai_insights.prospect_dossier.signals" :key="`signal-${i}`">
+                                    {{ signal }}
+                                </li>
+                            </ul>
+                        </div>
+                        <div
+                            v-if="(localOutreachContext.ai_insights.prospect_dossier.conversation_facts ?? []).length > 0"
+                            class="mt-2 rounded-lg border border-border/60 bg-background px-2.5 py-2 text-xs"
+                        >
+                            <div class="font-medium">Conversation facts</div>
+                            <ul class="mt-1 max-h-40 space-y-1.5 overflow-y-auto pr-1">
+                                <li
+                                    v-for="(row, i) in localOutreachContext.ai_insights.prospect_dossier.conversation_facts"
+                                    :key="`fact-${i}`"
+                                    class="rounded-md border border-border/40 bg-muted/20 px-2 py-1"
+                                >
+                                    <p>{{ row.fact }}</p>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
 
-                <div v-else-if="selected" class="flex w-full items-start rounded-xl border border-dashed border-border p-4 text-xs text-muted-foreground lg:w-72">
-                    Campaign context is missing for this thread. Open it from
-                    <Link href="/outreach" class="mx-1 text-primary hover:underline">Multi-Channel Outreach</Link>
-                    to configure AI and pause settings.
+                <div v-else-if="selected" class="flex min-h-0 w-full shrink-0 flex-col gap-3 overflow-y-auto lg:h-full lg:w-72 lg:self-start lg:pr-1">
+                    <div class="rounded-xl border border-border bg-card p-3 text-sm shadow-sm">
+                        <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            <Bot class="h-3.5 w-3.5" /> {{ platformLabel }} AI
+                        </div>
+                        <p class="mt-1 text-xs text-muted-foreground">
+                            This thread is in inbox, but it is not linked to an outreach campaign yet.
+                        </p>
+                        <p class="mt-2 text-xs text-muted-foreground">
+                            Open from
+                            <Link href="/outreach" class="text-primary hover:underline">Multi-Channel Outreach</Link>
+                            to enable AI context, pause-on-reply, and campaign automation for this contact.
+                        </p>
+                    </div>
+
+                    <div class="rounded-xl border border-border bg-card p-3 text-sm shadow-sm">
+                        <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            <MessageCircle class="h-3.5 w-3.5" /> Prospect snapshot
+                        </div>
+                        <div class="mt-2 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2 text-xs">
+                            <p class="font-medium text-foreground">{{ selected.prospect_name ?? 'Unknown contact' }}</p>
+                            <p v-if="selected.prospect_headline" class="mt-1 text-muted-foreground">
+                                {{ selected.prospect_headline }}
+                            </p>
+                            <p v-if="selected.prospect_email" class="mt-1 break-all text-muted-foreground">
+                                {{ selected.prospect_email }}
+                            </p>
+                            <p v-if="selected.provider_chat_id" class="mt-1 break-all text-[11px] text-muted-foreground/80">
+                                ID: {{ selected.provider_chat_id }}
+                            </p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

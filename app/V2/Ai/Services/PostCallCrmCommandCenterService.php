@@ -46,7 +46,7 @@ class PostCallCrmCommandCenterService
         }
 
         $outcome = Str::snake(trim($outcome));
-        $allowed = ['completed', 'follow_up', 'not_interested', 'no_show', 'rescheduled', 'qualified'];
+        $allowed = ['completed', 'follow_up', 'not_interested', 'no_show', 'rescheduled', 'qualified', 'customer'];
         if (! in_array($outcome, $allowed, true)) {
             throw new \RuntimeException('outcome must be one of: '.implode(', ', $allowed));
         }
