@@ -490,6 +490,10 @@ class AgentOrchestrator
         $latestApproval = null;
         $ledger = app(TurnExecutionLedger::class);
         $ledger->reset();
+        $plan = app(TurnPlanBuilderService::class)->build($user, $organizationId, $promptMessage, $settings);
+        app(TurnPlanContext::class)->set($plan);
+        $verifier = app(PostExecutionVerifierService::class);
+        $beforeSnapshot = $verifier->snapshot($user, $organizationId);
         $progress = app(WebChatTurnProgressService::class);
         $progress->bind($channel === 'web' ? $context : null);
         $postedProgressFinal = false;
@@ -542,6 +546,7 @@ class AgentOrchestrator
         } finally {
             $postedProgressFinal = $progress->postedFinalReply();
             $progress->bind(null);
+            app(TurnPlanContext::class)->clear();
         }
 
         if ($ledger->ownsTurnResult()) {
@@ -550,6 +555,23 @@ class AgentOrchestrator
 
         if ($reply === '') {
             $reply = 'Done.';
+        }
+
+        $afterSnapshot = $verifier->snapshot($user, $organizationId);
+        $verification = $verifier->verify($user, $organizationId, $plan, $beforeSnapshot, $afterSnapshot);
+        app(AiActivityLogService::class)->record(
+            $user,
+            $organizationId,
+            $conversation->id,
+            'orchestrator',
+            'turn_verified',
+            'turn',
+            (string) $conversation->id,
+            $verification,
+            $promptMessage,
+        );
+        if (! ($verification['ok'] ?? false)) {
+            $reply = trim($reply."\n\nVerification warning: ".implode(' ', $verification['warnings'] ?? []));
         }
 
         $fallback = $this->promptObservability->enforceClarifierFallback($promptMessage, $reply);

@@ -422,6 +422,7 @@ class OnboardingWizardService
         ?string $customGoal = null,
         array $overrides = [],
     ): array {
+        $resolvedGoal = $this->resolvedGoal($goalKey, ['channel_overrides' => $overrides]);
         $patch = [
             'goal' => $goalKey,
             'custom_goal' => $customGoal ? trim($customGoal) : null,
@@ -437,6 +438,20 @@ class OnboardingWizardService
         $this->settingsService->configureWorkspaceForGoal($user, $organizationId, $goalKey);
         $settings = $this->settingsService->for($user, $organizationId);
         $this->saveMeta($settings, $patch);
+        $meta = is_array($settings->meta) ? $settings->meta : [];
+        $meta['workspace_goal_profile'] = [
+            'goal' => $goalKey,
+            'custom_goal' => $customGoal ? trim($customGoal) : null,
+            'preferred_channels' => array_values(array_unique(array_merge(
+                (array) ($resolvedGoal['required_channels'] ?? []),
+                (array) ($resolvedGoal['optional_channels'] ?? []),
+            ))),
+            'must_connect' => array_values((array) ($resolvedGoal['required_channels'] ?? [])),
+            'send_policy' => 'approval_required',
+            'new_vs_existing_preference' => $goalKey === 'find_prospects' ? 'new_only' : 'reuse_first',
+            'updated_at' => now()->toIso8601String(),
+        ];
+        $settings->update(['meta' => $meta]);
 
         return $this->status($user, $organizationId);
     }

@@ -183,6 +183,25 @@ class WorkspaceContextService
         return "\n\nWorkspace context:\n".implode("\n", $lines);
     }
 
+    /**
+     * Machine-readable onboarding profile for planner constraints.
+     *
+     * @return array<string,mixed>
+     */
+    public function workspaceGoalProfile(AiEmployeeSetting $settings): array
+    {
+        $meta = is_array($settings->meta) ? $settings->meta : [];
+        $profile = is_array($meta['workspace_goal_profile'] ?? null) ? $meta['workspace_goal_profile'] : [];
+
+        return array_merge([
+            'goal' => null,
+            'preferred_channels' => [],
+            'must_connect' => [],
+            'send_policy' => 'approval_required',
+            'new_vs_existing_preference' => 'reuse_first',
+        ], $profile);
+    }
+
     public function inboxConversionGuide(User $user, int $organizationId): string
     {
         $settings = $this->settingsService->for($user, $organizationId);

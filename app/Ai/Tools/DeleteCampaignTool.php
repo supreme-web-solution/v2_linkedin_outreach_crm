@@ -39,6 +39,8 @@ class DeleteCampaignTool extends GatedTool
             'delete_created_today' => $schema->boolean()->nullable()->description(
                 'true = delete every outreach + LinkedIn campaign created today (app date) in one Confirm Delete.',
             ),
+            'created_after' => $schema->string()->nullable()->description('ISO datetime lower bound for campaign creation window'),
+            'created_before' => $schema->string()->nullable()->description('ISO datetime upper bound for campaign creation window'),
             'delete_all_outreach' => $schema->boolean()->nullable()->description(
                 'true = delete every non-template outreach campaign for this user in one Confirm Delete.',
             ),
@@ -56,9 +58,30 @@ class DeleteCampaignTool extends GatedTool
         $reason = isset($request['reason']) ? (string) $request['reason'] : null;
         $deleteToday = (bool) ($request['delete_created_today'] ?? false);
         $deleteAll = (bool) ($request['delete_all_outreach'] ?? false);
+        $createdAfter = isset($request['created_after']) ? (string) $request['created_after'] : null;
+        $createdBefore = isset($request['created_before']) ? (string) $request['created_before'] : null;
 
         $items = [];
-        if ($deleteToday) {
+        if ($createdAfter && $createdBefore) {
+            $listed = $service->listDeletableCampaignsInWindow(
+                $this->context->user,
+                $this->context->organizationId,
+                $createdAfter,
+                $createdBefore,
+            );
+            $items = array_map(fn (array $row) => [
+                'kind' => (string) $row['kind'],
+                'resource_id' => (string) $row['resource_id'],
+            ], $listed);
+            if ($items === []) {
+                return [
+                    'approval_id' => null,
+                    'plan' => null,
+                    'card' => 'No campaigns matched that time window.',
+                    'cta' => 'Nothing to delete.',
+                ];
+            }
+        } elseif ($deleteToday) {
             $listed = $service->listDeletableCampaignsCreatedToday(
                 $this->context->user,
                 $this->context->organizationId,

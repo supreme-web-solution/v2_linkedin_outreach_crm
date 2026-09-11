@@ -17,6 +17,7 @@ use App\Ai\Tools\DraftPersonalizedMessageTool;
 use App\Ai\Tools\DraftReplyTool;
 use App\Ai\Tools\FindProspectsTool;
 use App\Ai\Tools\GetAttentionQueueTool;
+use App\Ai\Tools\GetActivityTool;
 use App\Ai\Tools\CheckIntegrationsTool;
 use App\Ai\Tools\ConfigureCampaignInboxAiTool;
 use App\Ai\Tools\GetNurtureDueQueueTool;
@@ -117,6 +118,7 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\n- Sales manager batch → let_ai_execute (follow-ups + nurture + pause + scale + activate + channel mix in one Launch)"
             ."\n- Campaign drafts from Soci personalize first-touch copy on Launch/sync when evidence exists"
             ."\n- Performance → get_campaign_stats; snapshot → get_sales_brief; weekly → get_weekly_sales_brief; optimize → optimize_campaign (Launch auto-applies wait-time fixes when drop-off detected)"
+            ."\n- Audit/history questions (\"what did you create today\", \"what changed this morning\") → get_activity first; report facts from activity logs, not guesses"
             ."\n- Validation experiment → start_acquisition_experiment then discover_prospects platform=all; Dashboard tracks targeted→contacted→responses→conversations→qualified→demos→customers"
             ."\n- Qualify a lead → qualify_lead; after a call → post_call_crm_update"
             ."\n- Upcoming call prep → get_meeting_brief"
@@ -183,6 +185,7 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             new GetWeeklySalesBriefTool($this->context),
             new GetMeetingBriefTool($this->context),
             new GetAttentionQueueTool($this->context),
+            new GetActivityTool($this->context),
             new GetNurtureDueQueueTool($this->context),
             new CheckIntegrationsTool($this->context),
             new ConfigureCampaignInboxAiTool($this->context),

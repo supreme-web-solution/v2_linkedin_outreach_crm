@@ -117,6 +117,10 @@ class BusinessProfileOnboardingService
             'saved_at' => Carbon::now()->toIso8601String(),
             'source' => 'onboarding_business_profile',
         ];
+        $goalProfile = is_array($meta['workspace_goal_profile'] ?? null) ? $meta['workspace_goal_profile'] : [];
+        $goalProfile['business_profile_completed'] = true;
+        $goalProfile['updated_at'] = Carbon::now()->toIso8601String();
+        $meta['workspace_goal_profile'] = $goalProfile;
 
         $onboarding = is_array($meta['onboarding'] ?? null) ? $meta['onboarding'] : [];
         $onboarding['business_profile_completed_at'] = Carbon::now()->toIso8601String();
@@ -174,6 +178,10 @@ class BusinessProfileOnboardingService
         $onboarding['conversion_assets_completed_at'] = Carbon::now()->toIso8601String();
         $onboarding['step'] = 'climax';
         $meta['onboarding'] = $onboarding;
+        $goalProfile = is_array($meta['workspace_goal_profile'] ?? null) ? $meta['workspace_goal_profile'] : [];
+        $goalProfile['conversion_assets_completed'] = true;
+        $goalProfile['updated_at'] = Carbon::now()->toIso8601String();
+        $meta['workspace_goal_profile'] = $goalProfile;
 
         $settings->update(['meta' => $meta]);
 

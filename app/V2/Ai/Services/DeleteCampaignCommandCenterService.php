@@ -405,6 +405,52 @@ class DeleteCampaignCommandCenterService
         return array_values(array_merge($outreach, $linkedin));
     }
 
+    /**
+     * @return list<array{kind:string,resource_id:string,name:string,status:string}>
+     */
+    public function listDeletableCampaignsInWindow(
+        User $user,
+        int $organizationId,
+        string $createdAfter,
+        string $createdBefore,
+    ): array {
+        $from = \Illuminate\Support\Carbon::parse($createdAfter);
+        $to = \Illuminate\Support\Carbon::parse($createdBefore);
+
+        $outreach = V2OutreachCampaign::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->whereBetween('created_at', [$from, $to])
+            ->where(function ($q) {
+                $q->whereNull('status')->orWhere('status', '!=', 'template');
+            })
+            ->orderByDesc('id')
+            ->get(['id', 'name', 'status'])
+            ->map(fn (V2OutreachCampaign $c) => [
+                'kind' => 'outreach',
+                'resource_id' => (string) $c->id,
+                'name' => (string) $c->name,
+                'status' => (string) ($c->status ?? ''),
+            ])
+            ->all();
+
+        $linkedin = V2Campaign::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->whereBetween('created_at', [$from, $to])
+            ->orderByDesc('id')
+            ->get(['id', 'name', 'status'])
+            ->map(fn (V2Campaign $c) => [
+                'kind' => 'linkedin',
+                'resource_id' => (string) $c->id,
+                'name' => (string) $c->name,
+                'status' => (string) ($c->status ?? ''),
+            ])
+            ->all();
+
+        return array_values(array_merge($outreach, $linkedin));
+    }
+
     public function normalizeKind(string $kind): string
     {
         $kind = Str::lower(trim($kind));
