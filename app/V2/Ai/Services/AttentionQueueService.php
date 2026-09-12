@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\V2Conversation;
 use App\Models\V2Message;
 use App\V2\Outreach\OutreachChannelRegistry;
+use App\V2\Services\InboxAttentionService;
 use App\V2\Services\InboxUnreadService;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
@@ -14,6 +15,7 @@ class AttentionQueueService
 {
     public function __construct(
         private readonly InboxUnreadService $unread,
+        private readonly InboxAttentionService $attention,
         private readonly InboxClassificationService $classifier,
     ) {}
 
@@ -38,10 +40,11 @@ class AttentionQueueService
             ->get();
 
         $unreadMap = $this->unread->unreadMap($conversations);
-        $unreadConversations = $conversations->filter(fn (V2Conversation $c) => (bool) ($unreadMap[$c->id] ?? false));
+        $attentionMap = $this->attention->needsAttentionMap($conversations);
+        $attentionConversations = $conversations->filter(fn (V2Conversation $c) => (bool) ($attentionMap[$c->id] ?? false));
 
         $latestMessages = V2Message::query()
-            ->whereIn('conversation_id', $unreadConversations->pluck('id'))
+            ->whereIn('conversation_id', $attentionConversations->pluck('id'))
             ->where('direction', 'inbound')
             ->orderByDesc('received_at')
             ->orderByDesc('created_at')
@@ -51,7 +54,8 @@ class AttentionQueueService
             ->map(fn ($msgs) => $msgs->first());
 
         $totals = [
-            'unread' => $unreadConversations->count(),
+            'unread' => collect($unreadMap)->filter()->count(),
+            'awaiting_reply' => $attentionConversations->count(),
             'hot' => 0,
             'needs_judgment' => 0,
             'low_priority' => 0,
@@ -61,9 +65,12 @@ class AttentionQueueService
         ];
 
         $classified = [];
-        foreach ($unreadConversations as $conversation) {
+        foreach ($attentionConversations as $conversation) {
             $message = $latestMessages[$conversation->id] ?? null;
             $body = trim((string) ($message?->body ?? ''));
+            if ($body === '') {
+                continue;
+            }
             $classification = $this->classifier->classify($body);
             $priority = $classification['priority'];
             $intent = (string) ($classification['intent'] ?? '');
@@ -104,10 +111,18 @@ class AttentionQueueService
             $classification = $row['classification'];
             $meta = is_array($conversation->meta) ? $conversation->meta : [];
 
+            $leadId = (int) (Arr::get($meta, 'outreach_lead_id') ?? 0);
+            $prospectEmail = null;
+            if ($leadId > 0) {
+                $lead = \App\Models\V2OutreachLead::query()->find($leadId);
+                $prospectEmail = trim((string) ($lead?->email ?? '')) ?: null;
+            }
+
             $items[] = [
                 'conversation_id' => $conversation->id,
                 'priority' => $classification['priority'],
                 'prospect_name' => Arr::get($meta, 'prospect_name') ?: 'Prospect',
+                'prospect_email' => $prospectEmail,
                 'channel' => $conversation->provider,
                 'channel_label' => OutreachChannelRegistry::channelLabel((string) $conversation->provider),
                 'preview' => Str::limit((string) $row['body'], 160, '…'),
@@ -115,6 +130,7 @@ class AttentionQueueService
                 'stage' => $classification['stage'],
                 'recommended_action' => $classification['recommended_action'],
                 'evidence' => $classification['evidence'],
+                'is_unread' => (bool) ($unreadMap[$conversation->id] ?? false),
                 'draft_hint' => 'Use classify_reply, draft_reply, book_meeting, or set_next_best_action with conversation_id '.$conversation->id,
                 'inbox_url' => url('/inbox/'.$conversation->provider.'/'.$conversation->id),
                 'last_message_at' => $conversation->last_message_at?->toIso8601String(),
@@ -148,7 +164,7 @@ class AttentionQueueService
         ]);
 
         $headline = 'Inbox clear — nothing waiting on you.';
-        if ($totals['unread'] > 0 || $pendingCount > 0) {
+        if ($totals['awaiting_reply'] > 0 || $pendingCount > 0) {
             $parts = [];
             if ($needYou > 0) {
                 $parts[] = sprintf('%d need attention', $needYou);
@@ -156,8 +172,8 @@ class AttentionQueueService
             if ($totals['meeting_ready'] > 0) {
                 $parts[] = sprintf('%d ready to book', $totals['meeting_ready']);
             }
-            if ($parts === [] && $totals['unread'] > 0) {
-                $parts[] = sprintf('%d unread', $totals['unread']);
+            if ($parts === [] && $totals['awaiting_reply'] > 0) {
+                $parts[] = sprintf('%d awaiting reply', $totals['awaiting_reply']);
             }
             $headline = implode(', ', $parts).'.';
         }
@@ -174,10 +190,11 @@ class AttentionQueueService
             'pending_approvals' => $pendingCount,
         ];
 
-        $summary = $totals['unread'] === 0 && $pendingCount === 0
+        $summary = $totals['awaiting_reply'] === 0 && $pendingCount === 0
             ? 'Nothing needs your attention right now.'
             : sprintf(
-                'AI handled ~%d conversation(s). %d need you (%d hot, %d review, %d approvals). %d meeting-ready.',
+                '%d thread(s) awaiting your reply (includes read threads — opening inbox does not dismiss them). AI handled ~%d. %d need you (%d hot, %d review, %d approvals). %d meeting-ready.',
+                $totals['awaiting_reply'],
                 $counts['ai_handled_estimate'],
                 $needYou,
                 $totals['hot'],

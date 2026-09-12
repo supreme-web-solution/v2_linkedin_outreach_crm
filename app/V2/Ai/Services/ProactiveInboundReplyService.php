@@ -136,6 +136,14 @@ class ProactiveInboundReplyService
             $draftData['draft'] = (string) (($staged['plan']['draft_text'] ?? '') ?: $draftData['draft']);
         }
 
+        $dossierSummary = null;
+        $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $leadId = (int) ($meta['outreach_lead_id'] ?? 0);
+        if ($leadId > 0 && ($lead = V2OutreachLead::query()->find($leadId))) {
+            $dossier = app(ProspectMemoryService::class)->dossier($lead);
+            $dossierSummary = $this->summarizeDossier($dossier);
+        }
+
         $this->notifier->notifyInboundReplyPrepared(
             $user,
             $organizationId,
@@ -145,6 +153,7 @@ class ProactiveInboundReplyService
             $approvalId,
             $autoSent,
             $researchRan,
+            $dossierSummary,
         );
 
         $this->handling->markHandled(
@@ -185,5 +194,26 @@ class ProactiveInboundReplyService
         $name = trim((string) ($meta['prospect_name'] ?? ''));
 
         return $name !== '' ? $name : 'Prospect';
+    }
+
+    /**
+     * @param  array<string, mixed>  $dossier
+     * @return array<string, mixed>|null
+     */
+    private function summarizeDossier(array $dossier): ?array
+    {
+        $pages = collect($dossier['scraped_pages'] ?? [])
+            ->filter(fn ($row) => is_array($row) && trim((string) ($row['url'] ?? '')) !== '')
+            ->values()
+            ->all();
+
+        if ($pages === [] && trim((string) ($dossier['conversion_stage'] ?? '')) === '') {
+            return null;
+        }
+
+        return [
+            'conversion_stage' => (string) ($dossier['conversion_stage'] ?? 'opening'),
+            'scraped_pages' => array_slice($pages, -3),
+        ];
     }
 }

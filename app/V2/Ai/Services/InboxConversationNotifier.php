@@ -47,6 +47,7 @@ class InboxConversationNotifier
         ?int $approvalId,
         bool $autoSent,
         bool $researchRan,
+        ?array $dossierSummary = null,
     ): void {
         $prospect = (string) ($draftData['prospect_name'] ?? 'Prospect');
         $channel = OutreachChannelRegistry::channelLabel((string) ($draftData['channel'] ?? $v2Conversation->provider));
@@ -56,9 +57,30 @@ class InboxConversationNotifier
         $draft = trim((string) ($draftData['draft'] ?? ''));
         $inboxUrl = (string) ($draftData['inbox_url'] ?? url('/inbox/'.$v2Conversation->provider.'/'.$v2Conversation->id));
 
+        $researchLines = [];
+        if ($researchRan && is_array($dossierSummary)) {
+            $pages = is_array($dossierSummary['scraped_pages'] ?? null) ? $dossierSummary['scraped_pages'] : [];
+            foreach (array_slice($pages, -2) as $page) {
+                if (! is_array($page)) {
+                    continue;
+                }
+                $title = trim((string) ($page['title'] ?? ''));
+                $url = trim((string) ($page['url'] ?? ''));
+                $excerpt = trim((string) ($page['excerpt'] ?? ''));
+                if ($url !== '') {
+                    $researchLines[] = '• Researched ['.($title !== '' ? $title : $url).']('.$url.')'
+                        .($excerpt !== '' ? ' — '.\Illuminate\Support\Str::limit($excerpt, 120) : '');
+                }
+            }
+            if (($dossierSummary['conversion_stage'] ?? '') !== '' && ($dossierSummary['conversion_stage'] ?? '') !== 'opening') {
+                $researchLines[] = '• Prospect memory stage: **'.$dossierSummary['conversion_stage'].'** — [view in inbox]('.$inboxUrl.')';
+            }
+        }
+
         $lines = array_filter([
             "📬 **{$channel} reply** from **{$prospect}** ({$priority} · {$intent})",
             $researchRan ? 'Researched links/context from their message before drafting.' : null,
+            $researchLines !== [] ? implode("\n", $researchLines) : null,
             $preview !== '' ? "> {$preview}" : null,
         ]);
 

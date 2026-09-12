@@ -536,6 +536,10 @@ class AgentOrchestrator
         if ($stateContext !== null) {
             $promptMessage = $stateContext."\n\n".$promptMessage;
         }
+        $awareness = app(CommandCenterAwarenessService::class)->promptBlock($user, $organizationId);
+        if ($awareness !== '') {
+            $promptMessage = $awareness."\n\n".$promptMessage;
+        }
         if (isset($plan['workflow_run_id'])) {
             $promptMessage = '[Workflow run #'.$plan['workflow_run_id']
                 .' owns orchestration in the background — do NOT call discover_prospects or draft_campaign_plan. '

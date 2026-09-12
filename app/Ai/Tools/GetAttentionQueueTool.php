@@ -22,7 +22,8 @@ class GetAttentionQueueTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'List conversations that need the user\'s attention (unread inbox replies, hot leads, pending approvals).';
+        return 'List inbox threads awaiting your reply — includes read/opened threads when the prospect\'s message is still the latest. '
+            .'Use prospect_email on draft_reply when you know the address. Opening inbox does not remove threads from this queue until you send a reply.';
     }
 
     public function schema(JsonSchema $schema): array
