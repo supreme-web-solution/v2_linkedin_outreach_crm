@@ -155,6 +155,93 @@ class ProspectMemoryService
         return $this->merge($lead, $dossier);
     }
 
+    public function setIdentity(V2OutreachLead $lead, ?string $name, ?string $location): array
+    {
+        $dossier = $this->dossier($lead);
+        $identity = is_array($dossier['identity'] ?? null) ? $dossier['identity'] : [];
+
+        $name = trim((string) ($name ?? ''));
+        $location = trim((string) ($location ?? ''));
+
+        if ($name !== '') {
+            $identity['preferred_name'] = $name;
+        }
+        if ($location !== '') {
+            $identity['location'] = $location;
+        }
+
+        if ($identity !== []) {
+            $identity['updated_at'] = Carbon::now()->toIso8601String();
+            $dossier['identity'] = $identity;
+        }
+
+        return $this->merge($lead, $dossier);
+    }
+
+    public function preferredGreetingName(V2OutreachLead $lead): ?string
+    {
+        $dossier = $this->dossier($lead);
+        $identity = is_array($dossier['identity'] ?? null) ? $dossier['identity'] : [];
+        $preferred = trim((string) ($identity['preferred_name'] ?? ''));
+
+        return $preferred !== '' ? $preferred : null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $research
+     */
+    public function appendPersonResearch(V2OutreachLead $lead, array $research): array
+    {
+        $dossier = $this->dossier($lead);
+        $query = trim((string) ($research['query'] ?? ''));
+        if ($query === '') {
+            return $dossier;
+        }
+
+        $existing = collect($dossier['person_research'] ?? [])
+            ->first(fn (array $row) => Str::lower((string) ($row['query'] ?? '')) === Str::lower($query));
+
+        if ($existing !== null) {
+            return $dossier;
+        }
+
+        $dossier['person_research'] ??= [];
+        $dossier['person_research'][] = [
+            'query' => $query,
+            'title' => $research['title'] ?? null,
+            'excerpt' => Str::limit((string) ($research['excerpt'] ?? ''), 2000),
+            'source' => $research['source'] ?? null,
+            'researched_at' => Carbon::now()->toIso8601String(),
+        ];
+
+        return $this->merge($lead, $dossier);
+    }
+
+    public function hasResearchEvidence(V2OutreachLead $lead): bool
+    {
+        $dossier = $this->dossier($lead);
+
+        foreach ($dossier['scraped_pages'] ?? [] as $page) {
+            if (is_array($page) && trim((string) ($page['excerpt'] ?? '')) !== '') {
+                return true;
+            }
+        }
+
+        foreach ($dossier['company_research'] ?? [] as $row) {
+            if (is_array($row) && trim((string) ($row['excerpt'] ?? '')) !== '') {
+                return true;
+            }
+        }
+
+        foreach ($dossier['person_research'] ?? [] as $row) {
+            if (is_array($row) && trim((string) ($row['excerpt'] ?? '')) !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function appendConversationFact(V2OutreachLead $lead, string $fact, string $source = 'inbound'): array
     {
         $fact = trim($fact);
@@ -194,7 +281,17 @@ class ProspectMemoryService
     public function agentBrief(V2OutreachLead $lead): string
     {
         $dossier = $this->dossier($lead);
-        $lines = ['Prospect intelligence dossier (use for context — never paste raw research to the prospect):'];
+        $lines = [
+            'Prospect intelligence dossier (REQUIRED for reply — reference at least one specific detail from here; never send a generic "what challenges do you face" reply when this section has evidence):',
+        ];
+
+        $identity = is_array($dossier['identity'] ?? null) ? $dossier['identity'] : [];
+        if ($preferred = trim((string) ($identity['preferred_name'] ?? ''))) {
+            $lines[] = 'Prospect prefers to be called: '.$preferred;
+        }
+        if ($location = trim((string) ($identity['location'] ?? ''))) {
+            $lines[] = 'Location: '.$location;
+        }
 
         $business = is_array($dossier['business'] ?? null) ? $dossier['business'] : [];
         if ($company = trim((string) ($business['company'] ?? ''))) {
@@ -230,6 +327,17 @@ class ProspectMemoryService
                 continue;
             }
             $lines[] = 'Company research ('.($row['company'] ?? 'unknown').'): '.Str::limit($excerpt, 350);
+        }
+
+        foreach (array_slice($dossier['person_research'] ?? [], -1) as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $excerpt = trim((string) ($row['excerpt'] ?? ''));
+            if ($excerpt === '') {
+                continue;
+            }
+            $lines[] = 'Person lookup ('.($row['query'] ?? 'unknown').'): '.Str::limit($excerpt, 350);
         }
 
         $facts = array_slice($dossier['conversation_facts'] ?? [], -6);
@@ -314,6 +422,8 @@ class ProspectMemoryService
             'signals' => [],
             'scraped_pages' => [],
             'company_research' => [],
+            'person_research' => [],
+            'identity' => [],
             'conversation_facts' => [],
             'urls_seen' => [],
             'conversion_stage' => 'opening',

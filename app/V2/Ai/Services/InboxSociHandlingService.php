@@ -72,4 +72,47 @@ class InboxSociHandlingService
 
         return $handled === [] ? null : $handled;
     }
+
+    /**
+     * Recent Soci-handled inbox threads (for digest / WhatsApp summaries).
+     *
+     * @return list<array{channel: string, name: string, mode: string, handled_at: string}>
+     */
+    public function recentHandledBriefs(User $user, int $hours = 6, int $limit = 3): array
+    {
+        $cutoff = Carbon::now()->subHours(max(1, $hours));
+        $rows = [];
+
+        foreach (V2Conversation::query()->where('user_id', $user->id)->forUnifiedInbox()->get() as $conversation) {
+            $handled = $this->handlingMeta($conversation);
+            if ($handled === null) {
+                continue;
+            }
+
+            $at = trim((string) ($handled['handled_at'] ?? ''));
+            if ($at === '') {
+                continue;
+            }
+
+            try {
+                if (Carbon::parse($at)->lt($cutoff)) {
+                    continue;
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+
+            $meta = is_array($conversation->meta) ? $conversation->meta : [];
+            $rows[] = [
+                'channel' => (string) $conversation->provider,
+                'name' => trim((string) ($meta['prospect_name'] ?? 'Prospect')) ?: 'Prospect',
+                'mode' => (string) ($handled['mode'] ?? 'handled'),
+                'handled_at' => $at,
+            ];
+        }
+
+        usort($rows, fn (array $a, array $b) => strcmp($b['handled_at'], $a['handled_at']));
+
+        return array_slice($rows, 0, max(1, $limit));
+    }
 }

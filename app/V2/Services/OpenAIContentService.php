@@ -489,6 +489,8 @@ PROMPT;
             $systemLines[] = $threadSummary;
         }
 
+        $researchRequired = (bool) ($options['research_required'] ?? false);
+
         $systemLines[] = '';
         $systemLines[] = 'How to reply:';
         $systemLines[] = '- Output ONLY the final message the prospect will read (email/DM body).';
@@ -500,6 +502,16 @@ PROMPT;
         $systemLines[] = '- Match the channel tone (WhatsApp, Instagram, Telegram, X = casual; LinkedIn and email = slightly formal).';
         $systemLines[] = '- Write ONE natural reply (1-4 sentences for chat; short email paragraphs when email) with a sensible next step when appropriate.';
         $systemLines[] = '- Never mention that you are AI. Return only the reply text.';
+
+        if ($researchRequired) {
+            $systemLines[] = '';
+            $systemLines[] = 'Research-backed reply (mandatory when dossier evidence exists):';
+            $systemLines[] = '- The prospect shared links or asked you to look them up — prove you did the homework.';
+            $systemLines[] = '- Open with a specific observation from their site, business, role, or location (from the dossier above).';
+            $systemLines[] = '- Tie your offer to THAT context (e.g. construction trust platform → stakeholder outreach, qualified conversations).';
+            $systemLines[] = '- Do NOT send a vague reply like "I reviewed your site" without naming what they do, or "what challenges are you facing" as the main content.';
+            $systemLines[] = '- One clarifying question at the end is fine only after showing you understood their business.';
+        }
 
         $chatMessages = [
             ['role' => 'system', 'content' => implode("\n", $systemLines)],

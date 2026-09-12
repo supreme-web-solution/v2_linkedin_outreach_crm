@@ -95,6 +95,51 @@ class LaravelAiWebResearchService
     }
 
     /**
+     * @return array{ok:bool, query:string, title:?string, excerpt:string, source:?string, error:?string}|null
+     */
+    public function searchPerson(string $query): ?array
+    {
+        $query = trim($query);
+        if ($query === '' || ! $this->isEnabled()) {
+            return null;
+        }
+
+        try {
+            $response = agent(
+                instructions: implode("\n", [
+                    'You research people for B2B sales context when a prospect asks to be looked up.',
+                    'Use web search to learn their role, company, public projects, and geography.',
+                    'Reply with plain text only: 3-5 short factual bullets. No markdown headers, no pitch.',
+                ]),
+                tools: [(new WebSearch)->max((int) config('socifusion_ai.web_research.max_searches', 2))],
+            )->prompt(
+                "Research this person for sales context: {$query}",
+                provider: $this->resolveProviderLab(),
+                model: $this->configuredModel(),
+                timeout: (int) config('socifusion_ai.web_research.timeout', 45),
+            );
+
+            $text = trim((string) $response);
+            if ($text === '') {
+                return null;
+            }
+
+            return [
+                'ok' => true,
+                'query' => $query,
+                'title' => $query,
+                'excerpt' => Str::limit($text, 2000),
+                'source' => 'laravel_ai:person_search',
+                'error' => null,
+            ];
+        } catch (\Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
      * @return array{ok:bool, url:string, title:?string, content:string, source:?string, error:?string}|null
      */
     public function fetchUrl(string $url): ?array

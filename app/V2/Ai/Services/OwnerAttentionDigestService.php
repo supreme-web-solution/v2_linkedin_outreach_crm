@@ -8,7 +8,10 @@ use App\Models\User;
 use App\Models\V2Conversation;
 use App\Models\V2Message;
 use App\V2\Ai\Enums\AiAutonomyLevel;
+use App\V2\Ai\Support\WhatsAppNotificationFormatter;
+use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Posts periodic owner-attention digests into the Command Center chat thread.
@@ -20,6 +23,7 @@ class OwnerAttentionDigestService
         private readonly CommandCenterService $commandCenter,
         private readonly AiEmployeeSettingsService $settingsService,
         private readonly CommandCenterPushService $push,
+        private readonly InboxSociHandlingService $handling,
     ) {}
 
     public function maybePost(User $user, int $organizationId, string $trigger = 'scheduled'): bool
@@ -32,6 +36,20 @@ class OwnerAttentionDigestService
             return false;
         }
 
+        $lock = Cache::lock('attention_digest:'.$user->id.':'.$organizationId, 15);
+        if (! $lock->get()) {
+            return false;
+        }
+
+        try {
+            return $this->postIfNeeded($user, $organizationId, $trigger);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function postIfNeeded(User $user, int $organizationId, string $trigger): bool
+    {
         $settings = $this->settingsService->for($user, $organizationId);
         if ($this->settingsService->isBlocked($settings)) {
             return false;
@@ -42,7 +60,8 @@ class OwnerAttentionDigestService
             $this->maybeAutoHandleHotThreads($user, $organizationId);
         }
 
-        $content = $this->buildDigestMessage($user, $organizationId, $autonomy);
+        $snap = $this->awareness->snapshot($user, $organizationId);
+        $content = $this->buildDigestMessage($user, $organizationId, $autonomy, $snap);
         if ($content === null) {
             return false;
         }
@@ -55,6 +74,7 @@ class OwnerAttentionDigestService
         }
 
         $approvalId = $this->latestPendingDraftReplyId($user, $organizationId);
+        $whatsappBody = $this->buildWhatsAppDigest($snap, $autonomy, $approvalId, $user);
 
         $this->push->postAssistant($user, $organizationId, $content, [
             'source' => 'attention_digest',
@@ -62,6 +82,7 @@ class OwnerAttentionDigestService
             'digest_hash' => $hash,
             'tool' => $approvalId ? 'draft_reply' : null,
             'payload' => $approvalId ? ['type' => 'draft_reply'] : null,
+            'whatsapp_body' => $whatsappBody,
         ], $approvalId);
 
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
@@ -102,87 +123,137 @@ class OwnerAttentionDigestService
         }
     }
 
-    public function buildDigestMessage(User $user, int $organizationId, ?AiAutonomyLevel $autonomy = null): ?string
-    {
-        $snap = $this->awareness->snapshot($user, $organizationId);
+    /**
+     * @param  array<string, mixed>  $snap
+     */
+    public function buildDigestMessage(
+        User $user,
+        int $organizationId,
+        ?AiAutonomyLevel $autonomy = null,
+        ?array $snap = null,
+    ): ?string {
+        $snap ??= $this->awareness->snapshot($user, $organizationId);
         $brief = is_array($snap['inbox_brief'] ?? null) ? $snap['inbox_brief'] : [];
         $needYou = (int) ($brief['need_you'] ?? 0);
         $hot = (int) ($brief['hot'] ?? 0);
+        $awaiting = (int) ($brief['awaiting_reply'] ?? 0);
         $pending = $snap['pending_approvals'] ?? [];
         $workflows = $snap['workflows'] ?? [];
         $nurture = is_array($snap['nurture'] ?? null) ? $snap['nurture'] : [];
         $nurtureDue = (int) ($nurture['overdue'] ?? 0) + (int) ($nurture['due_this_week'] ?? 0);
+        $recentHandled = $this->handling->recentHandledBriefs($user, 6, 2);
 
-        if ($needYou <= 0 && $pending === [] && $workflows === [] && $nurtureDue <= 0) {
+        if ($needYou <= 0 && $pending === [] && $workflows === [] && $nurtureDue <= 0 && $recentHandled === []) {
             return null;
         }
 
         $autonomy ??= $this->settingsService->autonomy($this->settingsService->for($user, $organizationId));
         $employee = $this->settingsService->for($user, $organizationId)->employee_name ?: 'Soci';
+        $maxItems = (int) config('socifusion_ai.attention_digest.max_items', 2);
+
         $lines = ["📋 **{$employee} attention digest**"];
 
-        if ($needYou > 0) {
-            $lines[] = "**{$needYou} need you**".($hot > 0 ? " ({$hot} hot)" : '').' — inbox threads awaiting your reply (includes ones you already opened).';
+        if ($recentHandled !== []) {
+            $lines[] = '**Soci handled recently**';
+            foreach ($recentHandled as $row) {
+                $channel = OutreachChannelRegistry::channelLabel((string) ($row['channel'] ?? 'inbox'));
+                $mode = (string) ($row['mode'] ?? '');
+                $action = str_contains($mode, 'auto_sent') ? 'reply sent' : 'draft ready';
+                $lines[] = '• '.$channel.': **'.($row['name'] ?? 'Prospect').'** — '.$action;
+            }
         }
 
-        $hotItems = [];
-        $otherItems = [];
-        foreach ($snap['awaiting_reply'] ?? [] as $row) {
+        if ($awaiting > 0) {
+            $lines[] = "**{$awaiting} inbox thread(s) need you**".($hot > 0 ? " ({$hot} hot)" : '').'.';
+        }
+
+        $allItems = is_array($snap['awaiting_reply'] ?? null) ? $snap['awaiting_reply'] : [];
+        $shown = array_slice($allItems, 0, max(1, $maxItems));
+        $remaining = max(0, count($allItems) - count($shown));
+
+        foreach ($shown as $row) {
             if (! is_array($row)) {
                 continue;
             }
-            $line = $this->formatAttentionLine($row);
-            if (($row['priority'] ?? '') === 'hot') {
-                $hotItems[] = $line;
-            } else {
-                $otherItems[] = $line;
-            }
+            $lines[] = $this->formatAttentionLine($row, compact: true);
         }
 
-        if ($hotItems !== []) {
-            $lines[] = '**Hot**';
-            foreach (array_slice($hotItems, 0, 5) as $line) {
-                $lines[] = $line;
-            }
-        }
-
-        if ($otherItems !== []) {
-            $lines[] = '**Also waiting**';
-            foreach (array_slice($otherItems, 0, 5) as $line) {
-                $lines[] = $line;
-            }
+        if ($remaining > 0) {
+            $lines[] = "_+ {$remaining} other thread(s) waiting — ask Soci for the full attention queue._";
         }
 
         if ($pending !== []) {
-            $lines[] = '**Pending Launch**';
-            foreach ($pending as $row) {
-                if (! is_array($row)) {
-                    continue;
-                }
-                $lines[] = '• Launch #'.($row['approval_id'] ?? '?').' — '.($row['type'] ?? 'plan')
-                    .((($row['goal'] ?? '') !== '') ? ': '.$row['goal'] : '');
+            $first = is_array($pending[0] ?? null) ? $pending[0] : null;
+            if ($first) {
+                $lines[] = 'Pending: Launch #'.($first['approval_id'] ?? '?')
+                    .((($first['goal'] ?? '') !== '') ? ' — '.$first['goal'] : '');
             }
-        }
-
-        foreach ($workflows as $run) {
-            if (! is_array($run)) {
-                continue;
+            if (count($pending) > 1) {
+                $lines[] = '_+ '.(count($pending) - 1).' other pending Launch item(s)._';
             }
-            $lines[] = '⏳ Workflow #'.($run['id'] ?? '?').' is '.($run['status'] ?? 'running')
-                .((($run['outcome'] ?? '') !== '') ? ' ('.$run['outcome'].')' : '').'.';
         }
 
         if ($nurtureDue > 0) {
-            $lines[] = "🌱 **Nurture:** {$nurtureDue} follow-up(s) due — ask me to show the nurture queue.";
+            $lines[] = "🌱 Nurture: {$nurtureDue} due — ask for the nurture queue.";
         }
 
+        $pendingReplyApproval = $this->latestPendingDraftReplyId($user, $organizationId);
         if ($autonomy->value >= AiAutonomyLevel::Autopilot->value) {
-            $lines[] = 'Autopilot is on — Soci drafts and sends inbox replies automatically when possible. Tap **Send** below if a reply is waiting for approval.';
+            $lines[] = $pendingReplyApproval
+                ? 'Autopilot on — tap **Send** below if a reply still needs approval.'
+                : 'Autopilot on — Soci handles hot replies; you oversee.';
         } else {
-            $lines[] = 'Reply here: **LAUNCH #** to approve, or tell me who to draft for (email/name works even if you read the thread).';
+            $lines[] = 'Say who to draft for, or **LAUNCH #** to approve.';
         }
 
         return implode("\n\n", $lines);
+    }
+
+    /**
+     * @param  array<string, mixed>  $snap
+     */
+    public function buildWhatsAppDigest(
+        array $snap,
+        AiAutonomyLevel $autonomy,
+        ?int $approvalId,
+        User $user,
+    ): string {
+        $brief = is_array($snap['inbox_brief'] ?? null) ? $snap['inbox_brief'] : [];
+        $awaiting = (int) ($brief['awaiting_reply'] ?? 0);
+        $hot = (int) ($brief['hot'] ?? 0);
+        $maxItems = (int) config('socifusion_ai.attention_digest.whatsapp_max_items', 2);
+
+        $lines = ['Soci digest'];
+        $recentHandled = $this->handling->recentHandledBriefs($user, 6, 2);
+        foreach ($recentHandled as $row) {
+            $channel = OutreachChannelRegistry::channelLabel((string) ($row['channel'] ?? 'inbox'));
+            $lines[] = 'Handled: '.$channel.' '.($row['name'] ?? 'Prospect');
+        }
+
+        if ($awaiting > 0) {
+            $lines[] = "{$awaiting} need you".($hot > 0 ? " ({$hot} hot)" : '').':';
+        }
+
+        $allItems = is_array($snap['awaiting_reply'] ?? null) ? $snap['awaiting_reply'] : [];
+        $shown = array_slice($allItems, 0, max(1, $maxItems));
+        foreach ($shown as $row) {
+            if (is_array($row)) {
+                $lines[] = WhatsAppNotificationFormatter::compactThreadLine($row);
+            }
+        }
+
+        $remaining = max(0, count($allItems) - count($shown));
+        if ($remaining > 0) {
+            $lines[] = "+ {$remaining} others — open SociFusion inbox or ask Soci.";
+        }
+
+        if ($approvalId) {
+            $lines[] = "Reply needs approval — Launch {$approvalId}.";
+        } elseif ($autonomy->value >= AiAutonomyLevel::Autopilot->value) {
+            $lines[] = 'Autopilot is on.';
+        }
+
+        return implode("\n", $lines);
     }
 
     private function maybeAutoHandleHotThreads(User $user, int $organizationId): void
@@ -192,7 +263,7 @@ class OwnerAttentionDigestService
         }
 
         $snap = $this->awareness->snapshot($user, $organizationId);
-        $handling = app(InboxSociHandlingService::class);
+        $handling = $this->handling;
 
         foreach ($snap['awaiting_reply'] ?? [] as $row) {
             if (! is_array($row) || ($row['priority'] ?? '') !== 'hot') {
@@ -249,7 +320,7 @@ class OwnerAttentionDigestService
     /**
      * @param  array<string, mixed>  $row
      */
-    private function formatAttentionLine(array $row): string
+    private function formatAttentionLine(array $row, bool $compact = false): string
     {
         $name = (string) ($row['prospect_name'] ?? 'Prospect');
         $email = trim((string) ($row['prospect_email'] ?? ''));
@@ -258,9 +329,22 @@ class OwnerAttentionDigestService
         $inboxUrl = (string) ($row['inbox_url'] ?? '');
         $campaign = trim((string) ($row['campaign_name'] ?? ''));
         $readNote = ($row['is_unread'] ?? true) ? '' : ' *(read — still needs reply)*';
+        $hot = ($row['priority'] ?? '') === 'hot' ? '🔥 ' : '';
 
         $identity = $email !== '' ? "**{$name}** <{$email}>" : "**{$name}**";
         $tail = $campaign !== '' ? " · {$campaign}" : '';
+
+        if ($compact) {
+            $shortPreview = \Illuminate\Support\Str::limit(
+                trim(preg_replace('/\s+/', ' ', preg_replace('/^URL:\s*/m', '', $preview) ?? '') ?? ''),
+                90,
+                '…',
+            );
+
+            return $hot."• {$channel}: {$identity}{$readNote}{$tail}"
+                .($shortPreview !== '' ? "\n  > {$shortPreview}" : '')
+                .($inboxUrl !== '' ? "\n  [Open inbox]({$inboxUrl})" : '');
+        }
 
         $line = "• {$channel}: {$identity}{$readNote}{$tail}";
         if ($preview !== '') {

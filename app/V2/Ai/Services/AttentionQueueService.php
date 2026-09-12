@@ -97,12 +97,8 @@ class AttentionQueueService
             ];
         }
 
-        usort($classified, function (array $a, array $b) {
-            $order = ['hot' => 0, 'needs_judgment' => 1, 'low_priority' => 2];
-            $pa = $order[$a['classification']['priority']] ?? 3;
-            $pb = $order[$b['classification']['priority']] ?? 3;
-
-            return $pa <=> $pb;
+        usort($classified, function (array $a, array $b) use ($unreadMap) {
+            return $this->attentionScore($b, $unreadMap) <=> $this->attentionScore($a, $unreadMap);
         });
 
         $items = [];
@@ -214,5 +210,40 @@ class AttentionQueueService
             'summary' => $summary,
             'inbox_brief' => $inboxBrief,
         ];
+    }
+
+    /**
+     * @param  array{conversation: V2Conversation, classification: array<string, mixed>, body?: string}  $row
+     * @param  array<int, bool>  $unreadMap
+     */
+    private function attentionScore(array $row, array $unreadMap): int
+    {
+        /** @var V2Conversation $conversation */
+        $conversation = $row['conversation'];
+        $priority = (string) ($row['classification']['priority'] ?? '');
+        $body = Str::lower(trim((string) ($row['body'] ?? '')));
+
+        $score = match ($priority) {
+            'hot' => 100_000,
+            'needs_judgment' => 50_000,
+            'low_priority' => 10_000,
+            default => 0,
+        };
+
+        if ((string) $conversation->provider === 'email') {
+            $score += 5_000;
+        }
+
+        if ($unreadMap[$conversation->id] ?? false) {
+            $score += 2_000;
+        }
+
+        if (str_contains($body, 'http') || str_contains($body, 'tailor') || str_contains($body, 'look me up')) {
+            $score += 3_000;
+        }
+
+        $score += (int) ($conversation->last_message_at?->timestamp ?? 0);
+
+        return $score;
     }
 }

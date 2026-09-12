@@ -107,6 +107,54 @@ class OwnerAttentionDigestServiceTest extends TestCase
         $this->assertFalse(app(OwnerAttentionDigestService::class)->maybePost($user, $org->id, 'scheduled'));
     }
 
+    public function test_digest_lists_top_items_and_others_count(): void
+    {
+        [$user, $org, $emailConversation] = $this->fixtures();
+
+        $campaignId = (int) V2OutreachCampaign::query()->where('user_id', $user->id)->value('id');
+
+        for ($i = 0; $i < 3; $i++) {
+            $conversation = V2Conversation::query()->create([
+                'user_id' => $user->id,
+                'provider' => 'linkedin',
+                'provider_chat_id' => 'linkedin-extra-'.$i,
+                'status' => 'active',
+                'last_message_at' => now()->subMinutes($i + 1),
+                'meta' => [
+                    'source' => 'unified_inbox',
+                    'outreach_campaign_id' => $campaignId,
+                    'prospect_name' => 'LinkedIn Lead '.$i,
+                ],
+            ]);
+
+            V2Message::query()->create([
+                'conversation_id' => $conversation->id,
+                'direction' => 'inbound',
+                'body' => 'Hello from lead '.$i,
+                'received_at' => now()->subMinutes($i + 1),
+            ]);
+        }
+
+        V2Message::query()->create([
+            'conversation_id' => $emailConversation->id,
+            'direction' => 'inbound',
+            'body' => 'Hot email please tailor https://engr.phanrise.com/',
+            'received_at' => now(),
+        ]);
+
+        $service = app(OwnerAttentionDigestService::class);
+        $content = $service->buildDigestMessage($user, $org->id);
+
+        $this->assertNotNull($content);
+        $this->assertStringContainsString('other thread(s) waiting', $content);
+        $this->assertLessThanOrEqual(2, substr_count($content, '[Open inbox]('));
+
+        $snap = app(\App\V2\Ai\Services\CommandCenterAwarenessService::class)->snapshot($user, $org->id);
+        $whatsapp = $service->buildWhatsAppDigest($snap, \App\V2\Ai\Enums\AiAutonomyLevel::Autopilot, null, $user);
+        $this->assertStringContainsString('+', $whatsapp);
+        $this->assertStringNotContainsString('app.socifusion.com', $whatsapp);
+    }
+
     /**
      * @return array{0: User, 1: V2Organization, 2: V2Conversation}
      */

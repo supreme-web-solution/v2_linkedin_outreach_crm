@@ -83,7 +83,8 @@ class InboxConversationNotifier
             if ($draft !== '') {
                 $lines[] = "> {$draft}";
             }
-            $lines[] = "[Open thread]({$inboxUrl})";
+            $lines[] = 'No action needed — open SociFusion inbox to review the thread.';
+            $approvalId = null;
         } elseif ($approvalId) {
             $lines[] = 'Proposed reply — tap **Send** to approve:';
             if ($draft !== '') {
@@ -98,6 +99,12 @@ class InboxConversationNotifier
             $lines[] = "[Open inbox to reply]({$inboxUrl})";
         }
 
+        $whatsappBody = \App\V2\Ai\Support\WhatsAppNotificationFormatter::plain(implode("\n", array_filter([
+            "📬 {$channel} from {$prospect} ({$priority})",
+            $autoSent ? 'Soci sent a reply automatically.' : ($approvalId ? "Draft ready — Launch {$approvalId}." : 'Draft ready for review.'),
+            $autoSent && $draft !== '' ? \Illuminate\Support\Str::limit($draft, 200, '…') : null,
+        ])));
+
         $this->push->postAssistant($user, $organizationId, implode("\n\n", $lines), [
             'source' => 'proactive_inbound',
             'v2_conversation_id' => $v2Conversation->id,
@@ -105,6 +112,7 @@ class InboxConversationNotifier
             'classification_priority' => $classification['priority'] ?? null,
             'tool' => $approvalId ? 'draft_reply' : null,
             'payload' => $approvalId ? ['type' => 'draft_reply'] : null,
+            'whatsapp_body' => $whatsappBody,
         ], $approvalId);
     }
 }

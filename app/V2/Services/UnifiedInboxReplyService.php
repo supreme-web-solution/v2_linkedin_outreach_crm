@@ -97,12 +97,24 @@ class UnifiedInboxReplyService
             throw new \RuntimeException('OpenAI is not configured for inbox reply drafting.');
         }
 
+        if ($lead) {
+            try {
+                $this->prospectIntelligence->ensureEnrichedForReply($lead, $conversation, $inboundBody);
+                $lead = $lead->fresh() ?? $lead;
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
         $draft = $this->generateAiReply($conversation, $inboundBody, $aiContext, $user, $lead, $campaign);
         if ($draft === '') {
             throw new \RuntimeException('Could not generate a reply draft. Check campaign AI context in outreach settings.');
         }
 
-        $prospectName = trim((string) ($lead?->full_name ?? Arr::get($meta, 'prospect_name', 'Prospect')));
+        $prospectName = $lead
+            ? ($this->prospectMemory->preferredGreetingName($lead)
+                ?? trim((string) ($lead->full_name ?? Arr::get($meta, 'prospect_name', 'Prospect'))))
+            : trim((string) Arr::get($meta, 'prospect_name', 'Prospect'));
 
         return [
             'draft' => $draft,
@@ -365,7 +377,10 @@ class UnifiedInboxReplyService
         ?V2OutreachLead $lead,
         ?V2OutreachCampaign $campaign,
     ): string {
-        $leadName = trim((string) ($lead?->full_name ?? Arr::get($conversation->meta ?? [], 'prospect_name', '')));
+        $leadName = $lead
+            ? ($this->prospectMemory->preferredGreetingName($lead)
+                ?? trim((string) ($lead->full_name ?? Arr::get($conversation->meta ?? [], 'prospect_name', ''))))
+            : trim((string) Arr::get($conversation->meta ?? [], 'prospect_name', ''));
         if ($leadName === '') {
             $leadName = 'there';
         }
@@ -402,6 +417,8 @@ class UnifiedInboxReplyService
                 }
             }
 
+            $researchRequired = $lead && $this->prospectMemory->hasResearchEvidence($lead);
+
             return $this->openai->generateInboxReply(
                 (string) $conversation->provider,
                 $aiContext,
@@ -417,6 +434,7 @@ class UnifiedInboxReplyService
                         $orgId,
                     ),
                     'agent_notes' => trim(implode("\n\n", array_filter($agentNotes))),
+                    'research_required' => $researchRequired,
                 ],
             );
         } catch (\Throwable) {

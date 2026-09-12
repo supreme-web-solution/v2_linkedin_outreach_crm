@@ -130,8 +130,10 @@ class ProactiveInboundReplyService
                 return;
             }
 
-            $approvalId = isset($staged['approval_id']) ? (int) $staged['approval_id'] : null;
             $autoSent = (bool) ($staged['auto_sent'] ?? false);
+            $approvalId = $autoSent
+                ? null
+                : (isset($staged['approval_id']) ? (int) $staged['approval_id'] : null);
             $mode = $autoSent ? 'auto_sent' : 'draft_staged';
             $draftData['draft'] = (string) (($staged['plan']['draft_text'] ?? '') ?: $draftData['draft']);
         }

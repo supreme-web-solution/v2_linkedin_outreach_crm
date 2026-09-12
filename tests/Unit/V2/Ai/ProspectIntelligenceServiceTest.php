@@ -40,6 +40,34 @@ class ProspectIntelligenceServiceTest extends TestCase
         $this->assertNotEmpty($dossier['conversation_facts']);
     }
 
+    public function test_inbound_with_url_still_captures_identity_and_prose_facts(): void
+    {
+        Http::fake([
+            'r.jina.ai/*' => Http::response("Title: Phanrise\n\nConstruction Trust Platform for builders.", 200),
+            '*' => Http::response('<html><body>fallback</body></html>', 200),
+        ]);
+        config(['ai.providers.jina.key' => 'test-jina']);
+
+        [$user, $lead, $conversation] = $this->fixtures();
+
+        $body = 'get me tailored stuff https://engr.phanrise.com/ you can look me up, i am william victor from Nigeria';
+        $dossier = app(ProspectIntelligenceService::class)->processInbound($lead, $conversation, $body);
+
+        $this->assertSame('William Victor', $dossier['identity']['preferred_name'] ?? null);
+        $this->assertSame('Nigeria', $dossier['identity']['location'] ?? null);
+        $this->assertNotEmpty($dossier['scraped_pages']);
+        $this->assertNotEmpty($dossier['conversation_facts']);
+    }
+
+    public function test_extract_identity_handles_typos(): void
+    {
+        $service = app(ProspectIntelligenceService::class);
+        $identity = $service->extractIdentity('ia m william victor from nigeria');
+
+        $this->assertSame('William Victor', $identity['name']);
+        $this->assertSame('Nigeria', $identity['location']);
+    }
+
     /**
      * @return array{0: User, 1: V2OutreachLead, 2: V2Conversation}
      */

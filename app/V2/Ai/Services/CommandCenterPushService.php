@@ -6,6 +6,8 @@ use App\Models\AiChannelIdentity;
 use App\Models\AiMessage;
 use App\Models\User;
 use App\V2\Ai\Integrations\ZernioClient;
+use App\V2\Ai\Support\WhatsAppNotificationFormatter;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -32,6 +34,10 @@ class CommandCenterPushService
         $content = trim($content);
         $conversation = $this->commandCenter->conversation($user, $organizationId);
 
+        if (($meta['auto_sent'] ?? false) === true) {
+            $approvalId = null;
+        }
+
         $messageMeta = array_merge([
             'channel' => 'web',
         ], $meta);
@@ -47,7 +53,7 @@ class CommandCenterPushService
             'meta' => $messageMeta,
         ]);
 
-        if ($mirrorWhatsApp ?? $this->shouldMirrorWhatsApp($meta)) {
+        if ($mirrorWhatsApp ?? $this->shouldMirrorWhatsApp($user, $meta)) {
             $this->mirrorToWhatsApp($user, $organizationId, $content, $approvalId, $meta);
         }
 
@@ -83,6 +89,20 @@ class CommandCenterPushService
             return false;
         }
 
+        if (($meta['auto_sent'] ?? false) === true) {
+            $approvalId = null;
+        }
+
+        $body = is_string($meta['whatsapp_body'] ?? null) && trim($meta['whatsapp_body']) !== ''
+            ? trim($meta['whatsapp_body'])
+            : $this->whatsappBody($content, $approvalId, $meta);
+
+        $hash = hash('sha256', $body);
+        $cacheKey = 'cc_whatsapp_push:'.$user->id;
+        if (Cache::get($cacheKey) === $hash) {
+            return false;
+        }
+
         $buttons = null;
         if ($approvalId !== null && $approvalId > 0) {
             $tool = is_string($meta['tool'] ?? null) ? $meta['tool'] : null;
@@ -90,10 +110,15 @@ class CommandCenterPushService
             $buttons = $this->zernio->approvalButtons($approvalId, $tool, $payload);
         }
 
-        $body = $this->whatsappBody($content, $approvalId);
         $sent = $this->zernio->sendToIdentity($identity, $body, $buttons);
+        if ($sent) {
+            Cache::put($cacheKey, $hash, now()->addMinutes(3));
 
-        if (! $sent) {
+            $source = (string) ($meta['source'] ?? '');
+            if ($source === 'proactive_inbound') {
+                Cache::put('cc_whatsapp_proactive:'.$user->id, now()->toIso8601String(), now()->addMinutes(10));
+            }
+        } else {
             Log::warning('[CommandCenterPush] WhatsApp mirror failed', [
                 'user_id' => $user->id,
                 'organization_id' => $organizationId,
@@ -107,9 +132,13 @@ class CommandCenterPushService
     /**
      * @param  array<string, mixed>  $meta
      */
-    private function shouldMirrorWhatsApp(array $meta): bool
+    private function shouldMirrorWhatsApp(User $user, array $meta): bool
     {
         $source = (string) ($meta['source'] ?? '');
+
+        if ($source === 'attention_digest' && $this->recentProactiveWhatsApp($user->id)) {
+            return (bool) config('socifusion_ai.attention_digest.whatsapp_after_proactive', false);
+        }
 
         return match ($source) {
             'attention_digest' => (bool) config('socifusion_ai.attention_digest.mirror_whatsapp', true),
@@ -118,10 +147,34 @@ class CommandCenterPushService
         };
     }
 
-    private function whatsappBody(string $content, ?int $approvalId): string
+    private function recentProactiveWhatsApp(int $userId): bool
     {
-        $plain = trim(strip_tags(str_replace(['**', '[', ']', '(', ')'], ' ', $content)));
-        $plain = preg_replace('/\s+/', ' ', $plain) ?? $plain;
+        if ($userId <= 0) {
+            return false;
+        }
+
+        $last = Cache::get('cc_whatsapp_proactive:'.$userId);
+        if (! is_string($last) || $last === '') {
+            return false;
+        }
+
+        try {
+            return \Illuminate\Support\Carbon::parse($last)->gte(now()->subMinutes(10));
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    private function whatsappBody(string $content, ?int $approvalId, array $meta = []): string
+    {
+        $plain = WhatsAppNotificationFormatter::plain($content);
+
+        if (($meta['auto_sent'] ?? false) === true) {
+            return $plain;
+        }
 
         if ($approvalId !== null && $approvalId > 0 && ! str_contains($plain, (string) $approvalId)) {
             $plain = trim($plain."\n\nTap Send to approve (Launch {$approvalId}).");
