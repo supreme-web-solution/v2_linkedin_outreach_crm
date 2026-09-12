@@ -47,7 +47,13 @@ class WorkflowConversationNotifierTest extends TestCase
             'result' => ['requested' => 50, 'discovered_this_run' => 50],
             'meta' => [
                 'platforms_searched' => ['instagram'],
-                'discovery_list_hash' => 'ig-list-abc',
+                'discovery_channel_lists' => [[
+                    'channel' => 'instagram',
+                    'list_hash' => 'ig-list-abc',
+                    'list_src' => 'csv',
+                    'list_name' => 'IG leads',
+                    'total_leads' => 25,
+                ]],
                 'sample_profiles' => [[
                     'name' => 'Coffee Brand',
                     'username' => 'coffeebrand',

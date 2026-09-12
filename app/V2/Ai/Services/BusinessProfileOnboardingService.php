@@ -3,6 +3,7 @@
 namespace App\V2\Ai\Services;
 
 use App\Models\User;
+use App\V2\Ai\Support\ResearchUrlValidator;
 use App\V2\Services\CallCalendarService;
 use App\V2\Services\CallOrchestrationService;
 use App\V2\Services\JinaReaderService;
@@ -32,7 +33,7 @@ class BusinessProfileOnboardingService
         ?UploadedFile $file = null,
     ): array {
         $description = trim((string) $description);
-        $websiteUrl = trim((string) $websiteUrl);
+        $websiteUrl = ResearchUrlValidator::sanitize(trim((string) $websiteUrl)) ?? '';
 
         if ($description === '' && $websiteUrl === '' && $file === null) {
             throw new \InvalidArgumentException('Tell us about your business — paste text, upload a file, or drop a website link.');

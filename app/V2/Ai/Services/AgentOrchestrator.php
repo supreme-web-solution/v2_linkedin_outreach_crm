@@ -599,40 +599,49 @@ class AgentOrchestrator
         $postedProgressFinal = false;
         $reply = '';
 
-        $commandCenterResearch = app(CommandCenterResearchService::class);
-        if ($commandCenterResearch->shouldResearch($promptMessage)) {
-            if ($channel === 'web') {
-                $this->webChatProcessing->update($conversation, 'research', 'Researching link & building context…');
+        $workflowDiscoveryAck = isset($plan['workflow_run_id'])
+            && ($plan['required_outcome'] ?? '') === 'find_only';
+
+        if ($workflowDiscoveryAck) {
+            $reply = app(WorkflowDiscoveryAckService::class)->build($user, $organizationId, $plan);
+        } else {
+            $commandCenterResearch = app(CommandCenterResearchService::class);
+            if ($commandCenterResearch->shouldResearch($promptMessage)) {
+                if ($channel === 'web') {
+                    $this->webChatProcessing->update($conversation, 'research', 'Researching link & building context…');
+                }
+                $promptMessage = $commandCenterResearch->enrichTurn($conversation, $promptMessage, $promptMessage);
             }
-            $promptMessage = $commandCenterResearch->enrichTurn($conversation, $promptMessage, $promptMessage);
         }
 
         try {
-            $providers = app(AiProviderChain::class)->forAgent();
-            $response = (new SociFusionAgent($context))->prompt(
-                $promptMessage,
-                provider: $providers !== [] ? $providers : null,
-            );
-            $reply = trim((string) $response);
-
-            if ($ledger->ownsTurnResult()) {
-                $reply = $ledger->report();
-                $latestApproval = null;
-            } else {
-                $latestApproval = $this->commandCenter->pendingApprovals($user, $organizationId)->first();
-                $latestApproval = $this->maybeAutoLaunchOutreachPlan(
-                    $user,
-                    $organizationId,
-                    $reply,
-                    $latestApproval,
+            if (! $workflowDiscoveryAck) {
+                $providers = app(AiProviderChain::class)->forAgent();
+                $response = (new SociFusionAgent($context))->prompt(
                     $promptMessage,
+                    provider: $providers !== [] ? $providers : null,
                 );
-                $latestApproval = $this->maybeAutoSendDraftReply(
-                    $user,
-                    $organizationId,
-                    $reply,
-                    $latestApproval,
-                );
+                $reply = trim((string) $response);
+
+                if ($ledger->ownsTurnResult()) {
+                    $reply = $ledger->report();
+                    $latestApproval = null;
+                } else {
+                    $latestApproval = $this->commandCenter->pendingApprovals($user, $organizationId)->first();
+                    $latestApproval = $this->maybeAutoLaunchOutreachPlan(
+                        $user,
+                        $organizationId,
+                        $reply,
+                        $latestApproval,
+                        $promptMessage,
+                    );
+                    $latestApproval = $this->maybeAutoSendDraftReply(
+                        $user,
+                        $organizationId,
+                        $reply,
+                        $latestApproval,
+                    );
+                }
             }
         } catch (Throwable $e) {
             report($e);

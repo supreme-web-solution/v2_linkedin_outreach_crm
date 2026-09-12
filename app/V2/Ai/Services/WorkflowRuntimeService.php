@@ -336,12 +336,15 @@ class WorkflowRuntimeService
                 $meta['discovery_attempts'] = (int) ($meta['discovery_attempts'] ?? 0) + 1;
                 $delta = is_array($stepResult['state_delta'] ?? null) ? $stepResult['state_delta'] : [];
                 $providerSaved = (int) ($stepResult['provider_returned'] ?? $stepResult['saved_reported'] ?? 0);
-                $fromState = max(0, (int) ($delta['candidate_delta'] ?? 0));
-                $meta['cumulative_candidate_delta'] = max(
-                    (int) ($meta['cumulative_candidate_delta'] ?? 0),
-                    $fromState,
-                    $providerSaved,
-                );
+                if ($providerSaved > 0) {
+                    $meta['cumulative_candidate_delta'] = (int) ($meta['cumulative_candidate_delta'] ?? 0) + $providerSaved;
+                } else {
+                    $fromState = max(0, (int) ($delta['candidate_delta'] ?? 0));
+                    $meta['cumulative_candidate_delta'] = max(
+                        (int) ($meta['cumulative_candidate_delta'] ?? 0),
+                        $fromState,
+                    );
+                }
             }
 
             if ($stepType === WorkflowStepTypes::DISCOVER) {
@@ -359,18 +362,28 @@ class WorkflowRuntimeService
                 if (is_array($stepResult['sample_profiles'] ?? null) && $stepResult['sample_profiles'] !== []) {
                     $meta['sample_profiles'] = $stepResult['sample_profiles'];
                 }
-                if (empty($meta['discovery_list_hash']) && is_array($stepResult['discovery_lists'] ?? null)) {
-                    foreach ($stepResult['discovery_lists'] as $listRow) {
-                        if (! is_array($listRow) || empty($listRow['list_hash'])) {
-                            continue;
-                        }
-                        $meta['discovery_list_hash'] = (string) $listRow['list_hash'];
-                        $meta['discovery_list_src'] = (string) ($listRow['list_src'] ?? 'sn');
-                        $meta['discovery_list_name'] = (string) ($listRow['list_name'] ?? '');
-                        if (($listRow['primary_channel'] ?? '') === 'linkedin') {
-                            break;
-                        }
+                $freshLists = is_array($stepResult['discovery_lists'] ?? null) ? $stepResult['discovery_lists'] : [];
+                if ($freshLists !== []) {
+                    $meta['discovery_channel_lists'] = array_values(array_filter(array_map(
+                        fn (array $row) => [
+                            'channel' => (string) ($row['primary_channel'] ?? ''),
+                            'list_hash' => (string) ($row['list_hash'] ?? ''),
+                            'list_src' => (string) ($row['list_src'] ?? ''),
+                            'list_name' => (string) ($row['list_name'] ?? ''),
+                            'total_leads' => (int) ($row['total_leads'] ?? 0),
+                        ],
+                        array_filter($freshLists, fn ($row) => is_array($row) && ! empty($row['list_hash'])),
+                    )));
+                    if (count($freshLists) === 1) {
+                        $only = $freshLists[0];
+                        $meta['discovery_list_hash'] = (string) ($only['list_hash'] ?? '');
+                        $meta['discovery_list_src'] = (string) ($only['list_src'] ?? 'sn');
+                        $meta['discovery_list_name'] = (string) ($only['list_name'] ?? '');
                     }
+                } elseif (! empty($stepResult['list_hash'])) {
+                    $meta['discovery_list_hash'] = (string) $stepResult['list_hash'];
+                    $meta['discovery_list_src'] = (string) ($stepResult['list_src'] ?? 'sn');
+                    $meta['discovery_list_name'] = (string) ($stepResult['list_name'] ?? '');
                 }
             }
 

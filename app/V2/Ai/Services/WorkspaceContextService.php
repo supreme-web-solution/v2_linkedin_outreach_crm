@@ -4,6 +4,7 @@ namespace App\V2\Ai\Services;
 
 use App\Models\AiEmployeeSetting;
 use App\Models\User;
+use App\V2\Ai\Support\ResearchUrlValidator;
 use App\V2\Services\CallCalendarService;
 use App\V2\Services\CallOrchestrationService;
 use Illuminate\Support\Arr;
@@ -43,6 +44,10 @@ class WorkspaceContextService
     {
         $meta = is_array($settings->meta) ? $settings->meta : [];
         $profile = is_array($meta['business_profile'] ?? null) ? $meta['business_profile'] : [];
+
+        if (array_key_exists('website_url', $profile)) {
+            $profile['website_url'] = ResearchUrlValidator::sanitize($profile['website_url'] ?? null);
+        }
 
         return $profile;
     }
@@ -122,7 +127,7 @@ class WorkspaceContextService
         $profile = $this->businessProfile($settings);
         $raw = trim((string) ($profile['raw_text'] ?? ''));
         $summary = trim((string) ($profile['summary'] ?? ''));
-        $website = trim((string) ($profile['website_url'] ?? '')) ?: null;
+        $website = ResearchUrlValidator::sanitize($profile['website_url'] ?? null);
 
         $offer = $summary !== '' ? $summary : Str::limit($raw, 500);
         $notes = $raw !== '' && $summary !== '' && $raw !== $summary

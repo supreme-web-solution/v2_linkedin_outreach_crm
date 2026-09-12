@@ -4,6 +4,7 @@ namespace App\V2\Ai\Services;
 
 use App\Models\AiConversation;
 use App\Models\V2OutreachLead;
+use App\V2\Ai\Support\ResearchUrlValidator;
 use App\V2\Services\CompanyWebSearchService;
 use App\V2\Services\WebScrapeChainService;
 use Illuminate\Support\Carbon;
@@ -155,7 +156,7 @@ class CommandCenterResearchService
             }
         }
 
-        return array_values(array_unique($urls));
+        return ResearchUrlValidator::filterList(array_values(array_unique($urls)));
     }
 
     /**

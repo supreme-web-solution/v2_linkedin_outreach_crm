@@ -133,23 +133,23 @@ class WorkflowConversationNotifier
         ?string $platforms,
         string $savedLine,
     ): array {
-        $listHash = trim((string) ($meta['discovery_list_hash'] ?? ''));
-        $listUrl = $listHash !== '' ? url('/leads?list='.$listHash) : url('/leads');
+        $channelLists = is_array($meta['discovery_channel_lists'] ?? null) ? $meta['discovery_channel_lists'] : [];
         $samples = is_array($meta['sample_profiles'] ?? null) ? $meta['sample_profiles'] : [];
 
         $webLines = array_filter([
             "✅ Workflow #{$run->id} finished discovery.",
             $platforms ? "Platforms searched: {$platforms}." : null,
             $savedLine,
-            "[Open list in Leads]({$listUrl})",
         ]);
-
         $waLines = array_filter([
             "Workflow #{$run->id} finished discovery.",
             $platforms ? "Platforms: {$platforms}." : null,
             $savedLine,
-            'List: '.$listUrl,
         ]);
+
+        [$webListLines, $waListLines] = $this->formatListLinks($channelLists, $meta);
+        $webLines = array_merge($webLines, $webListLines);
+        $waLines = array_merge($waLines, $waListLines);
 
         [$webSampleLines, $waSampleLines] = $this->formatSampleProfiles($samples);
         if ($webSampleLines !== []) {
@@ -163,6 +163,44 @@ class WorkflowConversationNotifier
         $waLines[] = 'Reply here to start conversations for this list.';
 
         return [implode("\n", $webLines), implode("\n", $waLines)];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $channelLists
+     * @param  array<string, mixed>  $meta
+     * @return array{0:list<string>,1:list<string>}
+     */
+    private function formatListLinks(array $channelLists, array $meta): array
+    {
+        $web = [];
+        $wa = [];
+
+        if ($channelLists !== []) {
+            foreach ($channelLists as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $hash = trim((string) ($row['list_hash'] ?? ''));
+                if ($hash === '') {
+                    continue;
+                }
+                $channel = ucfirst(trim((string) ($row['channel'] ?? 'Leads')));
+                $count = (int) ($row['total_leads'] ?? 0);
+                $url = url('/leads?list='.$hash);
+                $label = $count > 0 ? "{$channel} ({$count})" : $channel;
+                $web[] = "• [{$label}]({$url})";
+                $wa[] = "• {$label}: {$url}";
+            }
+
+            return [$web, $wa];
+        }
+
+        $listHash = trim((string) ($meta['discovery_list_hash'] ?? ''));
+        $url = $listHash !== '' ? url('/leads?list='.$listHash) : url('/leads');
+        $web[] = '[Open list in Leads]('.$url.')';
+        $wa[] = 'List: '.$url;
+
+        return [$web, $wa];
     }
 
     /**

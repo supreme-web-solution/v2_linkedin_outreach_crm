@@ -63,7 +63,7 @@ class DiscoverProspectsService
             $preferFresh = true;
         }
 
-        if (! $this->insideParallel && $this->shouldUseParallelDiscovery($user, $platform)) {
+        if (! $this->insideParallel && $this->shouldUseParallelDiscovery($user, $platform, $query)) {
             $this->insideParallel = true;
             try {
                 return $this->discoverParallel(
@@ -83,6 +83,10 @@ class DiscoverProspectsService
             } finally {
                 $this->insideParallel = false;
             }
+        }
+
+        if (in_array($platform, ['auto', 'default', ''], true)) {
+            $platform = $this->resolveAutoSingleChannel($user);
         }
 
         if (in_array($platform, ['instagram', 'ig'], true)) {
@@ -589,7 +593,7 @@ class DiscoverProspectsService
         return null;
     }
 
-    private function shouldUseParallelDiscovery(User $user, string $platform): bool
+    private function shouldUseParallelDiscovery(User $user, string $platform, string $query = ''): bool
     {
         $platform = Str::lower(trim($platform));
 
@@ -597,17 +601,23 @@ class DiscoverProspectsService
             return true;
         }
 
+        if (app(UserTurnIntentService::class)->wantsMultichannelDiscovery($query)) {
+            return count($this->parallelDiscoveryChannels($user)) >= 2;
+        }
+
         // Explicit single-channel requests must never fan out to Instagram/LinkedIn together.
         if (in_array($platform, ['linkedin', 'li', 'instagram', 'ig'], true)) {
             return false;
         }
 
-        if (in_array($platform, ['auto', 'default', ''], true)) {
-            // Auto parallel only when both are connected AND caller did not force single-channel.
-            return count($this->parallelDiscoveryChannels($user)) >= 2;
-        }
-
         return false;
+    }
+
+    private function resolveAutoSingleChannel(User $user): string
+    {
+        $channels = $this->parallelDiscoveryChannels($user);
+
+        return $channels[0] ?? 'linkedin';
     }
 
     /**
@@ -615,17 +625,7 @@ class DiscoverProspectsService
      */
     private function parallelDiscoveryChannels(User $user): array
     {
-        $channels = [];
-
-        if ($this->channelGuard->isChannelConnected($user->id, 'linkedin')) {
-            $channels[] = 'linkedin';
-        }
-
-        if ($this->channelGuard->isChannelConnected($user->id, 'instagram') && $this->mindcase->configured()) {
-            $channels[] = 'instagram';
-        }
-
-        return $channels;
+        return app(PlatformAllocationService::class)->searchableChannels($user);
     }
 
     /**
