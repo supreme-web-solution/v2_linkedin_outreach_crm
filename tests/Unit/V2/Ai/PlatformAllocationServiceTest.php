@@ -7,7 +7,7 @@ use PHPUnit\Framework\TestCase;
 
 class PlatformAllocationServiceTest extends TestCase
 {
-    public function test_five_splits_three_linkedin_and_two_instagram(): void
+    public function test_five_splits_evenly_without_linkedin_bias(): void
     {
         $service = new PlatformAllocationService(
             $this->createMock(\App\V2\Outreach\OutreachChannelGuard::class),
@@ -15,7 +15,7 @@ class PlatformAllocationServiceTest extends TestCase
         );
 
         $this->assertSame(
-            ['linkedin' => 3, 'instagram' => 2],
+            ['instagram' => 3, 'linkedin' => 2],
             $service->split(5, ['linkedin', 'instagram']),
         );
     }
@@ -33,7 +33,7 @@ class PlatformAllocationServiceTest extends TestCase
         );
 
         $this->assertSame(
-            ['linkedin' => 10, 'instagram' => 10],
+            ['instagram' => 10, 'linkedin' => 10],
             $service->split(20, ['linkedin', 'instagram']),
         );
     }

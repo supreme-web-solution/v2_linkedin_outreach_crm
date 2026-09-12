@@ -53,4 +53,30 @@ class PostExecutionVerifierServiceTest extends TestCase
         $this->assertFalse($result['ok']);
         $this->assertNotEmpty($result['warnings']);
     }
+
+    public function test_skips_channel_eligible_warning_while_workflow_discovery_runs(): void
+    {
+        $user = User::factory()->create();
+        $org = V2Organization::query()->create([
+            'name' => 'Async Org',
+            'slug' => 'async-org-'.uniqid(),
+            'owner_id' => $user->id,
+        ]);
+
+        $svc = app(PostExecutionVerifierService::class);
+        $snapshot = $svc->snapshot($user, $org->id);
+
+        $result = $svc->verify($user, $org->id, [
+            'required_outcome' => 'find_only',
+            'workflow_run_id' => 5,
+            'measurable_expectations' => ['target_count' => 50],
+            'state_evaluation' => [
+                'channel_eligible_count' => 0,
+                'channel' => 'instagram',
+            ],
+        ], $snapshot, $snapshot);
+
+        $this->assertTrue($result['ok']);
+        $this->assertSame([], $result['warnings']);
+    }
 }

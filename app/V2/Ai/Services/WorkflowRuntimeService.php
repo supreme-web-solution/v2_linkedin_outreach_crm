@@ -356,6 +356,9 @@ class WorkflowRuntimeService
                 if (is_array($stepResult['platforms_searched'] ?? null)) {
                     $meta['platforms_searched'] = $stepResult['platforms_searched'];
                 }
+                if (is_array($stepResult['sample_profiles'] ?? null) && $stepResult['sample_profiles'] !== []) {
+                    $meta['sample_profiles'] = $stepResult['sample_profiles'];
+                }
                 if (empty($meta['discovery_list_hash']) && is_array($stepResult['discovery_lists'] ?? null)) {
                     foreach ($stepResult['discovery_lists'] as $listRow) {
                         if (! is_array($listRow) || empty($listRow['list_hash'])) {

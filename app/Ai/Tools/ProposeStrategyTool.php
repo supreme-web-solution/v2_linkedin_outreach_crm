@@ -7,8 +7,10 @@ use App\V2\Ai\Enums\AiToolPermission;
 use App\V2\Ai\Services\ActionApprovalService;
 use App\V2\Ai\Services\CommandCenterService;
 use App\V2\Ai\Services\DiscoverProspectsService;
+use App\V2\Ai\Services\DiscoveryPlatformResolver;
 use App\V2\Ai\Services\MultiChannelCampaignStagingService;
 use App\V2\Ai\Services\PlanContentService;
+use App\V2\Ai\Services\TurnPlanContext;
 use App\V2\Ai\Support\PlanLeadList;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Ai\Tools\Request;
@@ -92,7 +94,12 @@ class ProposeStrategyTool extends GatedTool
                 query: $goal,
                 targetCount: $userCount ?? (isset($request['target_count']) ? (int) $request['target_count'] : null),
                 preferFresh: $explicitTarget || $userCount !== null,
-                platform: $intent->wantsInstagramDiscovery($intentSource) ? 'auto' : 'linkedin',
+                platform: app(DiscoveryPlatformResolver::class)->resolve(
+                    is_array(app(TurnPlanContext::class)->get()) ? app(TurnPlanContext::class)->get() : [],
+                    ['platform' => (string) ($request['platform'] ?? 'auto')],
+                    $goal,
+                    true,
+                ),
             );
 
             if (($discovery['mode'] ?? '') === 'parallel' && ! empty($discovery['lists'])) {

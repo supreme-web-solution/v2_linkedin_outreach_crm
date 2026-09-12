@@ -122,9 +122,13 @@ class IntentGoalResolverService
         return [
             'target_count' => $count,
             'new_only' => $intent->wantsFreshProspectPull($message),
-            'instagram_requested' => $intent->wantsInstagramDiscovery($message),
+            'instagram_requested' => $intent->explicitDiscoveryChannel($message) === 'instagram',
             'exclude_contacted' => (bool) preg_match('/\b(ignore|exclude|skip)\b.{0,30}\b(contacted|already contacted|existing)\b/i', $lower),
-            'preferred_channel' => (bool) preg_match('/\bwhatsapp\b/i', $lower) ? 'whatsapp' : null,
+            'preferred_channel' => match (true) {
+                (bool) preg_match('/\bwhatsapp\b/i', $lower) => 'whatsapp',
+                ($channel = $intent->explicitDiscoveryChannel($message)) !== null => $channel,
+                default => null,
+            },
             'scheduled_for' => (bool) preg_match('/\b(tomorrow|next day|morning|afternoon|evening|at\s+\d{1,2})\b/i', $lower) ? 'requested' : null,
         ];
     }

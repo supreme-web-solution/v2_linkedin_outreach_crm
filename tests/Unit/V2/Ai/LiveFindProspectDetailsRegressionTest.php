@@ -47,8 +47,7 @@ class LiveFindProspectDetailsRegressionTest extends TestCase
 
         $this->assertTrue($intent->isDiscoveryOnly($msg));
         $this->assertFalse($intent->isOutreachCommand($msg));
-        $this->assertTrue($intent->prefersLinkedInOnlyDiscovery($msg));
-        $this->assertFalse($intent->wantsInstagramDiscovery($msg));
+        $this->assertNull($intent->explicitDiscoveryChannel($msg));
         $this->assertNull(app(DiscoverProspectsService::class)->inferCountFromQuery($msg));
     }
 
@@ -129,7 +128,7 @@ class LiveFindProspectDetailsRegressionTest extends TestCase
             'prefer_fresh' => true,
         ]));
 
-        $this->assertSame('linkedin', $captured['platform'] ?? null);
+        $this->assertSame('auto', $captured['platform'] ?? null);
         $this->assertArrayHasKey('targetCount', $captured);
         $this->assertNull($captured['targetCount']);
         $this->assertTrue((bool) ($result['discovery_only'] ?? false));

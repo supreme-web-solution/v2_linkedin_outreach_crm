@@ -23,7 +23,7 @@ class OwnerAttentionDigestServiceTest extends TestCase
     {
         parent::setUp();
         config()->set('socifusion_ai.attention_digest.enabled', true);
-        config()->set('socifusion_ai.attention_digest.interval_minutes', 30);
+        config()->set('socifusion_ai.attention_digest.post_on_command_center_open', false);
     }
 
     public function test_posts_digest_into_command_center_chat(): void
@@ -45,14 +45,14 @@ class OwnerAttentionDigestServiceTest extends TestCase
             'title' => 'Command Center',
         ]);
 
-        $posted = app(OwnerAttentionDigestService::class)->maybePost($user, $org->id, 'command_center_open');
+        $posted = app(OwnerAttentionDigestService::class)->maybePost($user, $org->id, 'morning');
 
         $this->assertTrue($posted);
         $this->assertTrue(
             AiMessage::query()
                 ->where('conversation_id', $aiConversation->id)
                 ->where('role', 'assistant')
-                ->where('content', 'like', '%attention digest%')
+                ->where('content', 'like', '%inbox check%')
                 ->exists()
         );
         $this->assertStringContainsString('vickenconcept@gmail.com', (string) AiMessage::query()->latest('id')->value('content'));
@@ -78,8 +78,8 @@ class OwnerAttentionDigestServiceTest extends TestCase
         ]);
 
         $service = app(OwnerAttentionDigestService::class);
-        $this->assertTrue($service->maybePost($user, $org->id, 'scheduled'));
-        $this->assertFalse($service->maybePost($user, $org->id, 'scheduled'));
+        $this->assertTrue($service->maybePost($user, $org->id, 'morning'));
+        $this->assertFalse($service->maybePost($user, $org->id, 'morning'));
     }
 
     public function test_skips_when_nothing_needs_attention(): void
@@ -104,7 +104,30 @@ class OwnerAttentionDigestServiceTest extends TestCase
             'status' => 'open',
         ]);
 
-        $this->assertFalse(app(OwnerAttentionDigestService::class)->maybePost($user, $org->id, 'scheduled'));
+        $this->assertFalse(app(OwnerAttentionDigestService::class)->maybePost($user, $org->id, 'morning'));
+    }
+
+    public function test_skips_digest_on_command_center_open_by_default(): void
+    {
+        [$user, $org, $v2Conversation] = $this->fixtures();
+
+        V2Message::query()->create([
+            'conversation_id' => $v2Conversation->id,
+            'direction' => 'inbound',
+            'body' => 'Still waiting',
+            'received_at' => now(),
+        ]);
+
+        AiConversation::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'channel' => 'command_center',
+            'status' => 'open',
+        ]);
+
+        $this->assertFalse(
+            app(OwnerAttentionDigestService::class)->maybePost($user, $org->id, 'command_center_open'),
+        );
     }
 
     public function test_digest_lists_top_items_and_others_count(): void

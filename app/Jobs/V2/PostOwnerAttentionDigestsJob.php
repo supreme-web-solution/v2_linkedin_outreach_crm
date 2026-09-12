@@ -15,8 +15,9 @@ class PostOwnerAttentionDigestsJob implements ShouldQueue
 
     public int $timeout = 300;
 
-    public function __construct()
-    {
+    public function __construct(
+        public readonly string $slot = 'morning',
+    ) {
         $this->onQueue((string) config('socifusion_ai.attention_digest.queue_name', 'default'));
     }
 
@@ -28,12 +29,13 @@ class PostOwnerAttentionDigestsJob implements ShouldQueue
             return;
         }
 
+        $trigger = in_array($this->slot, ['morning', 'evening'], true) ? $this->slot : 'morning';
         $posted = 0;
 
         User::query()
             ->whereNotNull('current_organization_id')
             ->orderBy('id')
-            ->chunkById(50, function ($users) use ($digests, $settingsService, &$posted) {
+            ->chunkById(50, function ($users) use ($digests, $settingsService, $trigger, &$posted) {
                 foreach ($users as $user) {
                     $orgId = (int) ($user->current_organization_id ?? 0);
                     if ($orgId <= 0) {
@@ -46,13 +48,14 @@ class PostOwnerAttentionDigestsJob implements ShouldQueue
                     }
 
                     try {
-                        if ($digests->maybePost($user, $orgId, 'scheduled')) {
+                        if ($digests->maybePost($user, $orgId, $trigger)) {
                             $posted++;
                         }
                     } catch (\Throwable $e) {
                         Log::warning('[Soci] Attention digest failed', [
                             'user_id' => $user->id,
                             'organization_id' => $orgId,
+                            'slot' => $trigger,
                             'error' => $e->getMessage(),
                         ]);
                     }
@@ -60,7 +63,7 @@ class PostOwnerAttentionDigestsJob implements ShouldQueue
             });
 
         if ($posted > 0) {
-            Log::info('[Soci] Attention digests posted', ['count' => $posted]);
+            Log::info('[Soci] Attention digests posted', ['count' => $posted, 'slot' => $trigger]);
         }
     }
 }

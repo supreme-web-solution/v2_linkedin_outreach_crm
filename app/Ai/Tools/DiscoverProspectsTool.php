@@ -38,7 +38,7 @@ class DiscoverProspectsTool extends GatedTool
             'query' => $schema->string()->required()->description(
                 'LinkedIn ICP keywords, or Instagram Search keyword (Mindcase: e.g. "coffee", "nasa" — finds accounts by topic). Use @handle only for Handle mode (exact accounts)',
             ),
-            'platform' => $schema->string()->nullable()->description('Optional: linkedin (default for find-only), instagram (IG only), all (force parallel LinkedIn+IG when both connected). Omit for auto: find-only → LinkedIn; outreach → connected searchable channels.'),
+            'platform' => $schema->string()->nullable()->description('Optional: linkedin, instagram, all/auto (search every connected searchable platform — no default channel). Set only when the user names a platform or the turn plan has preferred_channel.'),
             'competitors' => $schema->string()->nullable()->description('Optional comma-separated competitor names'),
             'target_count' => $schema->integer()->min(1)->max(100)->nullable()->description(
                 'Fetch and SAVE ~N NEW profiles (forces fresh search). Max 100 per pull across all channels.',
@@ -105,15 +105,13 @@ class DiscoverProspectsTool extends GatedTool
             $targetCount = (int) $request['target_count'];
         }
 
-        $platform = (string) ($request['platform'] ?? 'auto');
-        if ($platform === 'auto' && $intent->prefersLinkedInOnlyDiscovery($intentSource) && ! $wantsOutreach) {
-            $platform = 'linkedin';
-        } elseif ($platform === 'auto' && $intent->wantsInstagramDiscovery($intentSource) === false
-            && ! $wantsOutreach
-            && ! preg_match('/\b(instagram|ig)\b/i', $query)
-        ) {
-            $platform = 'linkedin';
-        }
+        $turnPlanForPlatform = is_array($turnPlan) ? $turnPlan : [];
+        $platform = app(\App\V2\Ai\Services\DiscoveryPlatformResolver::class)->resolve(
+            $turnPlanForPlatform,
+            ['platform' => (string) ($request['platform'] ?? 'auto')],
+            $query,
+            $wantsOutreach,
+        );
 
         $ledger->markDiscoveryAttempted();
 

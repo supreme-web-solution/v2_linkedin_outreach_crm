@@ -62,12 +62,28 @@ Artisan::command('nurture:flag-due', function () {
 
 Schedule::command('nurture:flag-due')->dailyAt('08:00')->withoutOverlapping();
 
-Artisan::command('socifusion:attention-digest', function () {
-    PostOwnerAttentionDigestsJob::dispatchSync();
-    $this->info('Attention digests processed.');
-})->purpose('Post owner attention digests into Command Center chats');
+Artisan::command('socifusion:attention-digest {slot=morning}', function (string $slot) {
+    if (! in_array($slot, ['morning', 'evening'], true)) {
+        $this->error('Slot must be morning or evening.');
 
-Schedule::command('socifusion:attention-digest')
-    ->everyThirtyMinutes()
+        return 1;
+    }
+
+    PostOwnerAttentionDigestsJob::dispatchSync($slot);
+    $this->info("Attention digests processed ({$slot}).");
+
+    return 0;
+})->purpose('Post owner attention digests (morning/evening) when inbox needs you');
+
+$digestMorning = (string) config('socifusion_ai.attention_digest.morning_at', '08:00');
+$digestEvening = (string) config('socifusion_ai.attention_digest.evening_at', '18:00');
+
+Schedule::command('socifusion:attention-digest morning')
+    ->dailyAt($digestMorning)
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('socifusion:attention-digest evening')
+    ->dailyAt($digestEvening)
     ->withoutOverlapping()
     ->runInBackground();

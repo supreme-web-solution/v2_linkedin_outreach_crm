@@ -132,30 +132,51 @@ class UserTurnIntentService
     }
 
     /**
-     * User explicitly asked for Instagram (or all channels) — not LinkedIn-only discovery.
+     * User named a single searchable discovery platform in their message.
      */
-    public function wantsInstagramDiscovery(string $message): bool
+    public function explicitDiscoveryChannel(string $message): ?string
+    {
+        if ($this->wantsMultichannelDiscovery($message)) {
+            return null;
+        }
+
+        $lower = Str::lower(trim($message));
+
+        if ((bool) preg_match('/\b(linkedin|linked[\s-]?in)\b/i', $lower)) {
+            return 'linkedin';
+        }
+
+        if ((bool) preg_match('/\b(instagram|instgram|insta\b|ig\b)\b/i', $lower)) {
+            return 'instagram';
+        }
+
+        return null;
+    }
+
+    public function wantsMultichannelDiscovery(string $message): bool
     {
         $lower = Str::lower(trim($message));
 
         return (bool) preg_match(
-            '/\b(instagram|ig\b|all channels?|every channel|both channels?|multichannel|multi[- ]channel)\b/i',
+            '/\b(all channels?|every channel|both channels?|multichannel|multi[- ]channel)\b/i',
             $lower,
         );
     }
 
     /**
-     * Prefer LinkedIn for vague B2B find/save asks unless Instagram/all was requested.
+     * @deprecated Use explicitDiscoveryChannel() — no platform is assumed for vague find/save asks.
+     */
+    public function wantsInstagramDiscovery(string $message): bool
+    {
+        return $this->explicitDiscoveryChannel($message) === 'instagram';
+    }
+
+    /**
+     * @deprecated Use explicitDiscoveryChannel() — LinkedIn is not inferred from vague discovery phrasing.
      */
     public function prefersLinkedInOnlyDiscovery(string $message): bool
     {
-        if ($this->wantsInstagramDiscovery($message)) {
-            return false;
-        }
-
-        return $this->isDiscoveryOnly($message)
-            || (bool) preg_match('/\b(find|search|discover|get|fetch)\b.{0,40}\b(prospect|lead|customer|client|people|profile)s?\b/i', $message)
-            || (bool) preg_match('/\b(prospect|lead)\s+details?\b/i', $message);
+        return $this->explicitDiscoveryChannel($message) === 'linkedin';
     }
 
     /**

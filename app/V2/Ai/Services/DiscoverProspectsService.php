@@ -52,7 +52,7 @@ class DiscoverProspectsService
         ?string $company = null,
         ?bool $openLink = null,
         ?string $profileUrl = null,
-        string $platform = 'linkedin',
+        string $platform = 'auto',
     ): array {
         $platform = Str::lower(trim($platform));
         if ($platform === '') {

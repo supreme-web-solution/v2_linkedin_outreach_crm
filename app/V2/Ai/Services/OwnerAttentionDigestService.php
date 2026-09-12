@@ -5,11 +5,8 @@ namespace App\V2\Ai\Services;
 use App\Models\AiActionApproval;
 use App\Models\AiConversation;
 use App\Models\User;
-use App\Models\V2Conversation;
-use App\Models\V2Message;
 use App\V2\Ai\Enums\AiAutonomyLevel;
 use App\V2\Ai\Support\WhatsAppNotificationFormatter;
-use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 
@@ -23,12 +20,15 @@ class OwnerAttentionDigestService
         private readonly CommandCenterService $commandCenter,
         private readonly AiEmployeeSettingsService $settingsService,
         private readonly CommandCenterPushService $push,
-        private readonly InboxSociHandlingService $handling,
     ) {}
 
-    public function maybePost(User $user, int $organizationId, string $trigger = 'scheduled'): bool
+    public function maybePost(User $user, int $organizationId, string $trigger = 'morning'): bool
     {
         if (! (bool) config('socifusion_ai.attention_digest.enabled', true)) {
+            return false;
+        }
+
+        if (! $this->isTriggerAllowed($trigger)) {
             return false;
         }
 
@@ -56,11 +56,12 @@ class OwnerAttentionDigestService
         }
 
         $autonomy = $this->settingsService->autonomy($settings);
-        if ($autonomy->value >= AiAutonomyLevel::Autopilot->value) {
-            $this->maybeAutoHandleHotThreads($user, $organizationId);
+        $snap = $this->awareness->snapshot($user, $organizationId);
+
+        if (! $this->hasActionableAttention($snap)) {
+            return false;
         }
 
-        $snap = $this->awareness->snapshot($user, $organizationId);
         $content = $this->buildDigestMessage($user, $organizationId, $autonomy, $snap);
         if ($content === null) {
             return false;
@@ -86,41 +87,75 @@ class OwnerAttentionDigestService
         ], $approvalId);
 
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $slots = is_array($meta['attention_digest_slots'] ?? null) ? $meta['attention_digest_slots'] : [];
+        if (in_array($trigger, ['morning', 'evening'], true)) {
+            $slots[$trigger] = now()->toIso8601String();
+        }
+
         $meta['attention_digest'] = [
             'hash' => $hash,
             'posted_at' => now()->toIso8601String(),
             'trigger' => $trigger,
         ];
+        $meta['attention_digest_slots'] = $slots;
         $conversation->forceFill(['meta' => $meta])->save();
 
         return true;
     }
 
+    public function isTriggerAllowed(string $trigger): bool
+    {
+        if (in_array($trigger, ['morning', 'evening'], true)) {
+            return true;
+        }
+
+        if ($trigger === 'command_center_open') {
+            return (bool) config('socifusion_ai.attention_digest.post_on_command_center_open', false);
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $snap
+     */
+    public function hasActionableAttention(array $snap): bool
+    {
+        $brief = is_array($snap['inbox_brief'] ?? null) ? $snap['inbox_brief'] : [];
+        $needYou = (int) ($brief['need_you'] ?? 0);
+        $awaiting = (int) ($brief['awaiting_reply'] ?? 0);
+        $pending = $snap['pending_approvals'] ?? [];
+        $workflows = $snap['workflows'] ?? [];
+        $nurture = is_array($snap['nurture'] ?? null) ? $snap['nurture'] : [];
+        $nurtureDue = (int) ($nurture['overdue'] ?? 0) + (int) ($nurture['due_this_week'] ?? 0);
+
+        return $awaiting > 0 || $needYou > 0 || $pending !== [] || $workflows !== [] || $nurtureDue > 0;
+    }
+
     public function shouldPost(AiConversation $conversation, string $contentHash, string $trigger): bool
     {
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $slots = is_array($meta['attention_digest_slots'] ?? null) ? $meta['attention_digest_slots'] : [];
+
+        if (in_array($trigger, ['morning', 'evening'], true)) {
+            $lastSlot = trim((string) ($slots[$trigger] ?? ''));
+            if ($lastSlot !== '') {
+                try {
+                    if (Carbon::parse($lastSlot)->isSameDay(now())) {
+                        return false;
+                    }
+                } catch (\Throwable) {
+                    // allow post
+                }
+            }
+
+            return true;
+        }
+
         $last = is_array($meta['attention_digest'] ?? null) ? $meta['attention_digest'] : [];
         $lastHash = (string) ($last['hash'] ?? '');
-        $lastAt = trim((string) ($last['posted_at'] ?? ''));
 
-        if ($lastHash !== $contentHash) {
-            return true;
-        }
-
-        $minMinutes = (int) config('socifusion_ai.attention_digest.interval_minutes', 30);
-        if ($trigger === 'command_center_open') {
-            $minMinutes = (int) config('socifusion_ai.attention_digest.open_interval_minutes', 15);
-        }
-
-        if ($lastAt === '') {
-            return true;
-        }
-
-        try {
-            return Carbon::parse($lastAt)->lte(now()->subMinutes(max(5, $minMinutes)));
-        } catch (\Throwable) {
-            return true;
-        }
+        return $lastHash !== $contentHash;
     }
 
     /**
@@ -141,27 +176,17 @@ class OwnerAttentionDigestService
         $workflows = $snap['workflows'] ?? [];
         $nurture = is_array($snap['nurture'] ?? null) ? $snap['nurture'] : [];
         $nurtureDue = (int) ($nurture['overdue'] ?? 0) + (int) ($nurture['due_this_week'] ?? 0);
-        $recentHandled = $this->handling->recentHandledBriefs($user, 6, 2);
 
-        if ($needYou <= 0 && $pending === [] && $workflows === [] && $nurtureDue <= 0 && $recentHandled === []) {
+        if (! $this->hasActionableAttention($snap)) {
             return null;
         }
 
         $autonomy ??= $this->settingsService->autonomy($this->settingsService->for($user, $organizationId));
         $employee = $this->settingsService->for($user, $organizationId)->employee_name ?: 'Soci';
         $maxItems = (int) config('socifusion_ai.attention_digest.max_items', 2);
+        $slotLabel = now()->hour < 12 ? 'Morning' : 'Evening';
 
-        $lines = ["📋 **{$employee} attention digest**"];
-
-        if ($recentHandled !== []) {
-            $lines[] = '**Soci handled recently**';
-            foreach ($recentHandled as $row) {
-                $channel = OutreachChannelRegistry::channelLabel((string) ($row['channel'] ?? 'inbox'));
-                $mode = (string) ($row['mode'] ?? '');
-                $action = str_contains($mode, 'auto_sent') ? 'reply sent' : 'draft ready';
-                $lines[] = '• '.$channel.': **'.($row['name'] ?? 'Prospect').'** — '.$action;
-            }
-        }
+        $lines = ["📋 **{$employee} {$slotLabel} inbox check**"];
 
         if ($awaiting > 0) {
             $lines[] = "**{$awaiting} inbox thread(s) need you**".($hot > 0 ? " ({$hot} hot)" : '').'.';
@@ -223,12 +248,7 @@ class OwnerAttentionDigestService
         $hot = (int) ($brief['hot'] ?? 0);
         $maxItems = (int) config('socifusion_ai.attention_digest.whatsapp_max_items', 2);
 
-        $lines = ['Soci digest'];
-        $recentHandled = $this->handling->recentHandledBriefs($user, 6, 2);
-        foreach ($recentHandled as $row) {
-            $channel = OutreachChannelRegistry::channelLabel((string) ($row['channel'] ?? 'inbox'));
-            $lines[] = 'Handled: '.$channel.' '.($row['name'] ?? 'Prospect');
-        }
+        $lines = ['Soci inbox check'];
 
         if ($awaiting > 0) {
             $lines[] = "{$awaiting} need you".($hot > 0 ? " ({$hot} hot)" : '').':';
@@ -254,54 +274,6 @@ class OwnerAttentionDigestService
         }
 
         return implode("\n", $lines);
-    }
-
-    private function maybeAutoHandleHotThreads(User $user, int $organizationId): void
-    {
-        if (! (bool) config('socifusion_ai.proactive_inbound_reply', true)) {
-            return;
-        }
-
-        $snap = $this->awareness->snapshot($user, $organizationId);
-        $handling = $this->handling;
-
-        foreach ($snap['awaiting_reply'] ?? [] as $row) {
-            if (! is_array($row) || ($row['priority'] ?? '') !== 'hot') {
-                continue;
-            }
-
-            $convId = (int) ($row['conversation_id'] ?? 0);
-            if ($convId <= 0) {
-                continue;
-            }
-
-            $v2Conversation = V2Conversation::query()
-                ->where('user_id', $user->id)
-                ->whereKey($convId)
-                ->first();
-
-            if (! $v2Conversation) {
-                continue;
-            }
-
-            $latestInbound = V2Message::query()
-                ->where('conversation_id', $v2Conversation->id)
-                ->where('direction', 'inbound')
-                ->orderByDesc('id')
-                ->first();
-
-            if (! $latestInbound || $handling->isAlreadyHandled($v2Conversation, (int) $latestInbound->id)) {
-                continue;
-            }
-
-            app(ProactiveInboundReplyService::class)->handle(
-                $v2Conversation->id,
-                $user->id,
-                (int) $latestInbound->id,
-            );
-
-            return;
-        }
     }
 
     private function latestPendingDraftReplyId(User $user, int $organizationId): ?int

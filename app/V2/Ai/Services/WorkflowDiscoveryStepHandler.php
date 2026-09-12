@@ -12,6 +12,7 @@ class WorkflowDiscoveryStepHandler
 {
     public function __construct(
         private readonly DiscoverProspectsService $discovery,
+        private readonly DiscoveryPlatformResolver $platformResolver,
     ) {}
 
     /**
@@ -25,8 +26,7 @@ class WorkflowDiscoveryStepHandler
         $query = $segment !== '' ? $segment : 'prospects';
 
         $preferFresh = (bool) ($arguments['new_only'] ?? $plan['constraints']['new_only'] ?? false);
-        $outcome = (string) ($plan['required_outcome'] ?? '');
-        $platform = in_array($outcome, ['send_now', 'setup_only'], true) ? 'auto' : 'linkedin';
+        $platform = $this->platformResolver->resolve($plan, $arguments, $query);
 
         $result = $this->discovery->discover(
             user: $user,
@@ -43,6 +43,10 @@ class WorkflowDiscoveryStepHandler
             $best = collect($lists)->sortByDesc(fn (array $row) => (int) ($row['total_leads'] ?? 0))->first();
         }
         $saved = (int) ($result['total_leads_in_matches'] ?? $best['total_leads'] ?? 0);
+        $samples = is_array($result['sample_profiles'] ?? null) ? $result['sample_profiles'] : [];
+        if ($samples === [] && is_array($best['sample_profiles'] ?? null)) {
+            $samples = $best['sample_profiles'];
+        }
 
         return [
             'step_type' => 'discover',
@@ -54,6 +58,7 @@ class WorkflowDiscoveryStepHandler
             'list_hash' => $best['list_hash'] ?? null,
             'list_src' => $best['list_src'] ?? null,
             'list_name' => $best['list_name'] ?? null,
+            'sample_profiles' => $samples,
             'discovery_lists' => $lists,
             'discovery_result' => [
                 'auto_sourced' => (bool) ($result['auto_sourced'] ?? false),

@@ -12,6 +12,10 @@ class WorkflowPlanBuilderService
 {
     public const MAX_DISCOVERY_ATTEMPTS = 5;
 
+    public function __construct(
+        private readonly DiscoveryPlatformResolver $platformResolver,
+    ) {}
+
     /**
      * @param  array<string, mixed>  $plan
      * @param  array<string, mixed>  $stateEval
@@ -45,6 +49,7 @@ class WorkflowPlanBuilderService
                     'target_count' => $discoverQty,
                     'segment' => $plan['objective']['segment'] ?? null,
                     'new_only' => $stateEval['new_only'] ?? false,
+                    'platform' => $this->platformResolver->resolve($plan),
                 ],
                 'approval_required' => false,
             ];

@@ -66,11 +66,13 @@ class PlatformAllocationService
             $channels[] = 'instagram';
         }
 
+        sort($channels);
+
         return $channels;
     }
 
     /**
-     * Prefer LinkedIn for the larger share (5 → 3 LinkedIn + 2 Instagram).
+     * Split requested count evenly across connected searchable platforms (no channel favored).
      *
      * @param  list<string>  $channels
      * @return array<string, int>
@@ -78,6 +80,7 @@ class PlatformAllocationService
     public function split(int $total, array $channels): array
     {
         $channels = array_values(array_unique($channels));
+        sort($channels);
         $total = max(1, $total);
 
         if ($channels === []) {
@@ -88,29 +91,15 @@ class PlatformAllocationService
             return [$channels[0] => $total];
         }
 
-        $primary = in_array('linkedin', $channels, true) ? 'linkedin' : $channels[0];
-        $others = array_values(array_filter($channels, fn (string $c) => $c !== $primary));
-        $isLinkedInInstagramPair = count($channels) === 2
-            && in_array('linkedin', $channels, true)
-            && in_array('instagram', $channels, true);
-        // Keep small asks LinkedIn-leaning (e.g. 5 -> 3+2), but make larger asks balanced.
-        $primaryRatio = ($isLinkedInInstagramPair && $total >= 20) ? 0.5 : 0.6;
-        $primaryShare = (int) max(1, ceil($total * $primaryRatio));
-        $remaining = $total - $primaryShare;
+        $count = count($channels);
+        $base = intdiv($total, $count);
+        $extra = $total % $count;
+        $allocation = [];
 
-        if ($remaining < count($others)) {
-            $primaryShare = max(1, $total - count($others));
-            $remaining = $total - $primaryShare;
-        }
-
-        $allocation = [$primary => $primaryShare];
-        $perOther = intdiv($remaining, count($others));
-        $extra = $remaining % count($others);
-
-        foreach ($others as $index => $channel) {
-            $count = $perOther + ($index < $extra ? 1 : 0);
-            if ($count > 0) {
-                $allocation[$channel] = $count;
+        foreach ($channels as $index => $channel) {
+            $share = $base + ($index < $extra ? 1 : 0);
+            if ($share > 0) {
+                $allocation[$channel] = $share;
             }
         }
 

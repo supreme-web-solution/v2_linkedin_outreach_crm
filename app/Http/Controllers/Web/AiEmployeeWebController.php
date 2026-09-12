@@ -43,7 +43,7 @@ class AiEmployeeWebController extends Controller
 
         $settings = $settingsService->for($user, $orgId);
         $conversation = $commandCenter->conversation($user, $orgId);
-        if ((bool) config('socifusion_ai.attention_digest.post_on_command_center_open', true)) {
+        if ((bool) config('socifusion_ai.attention_digest.post_on_command_center_open', false)) {
             app(OwnerAttentionDigestService::class)->maybePost($user, $orgId, 'command_center_open');
         }
         $conversation = $conversation->fresh() ?? $conversation;
@@ -93,7 +93,7 @@ class AiEmployeeWebController extends Controller
 
         $settings = $settingsService->for($user, $orgId);
         $conversation = $commandCenter->conversation($user, $orgId);
-        if ((bool) config('socifusion_ai.attention_digest.post_on_command_center_open', true)) {
+        if ((bool) config('socifusion_ai.attention_digest.post_on_command_center_open', false)) {
             app(OwnerAttentionDigestService::class)->maybePost($user, $orgId, 'command_center_open');
         }
         $conversation = $conversation->fresh() ?? $conversation;

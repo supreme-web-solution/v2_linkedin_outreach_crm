@@ -146,17 +146,19 @@ class ProactiveInboundReplyService
             $dossierSummary = $this->summarizeDossier($dossier);
         }
 
-        $this->notifier->notifyInboundReplyPrepared(
-            $user,
-            $organizationId,
-            $conversation,
-            $draftData,
-            $classification,
-            $approvalId,
-            $autoSent,
-            $researchRan,
-            $dossierSummary,
-        );
+        if ($this->shouldInstantNotify($classification, $autoSent, $approvalId)) {
+            $this->notifier->notifyInboundReplyPrepared(
+                $user,
+                $organizationId,
+                $conversation,
+                $draftData,
+                $classification,
+                $approvalId,
+                $autoSent,
+                $researchRan,
+                $dossierSummary,
+            );
+        }
 
         $this->handling->markHandled(
             $conversation->fresh() ?? $conversation,
@@ -188,6 +190,30 @@ class ProactiveInboundReplyService
         $facts = is_array($dossier['conversation_facts'] ?? null) ? $dossier['conversation_facts'] : [];
 
         return $pages !== [] || $research !== [] || count($facts) > 0;
+    }
+
+    /**
+     * @param  array<string, mixed>  $classification
+     */
+    private function shouldInstantNotify(array $classification, bool $autoSent, ?int $approvalId): bool
+    {
+        if (! (bool) config('socifusion_ai.instant_inbound_notify.enabled', true)) {
+            return false;
+        }
+
+        if ($autoSent && (bool) config('socifusion_ai.instant_inbound_notify.skip_when_ai_handled', true)) {
+            return false;
+        }
+
+        if ($approvalId !== null && $approvalId > 0) {
+            return true;
+        }
+
+        if ((bool) config('socifusion_ai.instant_inbound_notify.hot_only', true)) {
+            return ($classification['priority'] ?? '') === 'hot';
+        }
+
+        return true;
     }
 
     private function prospectName(V2Conversation $conversation): string

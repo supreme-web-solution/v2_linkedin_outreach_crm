@@ -81,10 +81,12 @@ class UserTurnIntentServiceTest extends TestCase
         $intent = app(UserTurnIntentService::class);
 
         $this->assertFalse($intent->isOutreachCommand('find prospect details'));
-        $this->assertTrue($intent->prefersLinkedInOnlyDiscovery('find prospect details'));
-        $this->assertFalse($intent->wantsInstagramDiscovery('find prospect details'));
-        $this->assertTrue($intent->wantsInstagramDiscovery('find Instagram leads for coffee brands'));
-        $this->assertTrue($intent->wantsInstagramDiscovery('search all channels for SaaS founders'));
+        $this->assertNull($intent->explicitDiscoveryChannel('find prospect details'));
+        $this->assertSame('linkedin', $intent->explicitDiscoveryChannel('find LinkedIn leads for coffee brands'));
+        $this->assertSame('instagram', $intent->explicitDiscoveryChannel('find Instagram leads for coffee brands'));
+        $this->assertSame('instagram', $intent->explicitDiscoveryChannel('help me get 50 leads on instgram'));
+        $this->assertNull($intent->explicitDiscoveryChannel('search all channels for SaaS founders'));
+        $this->assertTrue($intent->wantsMultichannelDiscovery('search all channels for SaaS founders'));
     }
 
     public function test_what_do_we_have_today_returns_sync_brief_without_agent(): void

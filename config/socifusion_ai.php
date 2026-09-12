@@ -30,7 +30,7 @@ Read intent before acting.
 - "Get N clients and start outreach" → discover_prospects then draft_campaign_plan + Launch when they approve.
 - Strategy / meeting plans / explicit outreach asks → propose_strategy or draft_campaign_plan.
 When the user asks to fetch / find / get NEW clients or prospects (or gives a count like 30), call discover_prospects with target_count — fetch and SAVE them. Do not auto-launch outreach on find-only asks.
-Do not ask for competitor LinkedIn URLs before trying discover_prospects / LinkedIn auto-search.
+Do not ask for competitor LinkedIn URLs before trying discover_prospects. When the user does not name a platform, use platform=auto (connected searchable channels) — never assume LinkedIn unless they said LinkedIn or preferred_channel is linkedin.
 You do not invent CRM data — use tools. Prefer clear plan cards and ask for Launch/Approve before sending or launching in Assisted mode.
 Deletes (campaigns, lists, posts, inbox, templates) ALWAYS require Confirm Delete — never auto-delete, even in Autopilot or Autonomous.
 Bulk actions (not only delete): when the user asks to pause/activate/delete many campaigns, pass campaign_ids[] (or delete_all_outreach) in one tool call — never stage separate LAUNCH ids per item. Confirm Delete still required for deletes.
@@ -127,19 +127,37 @@ TXT,
     'command_center_mirror_whatsapp' => env('SOCIFUSION_AI_MIRROR_WHATSAPP', true),
 
     /*
-    | Periodic attention digests posted as assistant messages in Command Center chat
-    | (same thread as WhatsApp when linked). Not separate email blasts.
+    | Attention digests: twice daily (morning/evening) ONLY when inbox still needs you.
+    | Not on Command Center open, not every 30 minutes. Instant alerts = hot inbound only.
     */
     'attention_digest' => [
         'enabled' => env('SOCIFUSION_AI_ATTENTION_DIGEST', true),
-        'interval_minutes' => (int) env('SOCIFUSION_AI_ATTENTION_DIGEST_INTERVAL', 30),
-        'open_interval_minutes' => (int) env('SOCIFUSION_AI_ATTENTION_DIGEST_OPEN_INTERVAL', 15),
-        'post_on_command_center_open' => env('SOCIFUSION_AI_ATTENTION_DIGEST_ON_OPEN', true),
+        'morning_at' => env('SOCIFUSION_AI_ATTENTION_DIGEST_MORNING', '08:00'),
+        'evening_at' => env('SOCIFUSION_AI_ATTENTION_DIGEST_EVENING', '18:00'),
+        'post_on_command_center_open' => env('SOCIFUSION_AI_ATTENTION_DIGEST_ON_OPEN', false),
         'mirror_whatsapp' => env('SOCIFUSION_AI_ATTENTION_DIGEST_WHATSAPP', true),
         'whatsapp_after_proactive' => env('SOCIFUSION_AI_ATTENTION_DIGEST_WHATSAPP_AFTER_PROACTIVE', false),
         'max_items' => (int) env('SOCIFUSION_AI_ATTENTION_DIGEST_MAX_ITEMS', 2),
         'whatsapp_max_items' => (int) env('SOCIFUSION_AI_ATTENTION_DIGEST_WHATSAPP_MAX_ITEMS', 2),
         'queue_name' => env('SOCIFUSION_AI_ATTENTION_DIGEST_QUEUE', 'default'),
+    ],
+
+    /*
+    | Instant Command Center + WhatsApp ping when a NEW hot inbound arrives.
+    | Skipped when Soci auto-sent (Autopilot). Non-hot threads wait for morning/evening digest.
+    */
+    'instant_inbound_notify' => [
+        'enabled' => env('SOCIFUSION_AI_INSTANT_INBOUND_NOTIFY', true),
+        'hot_only' => env('SOCIFUSION_AI_INSTANT_INBOUND_HOT_ONLY', true),
+        'skip_when_ai_handled' => env('SOCIFUSION_AI_INSTANT_INBOUND_SKIP_AUTO_SENT', true),
+    ],
+
+    /*
+    | Daily AI activity summary (once per day) — for in-app report; optional WhatsApp later.
+    */
+    'daily_ai_summary' => [
+        'enabled' => env('SOCIFUSION_AI_DAILY_SUMMARY', false),
+        'at' => env('SOCIFUSION_AI_DAILY_SUMMARY_AT', '09:00'),
     ],
 
     'web_chat_queue' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE', true),

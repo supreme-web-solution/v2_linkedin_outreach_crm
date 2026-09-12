@@ -40,7 +40,12 @@ class PostExecutionVerifierService
             $warnings[] = 'Requested outreach execution completed with zero recorded external send actions.';
         }
         if ($channelEligible !== null && $expected > 0 && $channelEligible < $expected) {
-            $warnings[] = "Only {$channelEligible} prospects are channel-eligible; requested {$expected}.";
+            $asyncDiscovery = $this->workflowStillOrchestrating($plan)
+                || ($outcome === 'find_only' && (int) ($plan['workflow_run_id'] ?? 0) > 0);
+
+            if (! $asyncDiscovery) {
+                $warnings[] = "Only {$channelEligible} prospects are channel-eligible; requested {$expected}.";
+            }
         }
         if (($executionMetrics['attempted'] ?? 0) > 0) {
             $successful = (int) ($executionMetrics['successful'] ?? 0);
