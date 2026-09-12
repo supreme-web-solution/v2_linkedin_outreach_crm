@@ -13,8 +13,10 @@ use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
 use App\Models\V2ProviderEvent;
+use App\V2\Integrations\Unipile\UnipileException;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Services\UnifiedInboxReplyService;
+use App\V2\Services\UnifiedInboxService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Arr;
 use Tests\TestCase;
@@ -1517,6 +1519,142 @@ class UnifiedInboxTest extends TestCase
 
         $conversation->refresh();
         $this->assertNotNull(Arr::get($conversation->meta ?? [], 'last_read_at'));
+    }
+
+    public function test_send_message_relinks_unlinked_conversation_before_reply(): void
+    {
+        $user = $this->userWithOrg();
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_account_id' => 'li_relink_acc',
+            'status' => 'active',
+            'meta' => ['unipile_account_id' => 'li_relink_acc'],
+        ]);
+
+        $campaign = V2OutreachCampaign::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'name' => 'LinkedIn Relink Test',
+            'status' => 'running',
+            'node_model' => [],
+        ]);
+
+        $lead = V2OutreachLead::query()->create([
+            'outreach_campaign_id' => $campaign->id,
+            'full_name' => 'Nancy Ifeoma Ozoume',
+            'provider_profile_id' => 'ACoAAlead123',
+            'status' => 'replied',
+        ]);
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_chat_id' => null,
+            'status' => 'active',
+            'meta' => [
+                'source' => 'unified_inbox',
+                'outreach_lead_id' => $lead->id,
+                'outreach_campaign_id' => $campaign->id,
+                'prospect_name' => 'Nancy Ifeoma Ozoume',
+                'attendee_ids' => ['ACoAAlead123'],
+            ],
+        ]);
+
+        $this->mock(\App\V2\Integrations\Unipile\UnipileProvider::class)
+            ->shouldReceive('listChats')
+            ->once()
+            ->andReturn([
+                'items' => [[
+                    'id' => 'li_chat_relinked',
+                    'attendees' => [[
+                        'provider_id' => 'ACoAAlead123',
+                    ]],
+                ]],
+            ])
+            ->shouldReceive('sendMessage')
+            ->once()
+            ->with('li_chat_relinked', \Mockery::type('array'), ['account_id' => 'li_relink_acc'])
+            ->andReturn(['id' => 'msg_relinked_1']);
+
+        $message = app(UnifiedInboxReplyService::class)->sendApprovedReply(
+            $user,
+            $conversation,
+            'Hi Nancy, great to hear from you!'
+        );
+
+        $conversation->refresh();
+
+        $this->assertSame('li_chat_relinked', $conversation->provider_chat_id);
+        $this->assertSame('msg_relinked_1', $message->provider_message_id);
+        $this->assertDatabaseHas('v2_messages', [
+            'id' => $message->id,
+            'conversation_id' => $conversation->id,
+            'direction' => 'outbound',
+            'body' => 'Hi Nancy, great to hear from you!',
+        ]);
+    }
+
+    public function test_send_message_recovers_from_stale_provider_chat_id(): void
+    {
+        $user = $this->userWithOrg();
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_account_id' => 'li_stale_acc',
+            'status' => 'active',
+            'meta' => ['unipile_account_id' => 'li_stale_acc'],
+        ]);
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_chat_id' => '5gffx_RUVWm8528jo1fJ1A',
+            'status' => 'active',
+            'meta' => [
+                'source' => 'unified_inbox',
+                'outreach_campaign_id' => 1,
+                'prospect_name' => 'Nancy Ifeoma Ozoume',
+                'attendee_ids' => ['ACoAAlead456'],
+            ],
+        ]);
+
+        $this->mock(\App\V2\Integrations\Unipile\UnipileProvider::class)
+            ->shouldReceive('listMessages')
+            ->once()
+            ->with('5gffx_RUVWm8528jo1fJ1A', ['limit' => 1], ['account_id' => 'li_stale_acc'])
+            ->andThrow(new UnipileException('Chat not found', 404, [
+                'response' => [
+                    'detail' => 'The requested resource were not found. Chat not found',
+                ],
+            ]))
+            ->shouldReceive('listChats')
+            ->once()
+            ->andReturn([
+                'items' => [[
+                    'id' => 'gfpS-V4dUdevUc4HMOiFfA',
+                    'attendees' => [[
+                        'provider_id' => 'ACoAAlead456',
+                    ]],
+                ]],
+            ])
+            ->shouldReceive('sendMessage')
+            ->once()
+            ->with('gfpS-V4dUdevUc4HMOiFfA', \Mockery::type('array'), ['account_id' => 'li_stale_acc'])
+            ->andReturn(['id' => 'msg_stale_recovered']);
+
+        $message = app(UnifiedInboxService::class)->sendMessage(
+            $user,
+            $conversation,
+            'Following up on our conversation.'
+        );
+
+        $conversation->refresh();
+
+        $this->assertSame('gfpS-V4dUdevUc4HMOiFfA', $conversation->provider_chat_id);
+        $this->assertSame('msg_stale_recovered', $message->provider_message_id);
     }
 
     public function test_inbox_conversation_and_message_can_be_deleted(): void

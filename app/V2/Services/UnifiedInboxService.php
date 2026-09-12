@@ -7,6 +7,7 @@ use App\Models\V2Conversation;
 use App\Models\V2IntegrationAccount;
 use App\Models\V2Message;
 use App\Models\V2OutreachLead;
+use App\V2\Integrations\ProviderManager;
 use App\V2\Integrations\Unipile\UnipileException;
 use App\V2\Integrations\Unipile\UnipileProvider;
 use App\V2\Outreach\InboxAttachmentSupport;
@@ -794,7 +795,16 @@ class UnifiedInboxService
 
         $chatId = trim((string) ($conversation->provider_chat_id ?? ''));
         if ($chatId === '') {
-            return;
+            $accountId = V2IntegrationAccount::activeUnipileAccountIdForProvider((int) $conversation->user_id, $provider);
+            if ($accountId) {
+                $this->handleMissingProviderChat($conversation, $accountId);
+                $conversation = $conversation->fresh();
+                $chatId = trim((string) ($conversation->provider_chat_id ?? ''));
+            }
+
+            if ($chatId === '') {
+                return;
+            }
         }
 
         if ($this->isGroupChatId($chatId, $provider) && ! $this->isTruthy(Arr::get($conversation->meta, 'is_group'))) {
@@ -1125,10 +1135,6 @@ class UnifiedInboxService
             throw new \InvalidArgumentException('Message cannot be empty.');
         }
 
-        if (! $conversation->provider_chat_id) {
-            throw new \RuntimeException('Conversation is not linked to a Unipile chat.');
-        }
-
         $provider = (string) $conversation->provider;
         if ($attachment && ! InboxAttachmentSupport::supportsAttachments($provider)) {
             throw new \RuntimeException('File attachments are not supported on '.OutreachChannelRegistry::channelLabel($provider).'.');
@@ -1144,6 +1150,26 @@ class UnifiedInboxService
         $organizationId = (int) ($user->current_organization_id ?? 0);
         if ($organizationId <= 0) {
             throw new \RuntimeException('No workspace selected.');
+        }
+
+        $conversation = $this->ensureLinkedForSend($user, $conversation, $accountId);
+
+        if (! $this->conversationHasSendTarget($conversation, $provider)) {
+            if ($attachment) {
+                throw new \RuntimeException($this->unlinkSendFailureMessage($provider));
+            }
+
+            $message = $this->sendViaStartChat(
+                $user,
+                $organizationId,
+                $conversation,
+                $text,
+                $accountId,
+                $provider
+            );
+            $conversation->forceFill(['last_message_at' => now(), 'status' => 'active'])->save();
+
+            return $message;
         }
 
         $attachmentMeta = null;
@@ -1174,32 +1200,261 @@ class UnifiedInboxService
             $message->forceFill(['attachments' => $attachmentMeta])->save();
         }
 
+        try {
+            $this->deliverOutboundMessage($conversation, $provider, $accountId, $text, $message, $attachment);
+        } catch (UnipileException $exception) {
+            if (! OutreachUserErrorMapper::isStaleProviderChatError($exception)) {
+                throw $exception;
+            }
+
+            $staleChatId = trim((string) ($conversation->provider_chat_id ?? ''));
+            if ($staleChatId !== '') {
+                $this->invalidateProviderChatId($conversation, $staleChatId, 'stale_provider_chat_on_send');
+            }
+
+            $conversation = $this->ensureLinkedForSend($user, $conversation->fresh(), $accountId);
+
+            if ($this->conversationHasSendTarget($conversation, $provider)) {
+                $meta = is_array($message->meta) ? $message->meta : [];
+                $meta['chat_id'] = $conversation->provider_chat_id;
+                $meta['recovered_from_chat_id'] = $staleChatId !== '' ? $staleChatId : null;
+                $message->forceFill(['meta' => $meta])->save();
+
+                $this->deliverOutboundMessage($conversation, $provider, $accountId, $text, $message, $attachment);
+            } elseif ($attachment) {
+                throw new \RuntimeException($this->unlinkSendFailureMessage($provider));
+            } else {
+                $this->recoverFailedSendViaStartChat(
+                    $user,
+                    $organizationId,
+                    $conversation,
+                    $message,
+                    $text,
+                    $accountId,
+                    $staleChatId
+                );
+            }
+        }
+
+        $conversation->forceFill(['last_message_at' => now(), 'status' => 'active'])->save();
+
+        return $message;
+    }
+
+    private function ensureLinkedForSend(User $user, V2Conversation $conversation, string $accountId): V2Conversation
+    {
+        $conversation = $conversation->fresh();
+        $provider = (string) $conversation->provider;
+
+        if ($provider === 'email') {
+            return $conversation;
+        }
+
+        $chatId = trim((string) ($conversation->provider_chat_id ?? ''));
+
+        if ($chatId === '') {
+            $this->handleMissingProviderChat($conversation, $accountId);
+
+            return $conversation->fresh();
+        }
+
+        try {
+            app(UnipileProvider::class)->listMessages(
+                $chatId,
+                ['limit' => 1],
+                ['account_id' => $accountId]
+            );
+        } catch (UnipileException $exception) {
+            if ($exception->statusCode === 404 || OutreachUserErrorMapper::isStaleProviderChatError($exception)) {
+                $this->invalidateProviderChatId($conversation, $chatId, 'provider_chat_missing');
+                $this->handleMissingProviderChat($conversation->fresh(), $accountId);
+            }
+        } catch (\Throwable) {
+            // Transient probe failure — let the send attempt surface a clearer error.
+        }
+
+        return $conversation->fresh();
+    }
+
+    private function conversationHasSendTarget(V2Conversation $conversation, string $provider): bool
+    {
+        if ($provider === 'email') {
+            $meta = is_array($conversation->meta) ? $conversation->meta : [];
+
+            return trim((string) ($meta['prospect_email'] ?? $conversation->provider_chat_id ?? '')) !== '';
+        }
+
+        return trim((string) ($conversation->provider_chat_id ?? '')) !== '';
+    }
+
+    private function unlinkSendFailureMessage(string $provider): string
+    {
+        return 'This thread lost its link after a reconnect. Open the conversation in Inbox once to refresh it, or reconnect '
+            .OutreachChannelRegistry::channelLabel($provider).' under Integrations, then try again.';
+    }
+
+    private function deliverOutboundMessage(
+        V2Conversation $conversation,
+        string $provider,
+        string $accountId,
+        string $text,
+        V2Message $message,
+        ?UploadedFile $attachment = null,
+    ): void {
         if ($attachment) {
             if ($provider === 'email') {
                 $this->sendEmailNow($conversation, $accountId, $text, $message, $attachment);
             } else {
                 $this->sendAttachmentNow(
-                    $conversation->provider_chat_id,
+                    (string) $conversation->provider_chat_id,
                     $accountId,
                     $text,
                     $attachment,
                     $message
                 );
             }
-        } elseif ($provider === 'email') {
-            $this->sendEmailNow($conversation, $accountId, $text, $message);
-        } else {
-            $this->sendTextNow(
-                $conversation->provider_chat_id,
-                $accountId,
-                $text,
-                $message
-            );
+
+            return;
         }
 
-        $conversation->forceFill(['last_message_at' => now(), 'status' => 'active'])->save();
+        if ($provider === 'email') {
+            $this->sendEmailNow($conversation, $accountId, $text, $message);
+
+            return;
+        }
+
+        $this->sendTextNow(
+            (string) $conversation->provider_chat_id,
+            $accountId,
+            $text,
+            $message
+        );
+    }
+
+    private function sendViaStartChat(
+        User $user,
+        int $organizationId,
+        V2Conversation $conversation,
+        string $text,
+        string $accountId,
+        string $provider,
+    ): V2Message {
+        $persistence = app(OutreachPersistenceService::class);
+        $attendeeIds = $persistence->resolveAttendeeIdsForConversation(
+            $conversation,
+            (int) $user->id,
+            $organizationId
+        );
+
+        if ($attendeeIds === []) {
+            throw new \RuntimeException($this->unlinkSendFailureMessage($provider));
+        }
+
+        $message = $persistence->createOutboundMessage(
+            $conversation->id,
+            $text,
+            'start_chat',
+            array_filter([
+                'attendee_ids' => $attendeeIds,
+                'source' => 'unified_inbox',
+                '_unipile_account_id' => $accountId,
+                'channel' => $provider,
+            ])
+        );
+
+        $result = $this->startChatNow($user, $organizationId, $conversation, $attendeeIds, $text, $accountId);
+        $persistence->markMessageResult($message, $result, 'sent');
+
+        $providerMessageId = trim((string) (Arr::get($result, 'id') ?? Arr::get($result, 'message_id') ?? ''));
+        if ($providerMessageId !== '') {
+            $message->forceFill(['provider_message_id' => $providerMessageId, 'sent_at' => now()])->save();
+        }
 
         return $message;
+    }
+
+    /**
+     * @param  array<int, string>  $attendeeIds
+     * @return array<string, mixed>
+     */
+    private function startChatNow(
+        User $user,
+        int $organizationId,
+        V2Conversation $conversation,
+        array $attendeeIds,
+        string $text,
+        string $accountId,
+    ): array {
+        $providerManager = app(ProviderManager::class);
+        $context = array_filter([
+            'owner_id' => (string) $user->id,
+            'organization_id' => $organizationId,
+            'account_id' => $accountId,
+        ]);
+
+        $result = $providerManager
+            ->messaging($providerManager->defaultProvider())
+            ->startChat([
+                'attendee_ids' => $attendeeIds,
+                'text' => $text !== '' ? $text : ' ',
+                'account_id' => $accountId,
+            ], $context);
+
+        $chatId = trim((string) (Arr::get($result, 'id') ?? Arr::get($result, 'chat_id') ?? Arr::get($result, 'data.id') ?? ''));
+        if ($chatId !== '') {
+            $this->repairConversationChatId($conversation->fresh(), $chatId);
+        }
+
+        $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $meta['attendee_ids'] = $attendeeIds;
+        $conversation->forceFill(['meta' => $meta])->save();
+
+        \Illuminate\Support\Facades\Log::info('[Inbox] Started fresh provider chat for unlinked thread', [
+            'conversation_id' => $conversation->id,
+            'provider' => $conversation->provider,
+            'chat_id' => $chatId !== '' ? $chatId : null,
+            'attendee_ids' => $attendeeIds,
+        ]);
+
+        return is_array($result) ? $result : [];
+    }
+
+    private function recoverFailedSendViaStartChat(
+        User $user,
+        int $organizationId,
+        V2Conversation $conversation,
+        V2Message $message,
+        string $text,
+        string $accountId,
+        string $staleChatId,
+    ): void {
+        $persistence = app(OutreachPersistenceService::class);
+        $attendeeIds = $persistence->resolveAttendeeIdsForConversation(
+            $conversation,
+            (int) $user->id,
+            $organizationId
+        );
+
+        if ($attendeeIds === []) {
+            throw new \RuntimeException($this->unlinkSendFailureMessage((string) $conversation->provider));
+        }
+
+        $result = $this->startChatNow($user, $organizationId, $conversation, $attendeeIds, $text, $accountId);
+
+        $meta = is_array($message->meta) ? $message->meta : [];
+        $meta['status'] = 'sent';
+        $meta['action'] = 'start_chat';
+        $meta['attendee_ids'] = $attendeeIds;
+        $meta['recovered_from_chat_id'] = $staleChatId !== '' ? $staleChatId : null;
+        $meta['chat_recovery_attempted'] = true;
+        $message->forceFill(['meta' => $meta])->save();
+
+        $persistence->markMessageResult($message, $result, 'sent');
+
+        $providerMessageId = trim((string) (Arr::get($result, 'id') ?? Arr::get($result, 'message_id') ?? ''));
+        if ($providerMessageId !== '') {
+            $message->forceFill(['provider_message_id' => $providerMessageId, 'sent_at' => now()])->save();
+        }
     }
 
     public function applyReactionToMessage(V2Conversation $conversation, string $providerMessageId, array $reaction): void
