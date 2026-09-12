@@ -109,7 +109,7 @@ class GetCampaignStatsTool extends GatedTool
             'outreach' => $outreachSummaries,
             'note' => $outreachSummaries === []
                 ? 'No outreach campaigns yet. Launch a Command Center plan to create a draft.'
-                : 'Open a campaign URL for details. Reply rates are from outreach lead status.',
+                : 'Open a campaign URL for details. Reply counts are from outreach lead status — for live inbox replies also use get_attention_queue.',
         ];
     }
 }

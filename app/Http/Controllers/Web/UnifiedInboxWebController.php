@@ -607,15 +607,22 @@ class UnifiedInboxWebController extends Controller
             ->values()
             ->all();
 
-        $hasAny = $signals !== [] || $facts !== [] || $pages !== [];
+        $stage = trim((string) ($dossier['conversion_stage'] ?? '')) ?: 'opening';
+        $company = trim((string) Arr::get($dossier, 'business.company', '')) ?: null;
+        $headline = trim((string) Arr::get($dossier, 'business.headline', '')) ?: null;
+        $hasAny = $signals !== [] || $facts !== [] || $pages !== []
+            || ($stage !== '' && $stage !== 'opening')
+            || $company !== null
+            || $headline !== null;
+
         if (! $hasAny) {
             return null;
         }
 
         return [
-            'company' => trim((string) Arr::get($dossier, 'business.company', '')) ?: null,
-            'headline' => trim((string) Arr::get($dossier, 'business.headline', '')) ?: null,
-            'conversion_stage' => trim((string) ($dossier['conversion_stage'] ?? '')) ?: 'opening',
+            'company' => $company,
+            'headline' => $headline,
+            'conversion_stage' => $stage,
             'updated_at' => (string) ($dossier['updated_at'] ?? ''),
             'signals' => $signals,
             'conversation_facts' => array_slice($facts, -8),

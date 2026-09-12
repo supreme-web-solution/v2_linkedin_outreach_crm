@@ -1165,6 +1165,59 @@ function onComposerKeydown(e: KeyboardEvent) {
                             </p>
                         </div>
                         <div
+                            v-if="localOutreachContext.ai_insights?.prospect_dossier"
+                            class="mt-3 rounded-lg border border-blue-200 bg-blue-50/70 px-2.5 py-2 text-xs text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100"
+                        >
+                            <div class="font-medium">Prospect memory</div>
+                            <p class="mt-1 text-[11px] opacity-80">
+                                Grows on every reply — links scraped, facts saved.
+                            </p>
+                            <div class="mt-2 rounded-md border border-blue-200/60 bg-white/60 px-2 py-1.5 dark:border-blue-900/40 dark:bg-black/20">
+                                <div class="font-medium capitalize">
+                                    Stage: {{ localOutreachContext.ai_insights.prospect_dossier.conversion_stage }}
+                                </div>
+                                <p v-if="localOutreachContext.ai_insights.prospect_dossier.company" class="mt-1">
+                                    Company: {{ localOutreachContext.ai_insights.prospect_dossier.company }}
+                                </p>
+                            </div>
+                            <div
+                                v-if="(localOutreachContext.ai_insights.prospect_dossier.scraped_pages ?? []).length > 0"
+                                class="mt-2 space-y-1.5"
+                            >
+                                <div class="font-medium">Researched links</div>
+                                <div
+                                    v-for="(page, i) in localOutreachContext.ai_insights.prospect_dossier.scraped_pages"
+                                    :key="`page-${i}`"
+                                    class="rounded-md border border-blue-200/50 bg-white/50 px-2 py-1.5 dark:border-blue-900/30 dark:bg-black/10"
+                                >
+                                    <a
+                                        v-if="page.url"
+                                        :href="page.url"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        class="font-medium text-primary hover:underline"
+                                    >
+                                        {{ page.title || page.url }}
+                                    </a>
+                                    <p v-if="page.excerpt" class="mt-1 line-clamp-4 whitespace-pre-wrap opacity-90">
+                                        {{ page.excerpt }}
+                                    </p>
+                                </div>
+                            </div>
+                            <ul
+                                v-if="(localOutreachContext.ai_insights.prospect_dossier.conversation_facts ?? []).length > 0"
+                                class="mt-2 max-h-28 space-y-1 overflow-y-auto"
+                            >
+                                <li
+                                    v-for="(row, i) in localOutreachContext.ai_insights.prospect_dossier.conversation_facts"
+                                    :key="`fact-inline-${i}`"
+                                    class="rounded border border-blue-200/40 px-2 py-1"
+                                >
+                                    {{ row.fact }}
+                                </li>
+                            </ul>
+                        </div>
+                        <div
                             v-if="localOutreachContext.ai_insights?.classification"
                             class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
                         >
@@ -1206,54 +1259,6 @@ function onComposerKeydown(e: KeyboardEvent) {
                         </p>
                     </div>
 
-                    <div
-                        v-if="localOutreachContext.ai_insights?.prospect_dossier"
-                        class="shrink-0 rounded-xl border border-border bg-card p-3 text-sm shadow-sm"
-                    >
-                        <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            <Bot class="h-3.5 w-3.5" /> Prospect memory
-                        </div>
-                        <p class="mt-1 text-[11px] text-muted-foreground">
-                            Read-only intelligence that grows as this conversation continues.
-                        </p>
-                        <div class="mt-2 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2 text-xs">
-                            <div class="font-medium capitalize">
-                                Stage: {{ localOutreachContext.ai_insights.prospect_dossier.conversion_stage }}
-                            </div>
-                            <p v-if="localOutreachContext.ai_insights.prospect_dossier.company" class="mt-1">
-                                Company: {{ localOutreachContext.ai_insights.prospect_dossier.company }}
-                            </p>
-                            <p v-if="localOutreachContext.ai_insights.prospect_dossier.headline" class="mt-1">
-                                Headline: {{ localOutreachContext.ai_insights.prospect_dossier.headline }}
-                            </p>
-                        </div>
-                        <div
-                            v-if="(localOutreachContext.ai_insights.prospect_dossier.signals ?? []).length > 0"
-                            class="mt-2 rounded-lg border border-border/60 bg-background px-2.5 py-2 text-xs"
-                        >
-                            <div class="font-medium">Signals</div>
-                            <ul class="mt-1 list-disc space-y-1 pl-4">
-                                <li v-for="(signal, i) in localOutreachContext.ai_insights.prospect_dossier.signals" :key="`signal-${i}`">
-                                    {{ signal }}
-                                </li>
-                            </ul>
-                        </div>
-                        <div
-                            v-if="(localOutreachContext.ai_insights.prospect_dossier.conversation_facts ?? []).length > 0"
-                            class="mt-2 rounded-lg border border-border/60 bg-background px-2.5 py-2 text-xs"
-                        >
-                            <div class="font-medium">Conversation facts</div>
-                            <ul class="mt-1 max-h-40 space-y-1.5 overflow-y-auto pr-1">
-                                <li
-                                    v-for="(row, i) in localOutreachContext.ai_insights.prospect_dossier.conversation_facts"
-                                    :key="`fact-${i}`"
-                                    class="rounded-md border border-border/40 bg-muted/20 px-2 py-1"
-                                >
-                                    <p>{{ row.fact }}</p>
-                                </li>
-                            </ul>
-                        </div>
-                    </div>
                 </div>
 
                 <div v-else-if="selected" class="flex min-h-0 w-full shrink-0 flex-col gap-3 overflow-y-auto lg:h-full lg:w-72 lg:self-start lg:pr-1">

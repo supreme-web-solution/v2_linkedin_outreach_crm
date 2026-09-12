@@ -1239,6 +1239,72 @@ class UnifiedInboxTest extends TestCase
         $this->assertSame('replied', $lead->fresh()->status);
     }
 
+    public function test_inbound_reply_on_completed_one_shot_campaign_marks_lead_replied(): void
+    {
+        $user = $this->userWithOrg();
+
+        $campaign = V2OutreachCampaign::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'name' => 'One-shot email',
+            'status' => 'completed',
+            'node_model' => [
+                ['key' => 1, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Intro'],
+            ],
+            'meta' => [
+                'channel_inbox' => [
+                    'email' => ['ai_context' => '', 'auto_reply_enabled' => false, 'pause_on_reply' => true],
+                ],
+            ],
+        ]);
+
+        $lead = V2OutreachLead::query()->create([
+            'outreach_campaign_id' => $campaign->id,
+            'full_name' => 'William Victor',
+            'email' => 'vickenconcept@gmail.com',
+            'status' => 'done',
+        ]);
+
+        V2OutreachLeadProgress::query()->create([
+            'outreach_campaign_id' => $campaign->id,
+            'outreach_lead_id' => $lead->id,
+            'current_node_key' => 1,
+            'next_node_key' => 0,
+            'run_status' => 0,
+            'channel_state' => [],
+        ]);
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'email',
+            'provider_chat_id' => 'vickenconcept@gmail.com',
+            'status' => 'active',
+            'meta' => [
+                'source' => 'unified_inbox',
+                'outreach_lead_id' => $lead->id,
+                'outreach_campaign_id' => $campaign->id,
+            ],
+        ]);
+
+        app(UnifiedInboxReplyService::class)->handleInbound(
+            $conversation,
+            'Thank you, I will check it out.',
+            $user->id,
+        );
+
+        $lead->refresh();
+        $progress = V2OutreachLeadProgress::query()
+            ->where('outreach_lead_id', $lead->id)
+            ->first();
+
+        $this->assertSame('replied', $lead->status);
+        $this->assertTrue($progress?->channel_state['email']['replied'] ?? false);
+
+        $stats = app(\App\V2\Outreach\OutreachCampaignStatsService::class)->statsFor($campaign);
+        $this->assertSame(1, $stats['by_status']['replied']);
+        $this->assertSame(0, $stats['by_status']['done']);
+    }
+
     public function test_email_inbound_dedupes_webhook_and_list_ids_and_keeps_attachments(): void
     {
         $user = $this->userWithOrg();

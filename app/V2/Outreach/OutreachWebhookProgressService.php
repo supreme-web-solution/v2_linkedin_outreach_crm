@@ -100,11 +100,21 @@ class OutreachWebhookProgressService
         array $updates,
         bool $advanceCondition = true,
     ): void {
-        if (in_array($lead->status, ['done', 'skipped'], true)) {
+        $isReplyUpdate = ! empty($updates['replied']);
+
+        if ($lead->status === 'skipped') {
             return;
         }
 
-        if (! in_array($campaign->status, ['active', 'running'], true)) {
+        if (! $isReplyUpdate) {
+            if (in_array($lead->status, ['done', 'skipped'], true)) {
+                return;
+            }
+
+            if (! in_array($campaign->status, ['active', 'running'], true)) {
+                return;
+            }
+        } elseif (! in_array($campaign->status, ['active', 'running', 'completed'], true)) {
             return;
         }
 
@@ -130,6 +140,11 @@ class OutreachWebhookProgressService
             $progress->forceFill(['acceptance_status' => true])->save();
         }
 
+        if ($isReplyUpdate && $lead->status === 'done') {
+            $lead->forceFill(['status' => 'replied'])->save();
+            $advanceCondition = false;
+        }
+
         if ($advanceCondition) {
             $this->tryAdvanceWaitingCondition($lead->fresh() ?? $lead, $progress->fresh() ?? $progress, $campaign);
         }
@@ -145,8 +160,8 @@ class OutreachWebhookProgressService
         return V2OutreachLead::query()
             ->whereHas('campaign', fn ($q) => $q
                 ->where('user_id', $userId)
-                ->whereIn('status', ['active', 'running']))
-            ->whereNotIn('status', ['done', 'skipped', 'replied'])
+                ->whereIn('status', ['active', 'running', 'completed']))
+            ->whereNotIn('status', ['skipped', 'replied'])
             ->whereRaw('LOWER(email) = ?', [$normalized])
             ->get();
     }

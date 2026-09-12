@@ -127,8 +127,19 @@ class AttentionQueueService
             ->where('status', 'pending')
             ->count();
 
+        $sociHandledRecently = app(InboxSociHandlingService::class)->countRecentlyHandledForUser($user);
+        $pendingDraftReplies = \App\Models\AiActionApproval::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->where('status', 'pending')
+            ->where('tool', 'draft_reply')
+            ->count();
+
         $needYou = $totals['hot'] + $totals['needs_judgment'] + $pendingCount;
-        $aiHandledEstimate = $totals['low_priority'];
+        $aiHandledEstimate = max(
+            $totals['low_priority'],
+            $sociHandledRecently + $pendingDraftReplies,
+        );
 
         $counts = array_merge($totals, [
             'pending_approvals' => $pendingCount,

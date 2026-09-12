@@ -517,7 +517,15 @@ class AgentOrchestrator
                 .'. Ask the user to specify which resource they mean. Do not mutate data or execute outreach/delete tools.]'
                 ."\n\n".$promptMessage;
         } elseif (($plan['required_outcome'] ?? '') === 'status_only') {
-            $promptMessage = '[Turn plan: read-only — answer from search_activity, search_prospects, get_campaign_stats, or activity tools. Do not discover, draft campaigns, send, or delete.]'
+            $replyCheck = (bool) preg_match(
+                '/\b(reply|replies|replied|respond(?:ed|s)?|response|heard back|got back|inbox)\b/i',
+                $promptMessage,
+            );
+            $promptMessage = ($replyCheck
+                ? '[Turn plan: reply check — call get_attention_queue first (unified inbox is the source of truth for replies). '
+                    .'Use get_campaign_stats only for send/completion counts on a named campaign. If they disagree, trust the inbox. '
+                    .'Do not discover, draft campaigns, send, or delete.]'
+                : '[Turn plan: read-only — answer from search_activity, search_prospects, get_campaign_stats, get_attention_queue, or activity tools. Do not discover, draft campaigns, send, or delete.]')
                 ."\n\n".$promptMessage;
         } elseif ($plan['planning_degraded'] ?? false) {
             $promptMessage = '[Turn plan: semantic planner unavailable — using conservative fallback. Prefer read/search tools; do not mutate unless the user message clearly requests delete or outreach and policy allows it.]'

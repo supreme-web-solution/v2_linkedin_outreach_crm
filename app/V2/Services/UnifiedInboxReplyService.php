@@ -8,7 +8,9 @@ use App\Models\V2Message;
 use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
+use App\Jobs\V2\ProactiveInboundReplyJob;
 use App\V2\Ai\Services\ConversionStageService;
+use App\V2\Ai\Services\InboxSociHandlingService;
 use App\V2\Ai\Services\ProspectIntelligenceService;
 use App\V2\Ai\Services\ProspectMemoryService;
 use App\V2\Ai\Services\WorkspaceContextService;
@@ -189,29 +191,66 @@ class UnifiedInboxReplyService
         }
 
         if ($this->autoResponses->handleInbound($conversation, $inboundBody, $userId, $organizationId)) {
+            $this->finishInboundHandling($conversation, $userId, true);
+
             return;
         }
 
-        if (! $this->channelSettings->autoReplyEnabled($campaign, (string) $conversation->provider)) {
+        $autoReplySent = false;
+
+        if ($this->channelSettings->autoReplyEnabled($campaign, (string) $conversation->provider)) {
+            $aiContext = $this->channelSettings->aiContextFor($campaign, (string) $conversation->provider);
+            if ($aiContext !== '' && $this->openai->isConfigured()) {
+                $reply = $this->generateAiReply($conversation, $inboundBody, $aiContext, $user, $lead, $campaign);
+                if ($reply !== '') {
+                    try {
+                        $this->inbox->sendMessage($user, $conversation, $reply);
+                        $this->recordOutboundConversionStage($user, $conversation, $reply);
+                        $autoReplySent = true;
+                    } catch (\Throwable) {
+                        // Fall through to proactive Soci draft.
+                    }
+                }
+            }
+        }
+
+        $this->finishInboundHandling($conversation, $userId, $autoReplySent);
+    }
+
+    private function finishInboundHandling(V2Conversation $conversation, int $userId, bool $autoReplySent): void
+    {
+        $latestInbound = V2Message::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('direction', 'inbound')
+            ->orderByDesc('received_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $latestInbound) {
             return;
         }
 
-        $aiContext = $this->channelSettings->aiContextFor($campaign, (string) $conversation->provider);
-        if ($aiContext === '' || ! $this->openai->isConfigured()) {
+        $handling = app(InboxSociHandlingService::class);
+        if ($handling->isAlreadyHandled($conversation, (int) $latestInbound->id)) {
             return;
         }
 
-        $reply = $this->generateAiReply($conversation, $inboundBody, $aiContext, $user, $lead, $campaign);
-        if ($reply === '') {
+        if ($autoReplySent) {
+            $handling->markHandled($conversation->fresh() ?? $conversation, (int) $latestInbound->id, 'campaign_auto_reply');
+
             return;
         }
 
-        try {
-            $this->inbox->sendMessage($user, $conversation, $reply);
-            $this->recordOutboundConversionStage($user, $conversation, $reply);
-        } catch (\Throwable) {
+        if (! (bool) config('socifusion_ai.proactive_inbound_reply', true)) {
             return;
         }
+
+        ProactiveInboundReplyJob::dispatch(
+            (int) $conversation->id,
+            $userId,
+            (int) $latestInbound->id,
+        );
     }
 
     private function recordOutboundConversionStage(User $user, V2Conversation $conversation, string $body): void
@@ -270,7 +309,13 @@ class UnifiedInboxReplyService
             return;
         }
 
-        if (in_array($lead->status, ['done', 'skipped', 'replied'], true)) {
+        if (in_array($lead->status, ['skipped', 'replied'], true)) {
+            return;
+        }
+
+        if ($lead->status === 'done') {
+            $lead->forceFill(['status' => 'replied'])->save();
+
             return;
         }
 

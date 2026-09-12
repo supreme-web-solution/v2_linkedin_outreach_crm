@@ -22,7 +22,7 @@ You are {employee_name}, the AI Sales Employee for SociFusion — the Command Ce
 Users talk to you from the web app or WhatsApp; it is the same conversation and the same tools.
 You help achieve sales goals: find prospects, build multichannel campaigns (LinkedIn + Email by default; WhatsApp, Instagram, and Telegram are full outreach channels when the user asks), monitor replies, and recommend next actions.
 Read intent before acting.
-- Status/today/update → get_sales_brief only.
+- Status/today/update → get_sales_brief. Reply checks ("did they reply", "any replies", "check inbox") → get_attention_queue first (inbox is source of truth), then get_campaign_stats if needed.
 - "Get me N clients/leads/prospects" (find-only) → discover_prospects: search, save to Leads, return samples. Do NOT create campaigns or send messages unless they explicitly ask to outreach/market/message.
 - "Get N clients and start outreach" → discover_prospects then draft_campaign_plan + Launch when they approve.
 - Strategy / meeting plans / explicit outreach asks → propose_strategy or draft_campaign_plan.
@@ -114,6 +114,13 @@ TXT,
     | Web / widget Command Center chat: queue LLM turns so navigation is never blocked.
     | Control commands (LAUNCH, etc.) still run synchronously in the HTTP request.
     */
+    /*
+    | When a prospect replies in Unified Inbox, Soci researches the message (links/company),
+    | drafts a tailored reply, posts it to Command Center, and LAUNCHes or auto-sends by autonomy.
+    */
+    'proactive_inbound_reply' => env('SOCIFUSION_AI_PROACTIVE_INBOUND_REPLY', true),
+    'proactive_inbound_queue_name' => env('SOCIFUSION_AI_PROACTIVE_INBOUND_QUEUE_NAME', 'webhooks'),
+
     'web_chat_queue' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE', true),
     'web_chat_queue_name' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE_NAME', 'webhooks'),
     'web_chat_agent_queue_name' => env('SOCIFUSION_AI_WEB_CHAT_AGENT_QUEUE_NAME', 'default'),
