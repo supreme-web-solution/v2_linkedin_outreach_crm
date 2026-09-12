@@ -6,6 +6,7 @@ use App\Models\AiActionApproval;
 use App\Models\AiConversation;
 use App\Models\AiMessage;
 use App\Models\User;
+use App\Models\V2Conversation;
 use App\V2\Ai\Support\PlanLeadList;
 use App\V2\Outreach\OutreachChannelGuard;
 use App\V2\Outreach\OutreachChannelRegistry;
@@ -251,6 +252,35 @@ class CommandCenterService
         }
 
         return $pending;
+    }
+
+    /**
+     * Pending draft replies plus approved plans whose send failed (no v2_message_id yet).
+     *
+     * @return Collection<int, AiActionApproval>
+     */
+    public function retryableDraftReplyApprovals(User $user, int $organizationId): Collection
+    {
+        return AiActionApproval::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->where(function ($query) {
+                $query->where('tool', 'draft_reply')
+                    ->orWhere('payload->type', 'draft_reply');
+            })
+            ->where(function ($query) {
+                $query->where('status', 'pending')
+                    ->orWhere(function ($approved) {
+                        $approved->where('status', 'approved')
+                            ->where(function ($missing) {
+                                $missing->whereNull('result->v2_message_id')
+                                    ->orWhere('result->v2_message_id', '');
+                            });
+                    });
+            })
+            ->orderByDesc('id')
+            ->limit(10)
+            ->get();
     }
 
     public function formatPlanCard(array $plan, ?int $approvalId = null, string $surface = 'web', ?string $tool = null): string
@@ -1551,12 +1581,19 @@ class CommandCenterService
         }
 
         if (in_array($existing->status, ['approved', 'executed'], true)) {
+            $isDraftReply = $existing->tool === 'draft_reply'
+                || ($existing->payload['type'] ?? '') === 'draft_reply';
+            $replyNotSent = empty(data_get($existing->result, 'v2_message_id'));
+
             if ($existing->status === 'approved'
-                && empty(data_get($existing->result, 'outreach_campaign_id'))
                 && $verb === 'LAUNCH'
+                && empty(data_get($existing->result, 'outreach_campaign_id'))
+                && (! $isDraftReply || $replyNotSent)
             ) {
                 return implode("\n", [
-                    "Plan #{$id} was approved but the outreach draft never finished.",
+                    $isDraftReply
+                        ? "Plan #{$id} was approved but the reply didn't send yet."
+                        : "Plan #{$id} was approved but the outreach draft never finished.",
                     '',
                     "Send *LAUNCH {$id}* again to retry.",
                 ]);
@@ -1613,6 +1650,22 @@ class CommandCenterService
 
         $policy = app(AiChannelPolicyService::class);
         $mentioned = $policy->mentionedInPlan($approval->payload ?? []);
+
+        if ($approval->tool === 'draft_reply' || ($approval->payload['type'] ?? '') === 'draft_reply') {
+            $channel = trim((string) ($approval->payload['channel'] ?? ''));
+            if ($channel === '') {
+                $conversationId = (int) ($approval->payload['conversation_id'] ?? 0);
+                if ($conversationId > 0) {
+                    $channel = trim((string) (V2Conversation::query()
+                        ->whereKey($conversationId)
+                        ->value('provider') ?? ''));
+                }
+            }
+            if ($channel !== '') {
+                $mentioned = [$channel];
+            }
+        }
+
         if ($mentioned === []) {
             $mentioned = $policy->primaryKeys();
         }

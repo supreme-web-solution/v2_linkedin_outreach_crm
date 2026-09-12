@@ -332,6 +332,81 @@ class UserTurnIntentService
     }
 
     /**
+     * User wants to resend a staged inbox reply (often after a failed LAUNCH or reconnect).
+     */
+    public function isInboxReplyRetryRequest(string $message): bool
+    {
+        $lower = Str::lower(trim($message));
+        if ($lower === '') {
+            return false;
+        }
+
+        if ($this->isOutreachCommand($lower) || $this->isProspectDiscoveryRequest($lower)) {
+            return false;
+        }
+
+        $patterns = [
+            '/\b(try|send|do)\s+(it\s+)?again\b/',
+            '/\b(send|resend|retry)\s+(the\s+)?(reply|message|it)\b/',
+            '/\b(send|resend)\s+again\b/',
+            '/\b(it\s+)?has\s+been\s+enabled\b.{0,40}\b(send|retry)\b/',
+            '/\b(messaging|send(?:ing)?)\s+(is\s+)?enabled\b/',
+            '/\bplease\s+(try|send)\s+again\b/',
+            '/\bgo\s+ahead\s+and\s+send\b/',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $lower)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * User picked one prospect from Soci's "Which message should I resend?" list.
+     */
+    public function isInboxResendSelection(string $message): bool
+    {
+        $trimmed = trim($message);
+        if ($trimmed === '') {
+            return false;
+        }
+
+        if (preg_match('/\bconversation\s+#?\d+\b/i', $trimmed)) {
+            return true;
+        }
+
+        return (bool) preg_match('/^[A-Za-z0-9].+?\s*[—–-]\s*.+/u', $trimmed);
+    }
+
+    /**
+     * @return array{name: string|null, conversation_id: int|null}
+     */
+    public function extractInboxResendSelection(string $message): array
+    {
+        $trimmed = trim($message);
+        $conversationId = null;
+        $name = null;
+
+        if (preg_match('/\bconversation\s+#?(\d+)\b/i', $trimmed, $match)) {
+            $conversationId = (int) $match[1];
+        }
+
+        if (preg_match('/^(.+?)\s*[—–-]\s*/u', $trimmed, $match)) {
+            $name = trim($match[1]);
+        } elseif (preg_match('/\bfor\s+([A-Za-z][\w\s.-]{1,60})\b/u', $trimmed, $match)) {
+            $name = trim($match[1]);
+        }
+
+        return [
+            'name' => $name !== '' ? $name : null,
+            'conversation_id' => $conversationId > 0 ? $conversationId : null,
+        ];
+    }
+
+    /**
      * @return array{email: string|null, name: string|null}
      */
     public function extractInboxReplyTarget(string $message): array

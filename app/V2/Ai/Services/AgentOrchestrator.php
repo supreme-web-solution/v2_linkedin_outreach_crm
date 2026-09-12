@@ -461,6 +461,50 @@ class AgentOrchestrator
             return ['early' => $payload];
         }
 
+        $inboxRetryPreflight = app(InboxReplyRetryPreflightService::class)->tryHandle(
+            $user,
+            $organizationId,
+            $conversation,
+            $message,
+        );
+
+        if ($inboxRetryPreflight && ($inboxRetryPreflight['handled'] ?? false)) {
+            AiMessage::query()->create([
+                'conversation_id' => $conversation->id,
+                'role' => 'user',
+                'content' => $message,
+                'provider_message_id' => $providerMessageId,
+                'meta' => ['channel' => $channel],
+            ]);
+
+            $reply = (string) ($inboxRetryPreflight['reply'] ?? '');
+            $approval = $inboxRetryPreflight['approval'] ?? null;
+
+            AiMessage::query()->create([
+                'conversation_id' => $conversation->id,
+                'role' => 'assistant',
+                'content' => $reply,
+                'meta' => array_filter([
+                    'channel' => $channel,
+                    'control' => 'inbox_reply_retry_preflight',
+                    'approval_id' => $approval instanceof AiActionApproval ? $approval->id : null,
+                ]),
+            ]);
+
+            $payload = $this->payload(
+                $user,
+                $organizationId,
+                $conversation->id,
+                $reply,
+                $approval instanceof AiActionApproval && $approval->status === 'pending'
+                    ? $approval
+                    : null,
+            );
+            $payload['status'] = 'done';
+
+            return ['early' => $payload];
+        }
+
         $inboxPreflight = app(InboxReplyTurnPreflightService::class)->tryHandle(
             $user,
             $organizationId,

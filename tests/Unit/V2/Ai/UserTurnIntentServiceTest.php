@@ -77,6 +77,17 @@ class UserTurnIntentServiceTest extends TestCase
         $this->assertFalse($intent->isCampaignActionRequest('reply to Sarah in the inbox'));
     }
 
+    public function test_inbox_reply_retry_intent(): void
+    {
+        $intent = app(UserTurnIntentService::class);
+
+        $this->assertTrue($intent->isInboxReplyRetryRequest('try it again'));
+        $this->assertTrue($intent->isInboxReplyRetryRequest('send again'));
+        $this->assertTrue($intent->isInboxReplyRetryRequest('it has been enabled send again'));
+        $this->assertFalse($intent->isInboxReplyRetryRequest('find 10 leads'));
+        $this->assertTrue($intent->isInboxResendSelection('Nancy Ifeoma Ozoume — "Brief me more on this!"'));
+    }
+
     public function test_company_mention_without_outreach_verb_stays_non_outreach(): void
     {
         $intent = app(UserTurnIntentService::class);
