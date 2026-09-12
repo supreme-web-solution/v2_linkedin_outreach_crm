@@ -446,6 +446,8 @@ class DiscoverProspectsService
 
         if ($streamProgress) {
             $progress->status('Searching LinkedIn profiles…');
+        } elseif (app(WebChatTurnProgressService::class)->active()) {
+            app(WebChatTurnProgressService::class)->status('Finding prospects…');
         }
 
         $channelResults = [];

@@ -6,6 +6,7 @@ use App\V2\Ai\Enums\AiToolPermission;
 use App\V2\Ai\Services\DiscoverProspectsService;
 use App\V2\Ai\Services\MultiChannelCampaignStagingService;
 use App\V2\Ai\Services\TurnExecutionLedger;
+use App\V2\Ai\Services\TurnPlanContext;
 use App\V2\Ai\Services\UserTurnIntentService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Ai\Tools\Request;
@@ -20,14 +21,15 @@ class DiscoverProspectsTool extends GatedTool
 
     public function permission(): AiToolPermission
     {
-        return AiToolPermission::Read;
+        return AiToolPermission::Prepare;
     }
 
     public function description(): Stringable|string
     {
-        return 'Find and SAVE prospects to Leads. Default: search + save only — no campaigns, no messaging. '
-            .'Use draft_campaign_plan only when the user explicitly asks to outreach/market/message. '
-            .'Never use for status updates ("what do we have today", brief).';
+        return 'Discover net-new prospects from external searchable channels and save them to Leads. '
+            .'Use this when existing lists are insufficient or user explicitly requests fresh/new prospects. '
+            .'Call ONCE per user turn — do not retry with different keywords if the first search saved or failed. '
+            .'This mutates CRM state by saving leads but does not send messages by itself.';
     }
 
     public function schema(JsonSchema $schema): array
@@ -62,12 +64,28 @@ class DiscoverProspectsTool extends GatedTool
 
     protected function run(Request $request): array
     {
+        $turnPlan = app(TurnPlanContext::class)->get();
+        $workflowBlock = app(\App\V2\Ai\Services\WorkflowOrchestrationGuardService::class)
+            ->blockTool(is_array($turnPlan) ? $turnPlan : null, 'discover_prospects');
+        if ($workflowBlock !== null) {
+            return $workflowBlock;
+        }
+
+        $ledger = app(TurnExecutionLedger::class);
+        if ($ledger->hasDiscoveryAttempt()) {
+            return [
+                'already_executed' => true,
+                'do_not_search_again' => true,
+                'report' => $ledger->report() ?: 'Prospect search already ran this turn.',
+                'instruction' => 'Do NOT call discover_prospects again. Continue with draft_campaign_plan, or reply with the saved results.',
+            ];
+        }
+
         $query = (string) $request['query'];
         $intent = app(UserTurnIntentService::class);
         $userMessage = $this->latestUserMessage();
         $intentSource = $userMessage !== '' ? $userMessage : $query;
 
-        // Always judge outreach vs find-only from the real user turn — never from LLM-rewritten tool query.
         $wantsOutreach = $intent->isOutreachCommand($intentSource);
         $setupOnly = $intent->wantsCampaignSetupOnly($intentSource);
         $preferFresh = (bool) ($request['prefer_fresh'] ?? false) || $intent->wantsFreshProspectPull($intentSource);
@@ -75,8 +93,14 @@ class DiscoverProspectsTool extends GatedTool
         $discover = app(DiscoverProspectsService::class);
         $userCount = $discover->inferCountFromQuery($intentSource)
             ?? $discover->inferCountFromQuery($query);
-        // Ignore hallucinated target_count (e.g. 50) when the user never specified a number.
         $targetCount = $userCount;
+        $turnPlan = app(TurnPlanContext::class)->get();
+        if (is_array($turnPlan)) {
+            $workflowQty = (int) ($turnPlan['state_evaluation']['remaining_discovery'] ?? 0);
+            if ($workflowQty > 0 && isset($turnPlan['workflow_run_id'])) {
+                $targetCount = $workflowQty;
+            }
+        }
         if ($targetCount === null && isset($request['target_count']) && $userMessage === '') {
             $targetCount = (int) $request['target_count'];
         }
@@ -88,36 +112,60 @@ class DiscoverProspectsTool extends GatedTool
             && ! $wantsOutreach
             && ! preg_match('/\b(instagram|ig)\b/i', $query)
         ) {
-            // Find/save without IG mention → LinkedIn first (avoid celebrity Mindcase noise).
             $platform = 'linkedin';
         }
 
+        $ledger->markDiscoveryAttempted();
+
         $result = $discover->discover(
-                user: $this->context->user,
-                query: $query,
-                competitors: $request['competitors'] ?? null,
-                limit: (int) ($request['limit'] ?? 10),
-                targetCount: $targetCount,
-                preferFresh: $preferFresh,
-                geography: isset($request['geography']) ? (string) $request['geography'] : null,
-                networkDegree: isset($request['network_degree']) ? (string) $request['network_degree'] : null,
-                title: isset($request['title']) ? (string) $request['title'] : null,
-                company: isset($request['company']) ? (string) $request['company'] : null,
-                openLink: array_key_exists('open_link', $request->all()) ? (bool) $request['open_link'] : null,
-                profileUrl: isset($request['profile_url']) ? (string) $request['profile_url'] : null,
-                platform: $platform,
+            user: $this->context->user,
+            query: $query,
+            competitors: $request['competitors'] ?? null,
+            limit: (int) ($request['limit'] ?? 10),
+            targetCount: $targetCount,
+            preferFresh: $preferFresh,
+            geography: isset($request['geography']) ? (string) $request['geography'] : null,
+            networkDegree: isset($request['network_degree']) ? (string) $request['network_degree'] : null,
+            title: isset($request['title']) ? (string) $request['title'] : null,
+            company: isset($request['company']) ? (string) $request['company'] : null,
+            openLink: array_key_exists('open_link', $request->all()) ? (bool) $request['open_link'] : null,
+            profileUrl: isset($request['profile_url']) ? (string) $request['profile_url'] : null,
+            platform: $platform,
         );
 
-        if (($result['mode'] ?? '') !== 'parallel' || empty($result['lists'])) {
-            if (! $wantsOutreach && empty($result['discovery_only'])) {
-                $result['discovery_only'] = true;
-                $result['instruction'] = 'User asked to find/save prospects only — no outreach. Reply with what was saved in Leads. Do NOT draft or launch campaigns.';
-            }
-
-            return $result;
+        if (($result['mode'] ?? '') === 'parallel' && ! empty($result['lists'])) {
+            return $this->finalizeParallelDiscovery(
+                $result,
+                $ledger,
+                $intentSource,
+                $query,
+                $wantsOutreach,
+                $setupOnly,
+            );
         }
 
-        $ledger = app(TurnExecutionLedger::class);
+        return $this->finalizeSingleChannelDiscovery(
+            $result,
+            $ledger,
+            $intentSource,
+            $query,
+            $wantsOutreach,
+            $setupOnly,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     * @return array<string, mixed>
+     */
+    private function finalizeParallelDiscovery(
+        array $result,
+        TurnExecutionLedger $ledger,
+        string $intentSource,
+        string $query,
+        bool $wantsOutreach,
+        bool $setupOnly,
+    ): array {
         if ($ledger->ownsTurnResult()) {
             return [
                 'already_executed' => true,
@@ -145,16 +193,74 @@ class DiscoverProspectsTool extends GatedTool
                 $result['execution_report'] = $ledger->report();
                 $result['instruction'] = $setupOnly
                     ? 'User asked for outreach setup but NOT to send yet. Reply with the execution report. Campaigns are staged in Review & Launch — do NOT LAUNCH or activate.'
-                    : 'User asked for outreach. Reply with the execution report.';
-            }
+                    : 'User asked for outreach. Reply with the execution report. Do NOT call discover_prospects again.';
 
-            return $result;
+                return $result;
+            }
         }
 
         $ledger->recordDiscovery($intentSource !== '' ? $intentSource : $query, $allocation, $channelResults);
         $result['discovery_only'] = true;
         $result['execution_report'] = $ledger->report();
         $result['instruction'] = 'User asked to find/save prospects only — no outreach. Reply with the discovery report. Do NOT draft campaigns unless they ask to message/outreach.';
+
+        return $result;
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     * @return array<string, mixed>
+     */
+    private function finalizeSingleChannelDiscovery(
+        array $result,
+        TurnExecutionLedger $ledger,
+        string $intentSource,
+        string $query,
+        bool $wantsOutreach,
+        bool $setupOnly,
+    ): array {
+        $platform = (string) ($result['platform'] ?? 'linkedin');
+        $lists = is_array($result['lists'] ?? null) ? $result['lists'] : [];
+        if ($lists === [] && is_array($result['best_match'] ?? null)) {
+            $lists = [$result['best_match']];
+        }
+
+        $allocation = [
+            'allocation' => [
+                $platform => (int) ($result['total_leads_in_matches'] ?? 0),
+            ],
+        ];
+        $channelResults = [$platform => $result];
+
+        if ($wantsOutreach && $lists !== []) {
+            $staged = app(MultiChannelCampaignStagingService::class)->stage(
+                $this->context->user,
+                $this->context->organizationId,
+                $intentSource !== '' ? $intentSource : $query,
+                $lists,
+                $this->context->conversation,
+            );
+
+            if ($staged !== []) {
+                $ledger->recordOutreach($intentSource !== '' ? $intentSource : $query, $allocation, $channelResults, $staged);
+                $result['staged_campaigns'] = $staged;
+                $result['execution_report'] = $ledger->report();
+                $result['instruction'] = $setupOnly
+                    ? 'Outreach plan staged — reply with the execution report. Do NOT search again or LAUNCH without user approval.'
+                    : 'Outreach plan staged — reply with the execution report. Do NOT call discover_prospects again.';
+
+                return $result;
+            }
+        }
+
+        $ledger->recordDiscovery($intentSource !== '' ? $intentSource : $query, $allocation, $channelResults);
+        $result['discovery_only'] = ! $wantsOutreach;
+        $result['execution_report'] = $ledger->report();
+        $result['instruction'] = ($result['search_failed'] ?? false)
+            ? 'Search failed or returned nothing — explain why and suggest trying again in a new message. Do NOT call discover_prospects again this turn.'
+            : ($wantsOutreach
+                ? 'Prospects saved but campaign could not be auto-staged — call draft_campaign_plan with the list_hash. Do NOT search again.'
+                : 'Reply with the discovery report. Do NOT draft or launch campaigns unless the user asked to outreach.');
 
         return $result;
     }

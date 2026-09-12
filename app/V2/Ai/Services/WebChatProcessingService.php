@@ -4,6 +4,7 @@ namespace App\V2\Ai\Services;
 
 use App\Models\AiConversation;
 use App\Models\AiMessage;
+use App\Models\AiWorkflowRun;
 use Illuminate\Support\Carbon;
 
 class WebChatProcessingService
@@ -114,10 +115,11 @@ class WebChatProcessingService
         $userMessageId = (int) ($pending['user_message_id'] ?? 0);
 
         if ($userMessageId <= 0) {
-            return $this->pendingTurnFromMessages($conversation);
+            return $this->pendingTurnFromMessages($conversation)
+                ?? $this->workflowOrchestrationSnapshot($conversation);
         }
 
-        if ($this->hasAssistantReplyAfter($conversation, $userMessageId)) {
+        if ($this->conversationTurnComplete($conversation, $userMessageId)) {
             $this->clearAll($conversation);
 
             return null;
@@ -154,7 +156,7 @@ class WebChatProcessingService
             return null;
         }
 
-        if ($this->hasAssistantReplyAfter($conversation, (int) $lastUser->id)) {
+        if ($this->conversationTurnComplete($conversation, (int) $lastUser->id)) {
             return null;
         }
 
@@ -167,6 +169,65 @@ class WebChatProcessingService
                 'label' => 'Thinking…',
             ],
         ];
+    }
+
+    /**
+     * Turn is complete when Soci has replied and no background workflow is still running.
+     */
+    public function conversationTurnComplete(AiConversation $conversation, int $userMessageId): bool
+    {
+        if (! $this->hasAssistantReplyAfter($conversation, $userMessageId)) {
+            return false;
+        }
+
+        return ! $this->hasRunningWorkflow($conversation);
+    }
+
+    /**
+     * Resume polling after refresh when a workflow is still orchestrating in the background.
+     *
+     * @return array{after_message_id:int, processing:array{active:bool, label:string}}|null
+     */
+    public function workflowOrchestrationSnapshot(AiConversation $conversation): ?array
+    {
+        $run = AiWorkflowRun::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('status', 'running')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $run) {
+            return null;
+        }
+
+        $lastUser = AiMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', 'user')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $lastUser) {
+            return null;
+        }
+
+        $label = 'Workflow #'.$run->id.' — working in the background…';
+        $this->update($conversation->fresh() ?? $conversation, 'workflow', $label);
+
+        return [
+            'after_message_id' => (int) $lastUser->id,
+            'processing' => $this->snapshot($conversation->fresh() ?? $conversation) ?? [
+                'active' => true,
+                'label' => $label,
+            ],
+        ];
+    }
+
+    public function hasRunningWorkflow(AiConversation $conversation): bool
+    {
+        return AiWorkflowRun::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('status', 'running')
+            ->exists();
     }
 
     private function hasAssistantReplyAfter(AiConversation $conversation, int $userMessageId): bool

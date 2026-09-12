@@ -46,6 +46,7 @@ class AiActivityLogService
         ?string $createdAfter = null,
         ?string $createdBefore = null,
         int $limit = 50,
+        ?string $keyword = null,
     ): array {
         $query = AiActivityLog::query()
             ->where('organization_id', $organizationId)
@@ -63,6 +64,15 @@ class AiActivityLogService
         }
         if ($createdBefore) {
             $query->where('created_at', '<=', Carbon::parse($createdBefore));
+        }
+        if ($keyword) {
+            $needle = trim($keyword);
+            $query->where(function ($q) use ($needle): void {
+                $q->where('action', 'like', '%'.$needle.'%')
+                    ->orWhere('tool', 'like', '%'.$needle.'%')
+                    ->orWhere('entity_type', 'like', '%'.$needle.'%')
+                    ->orWhere('entity_id', 'like', '%'.$needle.'%');
+            });
         }
 
         return $query->latest('id')->limit(max(1, min(200, $limit)))->get()->map(function (AiActivityLog $row) {

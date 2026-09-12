@@ -149,14 +149,14 @@ class WebChatTurnRecoveryService
         $pending = is_array($meta['web_chat_pending'] ?? null) ? $meta['web_chat_pending'] : [];
         $processing = is_array($meta['web_chat_processing'] ?? null) ? $meta['web_chat_processing'] : [];
 
-        $processingAt = $this->parseTimestamp($processing['updated_at'] ?? null);
-        if ($processingAt !== null && $processingAt->copy()->addSeconds(min($staleSeconds, 120))->isFuture()) {
-            // Worker likely picked up the turn — give it time before re-dispatching.
+        $agentStartedAt = $this->parseTimestamp($pending['agent_started_at'] ?? null);
+        if ($agentStartedAt !== null && $agentStartedAt->copy()->addSeconds($jobTimeout)->isFuture()) {
             return false;
         }
 
-        $agentStartedAt = $this->parseTimestamp($pending['agent_started_at'] ?? null);
-        if ($agentStartedAt !== null && $agentStartedAt->copy()->addSeconds($jobTimeout)->isFuture()) {
+        $processingAt = $this->parseTimestamp($processing['updated_at'] ?? null);
+        if ($processingAt !== null && $processingAt->copy()->addSeconds(min($staleSeconds, 180))->isFuture()) {
+            // Worker is active (including long Mindcase polls) — do not re-dispatch yet.
             return false;
         }
 

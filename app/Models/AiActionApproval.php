@@ -13,10 +13,12 @@ class AiActionApproval extends Model
         'organization_id',
         'user_id',
         'conversation_id',
+        'workflow_run_id',
         'tool',
         'permission',
         'payload',
         'status',
+        'scope_hash',
         'decided_at',
         'decided_by',
         'result',
@@ -44,5 +46,10 @@ class AiActionApproval extends Model
     public function conversation(): BelongsTo
     {
         return $this->belongsTo(AiConversation::class, 'conversation_id');
+    }
+
+    public function workflowRun(): BelongsTo
+    {
+        return $this->belongsTo(AiWorkflowRun::class, 'workflow_run_id');
     }
 }

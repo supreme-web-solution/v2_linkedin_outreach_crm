@@ -23,6 +23,7 @@ class PersonalizedMessageCommandCenterService
         private readonly CommandCenterService $commandCenter,
         private readonly AiEmployeeSettingsService $settingsService,
         private readonly OpenAIContentService $openai,
+        private readonly ProspectResearchService $prospectResearch,
     ) {}
 
     /**
@@ -74,7 +75,8 @@ class PersonalizedMessageCommandCenterService
             throw new \RuntimeException('OpenAI is not configured for personalized message drafting.');
         }
 
-        $evidence = $this->buildEvidence($lead, $campaign, $v2Conversation);
+        $intel = $this->prospectResearch->researchLead($lead);
+        $evidence = $this->buildEvidence($lead, $campaign, $v2Conversation, $intel);
         $context = $this->buildPromptContext($goal, $evidence, $notes);
         $draft = trim($this->openai->generateOutreachContent(
             'generate',
@@ -191,10 +193,15 @@ class PersonalizedMessageCommandCenterService
     /**
      * @return array<string, mixed>
      */
+    /**
+     * @param  array<string, mixed>  $intel
+     * @return array<string, mixed>
+     */
     private function buildEvidence(
         V2OutreachLead $lead,
         ?V2OutreachCampaign $campaign,
         ?V2Conversation $conversation,
+        array $intel = [],
     ): array {
         $inboundPreview = null;
 
@@ -213,10 +220,17 @@ class PersonalizedMessageCommandCenterService
             }
         }
 
+        $meta = is_array($lead->meta) ? $lead->meta : [];
+        $scraped = is_array($intel['scraped'] ?? null) ? $intel['scraped'] : [];
+        $siteExcerpt = trim((string) Arr::get($scraped, '0.excerpt', ''));
+
         return array_filter([
             'full_name' => $lead->full_name,
             'headline' => $lead->headline,
             'profile_url' => $lead->profile_url,
+            'company' => Arr::get($meta, 'company_name') ?? Arr::get($meta, 'company'),
+            'signals' => implode(', ', is_array($intel['signals'] ?? null) ? $intel['signals'] : []),
+            'site_excerpt' => $siteExcerpt !== '' ? Str::limit($siteExcerpt, 500) : null,
             'campaign_name' => $campaign?->name,
             'last_inbound' => $inboundPreview,
         ], fn ($value) => $value !== null && $value !== '');

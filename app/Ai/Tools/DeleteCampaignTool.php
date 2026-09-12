@@ -157,27 +157,15 @@ class DeleteCampaignTool extends GatedTool
             );
         }
 
-        if (count($items) === 1) {
-            $result = $service->stage(
-                $this->context->user,
-                $this->context->organizationId,
-                $this->context->conversation,
-                (string) $items[0]['kind'],
-                (int) $items[0]['resource_id'],
-                $reason,
-                $this->context->channel,
-            );
-        } else {
-            $result = $service->stageBulk(
-                $this->context->user,
-                $this->context->organizationId,
-                $this->context->conversation,
-                $items,
-                $reason,
-                $this->context->channel,
-                'delete_campaign',
-            );
-        }
+        $result = $service->stageBulk(
+            $this->context->user,
+            $this->context->organizationId,
+            $this->context->conversation,
+            $items,
+            $reason,
+            $this->context->channel,
+            'delete_campaign',
+        );
 
         if ($result['blocked'] ?? false) {
             throw new \RuntimeException((string) ($result['message'] ?? 'Blocked'));

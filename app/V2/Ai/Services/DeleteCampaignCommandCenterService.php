@@ -23,6 +23,7 @@ use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
 use App\Models\V2OutreachLeadProgress;
 use App\V2\Ai\Enums\AiToolPermission;
+use App\V2\Services\LeadListService;
 use App\V2\Support\DeletedCampaignArtifactCleaner;
 use Illuminate\Support\Str;
 
@@ -344,6 +345,25 @@ class DeleteCampaignCommandCenterService
     }
 
     /**
+     * Every saved lead list for bulk delete (aud, sn, csv — matches Leads page).
+     *
+     * @return list<array{kind:string,resource_id:string,list_src:string,name:string,total_leads:int}>
+     */
+    public function listDeletableLeadLists(User $user): array
+    {
+        return app(LeadListService::class)->listsForUser($user->id)
+            ->map(fn (array $list) => [
+                'kind' => 'lead_list',
+                'resource_id' => (string) $list['list_id'],
+                'list_src' => (string) $list['src'],
+                'name' => (string) $list['list_name'],
+                'total_leads' => (int) ($list['total_leads'] ?? 0),
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
      * List outreach campaigns eligible for bulk delete (excludes saved templates).
      *
      * @return list<array{kind:string,resource_id:string,name:string,status:string}>
@@ -377,6 +397,31 @@ class DeleteCampaignCommandCenterService
                 'status' => (string) ($c->status ?? ''),
             ])
             ->all();
+    }
+
+    /**
+     * Every outreach + LinkedIn campaign eligible for bulk delete (excludes templates).
+     *
+     * @return list<array{kind:string,resource_id:string,name:string,status:string}>
+     */
+    public function listAllDeletableCampaigns(User $user, int $organizationId): array
+    {
+        $outreach = $this->listDeletableOutreachCampaigns($user, $organizationId);
+
+        $linkedin = V2Campaign::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->orderByDesc('id')
+            ->get(['id', 'name', 'status'])
+            ->map(fn (V2Campaign $c) => [
+                'kind' => 'linkedin',
+                'resource_id' => (string) $c->id,
+                'name' => (string) $c->name,
+                'status' => (string) ($c->status ?? ''),
+            ])
+            ->all();
+
+        return array_values(array_merge($outreach, $linkedin));
     }
 
     /**
@@ -588,21 +633,21 @@ class DeleteCampaignCommandCenterService
             if (! $audience) {
                 throw new \RuntimeException("Audience list {$listHash} not found.");
             }
-            $name = (string) ($audience->name ?: $listHash);
+            $name = (string) ($audience->audience_name ?: $listHash);
             $count = (int) AudienceList::query()->where('audience_id', $listHash)->count();
         } elseif ($src === 'csv') {
             $import = V2OutreachImportList::query()->where('list_hash', $listHash)->where('user_id', $user->id)->first();
             if (! $import) {
                 throw new \RuntimeException("Imported list {$listHash} not found.");
             }
-            $name = (string) ($import->list_name ?: $listHash);
+            $name = (string) ($import->name ?: $listHash);
             $count = (int) V2OutreachImportLead::query()->where('import_list_id', $import->id)->count();
         } else {
             $list = SnLeadList::query()->where('list_hash', $listHash)->where('user_id', $user->id)->first();
             if (! $list) {
                 throw new \RuntimeException("Sales Navigator list {$listHash} not found.");
             }
-            $name = (string) ($list->list_name ?: $listHash);
+            $name = (string) ($list->name ?: $listHash);
             $count = (int) SnLead::query()->where('sn_list_id', $listHash)->count();
         }
 

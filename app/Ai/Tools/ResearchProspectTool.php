@@ -4,6 +4,7 @@ namespace App\Ai\Tools;
 
 use App\Models\V2OutreachLead;
 use App\V2\Ai\Enums\AiToolPermission;
+use App\V2\Ai\Services\CommandCenterResearchService;
 use App\V2\Ai\Services\ProspectResearchService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Ai\Tools\Request;
@@ -23,8 +24,8 @@ class ResearchProspectTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Scrape a prospect bio/website link (JINA) and store prospect_intelligence for personalized first messages. '
-            .'Use before drafting outreach when profile links exist.';
+        return 'Scrape a prospect bio/website link and store prospect_intelligence for personalized messages. '
+            .'Runs automatically when the user pastes a URL in Command Center; call explicitly to persist on an outreach lead.';
     }
 
     public function schema(JsonSchema $schema): array
@@ -61,6 +62,7 @@ class ResearchProspectTool extends GatedTool
             ];
         }
 
+        $url = trim((string) ($request['scrape_url'] ?? $request['profile_url'] ?? ''));
         $intel = app(ProspectResearchService::class)->research([
             'profile_url' => $request['profile_url'] ?? null,
             'headline' => $request['headline'] ?? null,
@@ -69,9 +71,14 @@ class ResearchProspectTool extends GatedTool
             'scrape_url' => $request['scrape_url'] ?? null,
         ]);
 
+        $researchService = app(CommandCenterResearchService::class);
+        $snapshot = $researchService->snapshotFromIntel($url !== '' ? $url : 'manual', $intel);
+        $researchService->persistSnapshots($this->context->conversation, [$snapshot]);
+
         return [
             'prospect_intelligence' => $intel,
-            'message' => 'Research complete (not persisted — pass outreach_lead_id to save on a lead).',
+            'conversation_research' => $snapshot,
+            'message' => 'Research complete and saved on this Command Center conversation. Summarize signals and offer draft_personalized_message if outreach is next.',
         ];
     }
 }

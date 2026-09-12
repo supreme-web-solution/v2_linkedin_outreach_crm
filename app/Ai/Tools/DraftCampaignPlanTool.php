@@ -76,6 +76,13 @@ class DraftCampaignPlanTool extends GatedTool
 
     protected function run(Request $request): array
     {
+        $turnPlan = app(\App\V2\Ai\Services\TurnPlanContext::class)->get();
+        $workflowBlock = app(\App\V2\Ai\Services\WorkflowOrchestrationGuardService::class)
+            ->blockTool(is_array($turnPlan) ? $turnPlan : null, 'draft_campaign_plan');
+        if ($workflowBlock !== null) {
+            return $workflowBlock;
+        }
+
         $ledger = app(\App\V2\Ai\Services\TurnExecutionLedger::class);
         if ($ledger->ownsTurnResult()) {
             return [

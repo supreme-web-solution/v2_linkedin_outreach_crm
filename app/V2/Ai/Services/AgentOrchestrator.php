@@ -273,7 +273,16 @@ class AgentOrchestrator
                 promptMessage: $promptMessage,
             );
         } finally {
-            $this->webChatProcessing->clearAll($conversation->fresh() ?? $conversation);
+            $fresh = $conversation->fresh() ?? $conversation;
+            if ($this->hasActiveWorkflowForConversation($fresh)) {
+                $this->webChatProcessing->update(
+                    $fresh,
+                    'workflow',
+                    'Workflow running — discovering prospects & staging outreach…',
+                );
+            } else {
+                $this->webChatProcessing->clearAll($fresh);
+            }
         }
     }
 
@@ -491,13 +500,55 @@ class AgentOrchestrator
         $ledger = app(TurnExecutionLedger::class);
         $ledger->reset();
         $plan = app(TurnPlanBuilderService::class)->build($user, $organizationId, $promptMessage, $settings);
+        if ($plan['workflow_eligible'] ?? false) {
+            $workflowRun = app(WorkflowRuntimeService::class)->start(
+                $user,
+                $organizationId,
+                $plan,
+                $conversation,
+            );
+            $plan['workflow_run_id'] = $workflowRun->id;
+            $plan['workflow_baseline_state'] = $workflowRun->meta['baseline_state'] ?? null;
+        }
         app(TurnPlanContext::class)->set($plan);
+        if (($plan['required_outcome'] ?? '') === 'clarify') {
+            $reason = trim((string) ($plan['constraints']['clarification_reason'] ?? 'The request needs clarification before any action.'));
+            $promptMessage = '[Turn plan: clarification required — '.$reason
+                .'. Ask the user to specify which resource they mean. Do not mutate data or execute outreach/delete tools.]'
+                ."\n\n".$promptMessage;
+        } elseif (($plan['required_outcome'] ?? '') === 'status_only') {
+            $promptMessage = '[Turn plan: read-only — answer from search_activity, search_prospects, get_campaign_stats, or activity tools. Do not discover, draft campaigns, send, or delete.]'
+                ."\n\n".$promptMessage;
+        } elseif ($plan['planning_degraded'] ?? false) {
+            $promptMessage = '[Turn plan: semantic planner unavailable — using conservative fallback. Prefer read/search tools; do not mutate unless the user message clearly requests delete or outreach and policy allows it.]'
+                ."\n\n".$promptMessage;
+        }
+        $stateContext = app(TurnPlanStateEvaluationService::class)
+            ->promptContext(is_array($plan['state_evaluation'] ?? null) ? $plan['state_evaluation'] : []);
+        if ($stateContext !== null) {
+            $promptMessage = $stateContext."\n\n".$promptMessage;
+        }
+        if (isset($plan['workflow_run_id'])) {
+            $promptMessage = '[Workflow run #'.$plan['workflow_run_id']
+                .' owns orchestration in the background — do NOT call discover_prospects or draft_campaign_plan. '
+                .'Discovery and campaign staging run asynchronously; the chat snapshot may show 0 until the worker finishes. '
+                .'Tell the user discovery is in progress and they will get a follow-up here when the list is saved or a plan is ready for Review & Launch.]'
+                ."\n\n".$promptMessage;
+        }
         $verifier = app(PostExecutionVerifierService::class);
         $beforeSnapshot = $verifier->snapshot($user, $organizationId);
         $progress = app(WebChatTurnProgressService::class);
         $progress->bind($channel === 'web' ? $context : null);
         $postedProgressFinal = false;
         $reply = '';
+
+        $commandCenterResearch = app(CommandCenterResearchService::class);
+        if ($commandCenterResearch->shouldResearch($promptMessage)) {
+            if ($channel === 'web') {
+                $this->webChatProcessing->update($conversation, 'research', 'Researching link & building context…');
+            }
+            $promptMessage = $commandCenterResearch->enrichTurn($conversation, $promptMessage, $promptMessage);
+        }
 
         try {
             $providers = app(AiProviderChain::class)->forAgent();
@@ -617,6 +668,14 @@ class AgentOrchestrator
         }
 
         return $this->payload($user, $organizationId, $conversation->id, $reply, $latestApproval, $settings);
+    }
+
+    private function hasActiveWorkflowForConversation(\App\Models\AiConversation $conversation): bool
+    {
+        return \App\Models\AiWorkflowRun::query()
+            ->where('conversation_id', $conversation->id)
+            ->whereIn('status', ['running', 'waiting', 'planned', 'approved'])
+            ->exists();
     }
 
     private function userFacingAgentError(Throwable $e): string

@@ -192,7 +192,7 @@ return [
         'base_url' => env('MINDCASE_BASE_URL', 'https://api.mindcase.co'),
         'timeout' => (int) env('MINDCASE_TIMEOUT', 120),
         'poll_seconds' => (int) env('MINDCASE_POLL_SECONDS', 2),
-        'max_poll_attempts' => (int) env('MINDCASE_MAX_POLL_ATTEMPTS', 90),
+        'max_poll_attempts' => (int) env('MINDCASE_MAX_POLL_ATTEMPTS', 45),
     ],
 
 ];

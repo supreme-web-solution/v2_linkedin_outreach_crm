@@ -416,6 +416,8 @@ class AiEmployeeWebController extends Controller
         Request $request,
         ActionApprovalService $approvals,
         CommandCenterService $commandCenter,
+        \App\V2\Ai\Services\WorkflowRunService $workflowRuns,
+        \App\V2\Ai\Services\WorkflowPlanValidatorService $workflowValidator,
     ): JsonResponse {
         $user = auth()->user();
         $orgId = (int) ($user->current_organization_id ?? 0);
@@ -425,6 +427,7 @@ class AiEmployeeWebController extends Controller
             'approval_id' => ['required', 'integer'],
             'decision' => ['required', 'in:approve,reject'],
             'draft_text' => ['nullable', 'string', 'max:8000'],
+            'workflow_scope' => ['nullable', 'array'],
         ]);
 
         $approval = $approvals->findPendingForUser($user, $orgId, (int) $data['approval_id']);
@@ -444,8 +447,30 @@ class AiEmployeeWebController extends Controller
 
         if ($data['decision'] === 'reject') {
             $approvals->reject($approval, $user);
+            if ($approval->workflowRun) {
+                $workflowRuns->markRejected($approval->workflowRun);
+            }
             $message = "Rejected plan #{$approval->id}.";
         } else {
+            if ($approval->workflowRun) {
+                $scope = is_array($data['workflow_scope'] ?? null)
+                    ? $data['workflow_scope']
+                    : (is_array($approval->payload['workflow_scope'] ?? null) ? $approval->payload['workflow_scope'] : []);
+                if ($scope !== [] && $workflowRuns->requiresReapproval($approval->workflowRun, $scope)) {
+                    return response()->json([
+                        'message' => 'Approval scope changed materially. Please review the updated plan before approving.',
+                        'requires_reapproval' => true,
+                    ], 422);
+                }
+            }
+            $validation = $workflowValidator->validate($user, $orgId, (string) $approval->tool, (array) ($approval->payload ?? []));
+            if (! $validation['ok']) {
+                return response()->json([
+                    'message' => implode(' ', $validation['errors']),
+                    'blocked' => true,
+                ], 422);
+            }
+
             $integrationBlock = $commandCenter->launchIntegrationBlockMessage($approval, $user);
             if ($integrationBlock !== null) {
                 $conversation = $commandCenter->conversation($user, $orgId);
@@ -469,7 +494,18 @@ class AiEmployeeWebController extends Controller
             }
 
             $approvals->approve($approval, $user);
+            if ($approval->workflowRun) {
+                $workflowRuns->markApproved($approval->workflowRun);
+                $workflowRuns->markRunning($approval->workflowRun, (string) $approval->tool);
+            }
             $message = $commandCenter->launchAcknowledged($approval->fresh(), $user);
+            if ($approval->workflowRun) {
+                if (str_contains(strtolower($message), ' but ')) {
+                    $workflowRuns->markFailed($approval->workflowRun, $message);
+                } else {
+                    $workflowRuns->markCompleted($approval->workflowRun, ['message' => $message]);
+                }
+            }
         }
 
         $conversation = $commandCenter->conversation($user, $orgId);

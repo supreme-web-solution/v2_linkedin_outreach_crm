@@ -27,6 +27,9 @@ class DeleteResourceTool extends GatedTool
     {
         return 'Stage permanent deletion for user approval (one Confirm Delete). NEVER deletes immediately. '
             .'Single: kind + resource_id. Bulk: items=[{kind,resource_id,list_src?,platform?}]. '
+            .'Delete every saved lead list: delete_all_lead_lists=true (aud + sn + csv, one Confirm Delete). '
+            .'Delete every campaign: delete_all_campaigns=true (outreach + LinkedIn, one Confirm Delete). '
+            .'For "delete everything", set delete_all_campaigns=true AND delete_all_lead_lists=true in ONE call. '
             .'Kinds: outreach | linkedin | lead_list (needs list_src) | content_post | inbox_conversation (needs platform) | outreach_template. '
             .'When deleting many things, ALWAYS use items[] — never stage separate plans per item.';
     }
@@ -49,6 +52,12 @@ class DeleteResourceTool extends GatedTool
             'items' => $schema->array()->nullable()->description(
                 'Bulk delete in ONE Confirm Delete. Each item: {kind, resource_id, list_src?, platform?}.',
             ),
+            'delete_all_lead_lists' => $schema->boolean()->nullable()->description(
+                'true = delete every saved lead list (aud, sn, csv) in one Confirm Delete.',
+            ),
+            'delete_all_campaigns' => $schema->boolean()->nullable()->description(
+                'true = delete every outreach + LinkedIn campaign in one Confirm Delete.',
+            ),
             'reason' => $schema->string()->nullable()->description('Why the user wants it deleted'),
         ];
     }
@@ -57,20 +66,67 @@ class DeleteResourceTool extends GatedTool
     {
         $service = app(DeleteCampaignCommandCenterService::class);
         $reason = isset($request['reason']) ? (string) $request['reason'] : null;
-        $items = $request['items'] ?? null;
+        $items = is_array($request['items'] ?? null) ? $request['items'] : [];
+        $deleteAllLeadLists = (bool) ($request['delete_all_lead_lists'] ?? false);
+        $deleteAllCampaigns = (bool) ($request['delete_all_campaigns'] ?? false);
 
-        if (is_array($items) && $items !== []) {
+        if ($deleteAllCampaigns) {
+            $listed = $service->listAllDeletableCampaigns(
+                $this->context->user,
+                $this->context->organizationId,
+            );
+            foreach ($listed as $row) {
+                $items[] = [
+                    'kind' => (string) $row['kind'],
+                    'resource_id' => (string) $row['resource_id'],
+                ];
+            }
+        }
+
+        if ($deleteAllLeadLists) {
+            $listed = $service->listDeletableLeadLists($this->context->user);
+            foreach ($listed as $row) {
+                $items[] = [
+                    'kind' => 'lead_list',
+                    'resource_id' => (string) $row['resource_id'],
+                    'list_src' => (string) $row['list_src'],
+                ];
+            }
+        }
+
+        if (($deleteAllCampaigns || $deleteAllLeadLists) && $items === []) {
+            return [
+                'approval_id' => null,
+                'plan' => null,
+                'card' => 'Nothing matched — no campaigns or lead lists to delete.',
+                'cta' => 'Nothing to delete.',
+            ];
+        }
+
+        if ($items !== []) {
             $normalized = [];
+            $seen = [];
             foreach ($items as $row) {
                 if (! is_array($row)) {
                     continue;
                 }
+                $kind = (string) ($row['kind'] ?? 'outreach');
+                $resourceId = (string) ($row['resource_id'] ?? $row['campaign_id'] ?? '');
+                $listSrc = isset($row['list_src']) ? (string) $row['list_src'] : '';
+                $key = $kind.':'.$resourceId.':'.$listSrc;
+                if ($resourceId === '' || isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
                 $normalized[] = [
-                    'kind' => (string) ($row['kind'] ?? 'outreach'),
-                    'resource_id' => (string) ($row['resource_id'] ?? $row['campaign_id'] ?? ''),
+                    'kind' => $kind,
+                    'resource_id' => $resourceId,
                     'list_src' => $row['list_src'] ?? null,
                     'platform' => $row['platform'] ?? null,
                 ];
+            }
+            if ($normalized === []) {
+                throw new \InvalidArgumentException('No valid items to delete.');
             }
             $result = $service->stageBulk(
                 $this->context->user,

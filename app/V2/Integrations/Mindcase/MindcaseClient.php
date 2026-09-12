@@ -36,6 +36,7 @@ class MindcaseClient
         ?string $query = null,
         array $usernames = [],
         int $maxResults = 25,
+        ?callable $heartbeat = null,
     ): array {
         if (! $this->configured()) {
             throw new RuntimeException(
@@ -61,6 +62,7 @@ class MindcaseClient
             min(300, 60 + ($maxResults * 2)),
         );
         $response = Http::withToken((string) config('services.mindcase.api_key'))
+            ->connectTimeout(min(30, $timeout))
             ->timeout($timeout)
             ->acceptJson()
             ->asJson()
@@ -89,20 +91,25 @@ class MindcaseClient
             return [];
         }
 
-        return $this->pollJobResults($jobId, $maxResults);
+        return $this->pollJobResults($jobId, $maxResults, $heartbeat);
     }
 
     /**
      * @return list<array<string, mixed>>
      */
-    private function pollJobResults(string $jobId, int $maxResults = 25): array
+    private function pollJobResults(string $jobId, int $maxResults = 25, ?callable $heartbeat = null): array
     {
         $sleep = max(1, (int) config('services.mindcase.poll_seconds', 2));
-        $baseAttempts = max(1, (int) config('services.mindcase.max_poll_attempts', 90));
-        $attempts = max($baseAttempts, (int) ceil($maxResults * 2));
+        $baseAttempts = max(1, (int) config('services.mindcase.max_poll_attempts', 45));
+        $attempts = min(max($baseAttempts, (int) ceil($maxResults * 1.5)), 60);
 
         for ($i = 0; $i < $attempts; $i++) {
+            if ($heartbeat !== null) {
+                $heartbeat($i + 1, $attempts, 'polling');
+            }
+
             $statusResp = Http::withToken((string) config('services.mindcase.api_key'))
+                ->connectTimeout(15)
                 ->timeout(30)
                 ->acceptJson()
                 ->get($this->url('/v1/jobs/'.$jobId));

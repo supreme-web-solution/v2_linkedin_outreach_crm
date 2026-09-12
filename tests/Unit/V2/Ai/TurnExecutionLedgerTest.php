@@ -43,6 +43,17 @@ class TurnExecutionLedgerTest extends TestCase
         $this->assertStringContainsString('Goal: start a conversation', $report);
     }
 
+    public function test_blocks_second_discovery_attempt_in_same_turn(): void
+    {
+        $ledger = app(TurnExecutionLedger::class);
+
+        $this->assertFalse($ledger->hasDiscoveryAttempt());
+
+        $ledger->markDiscoveryAttempted();
+
+        $this->assertTrue($ledger->hasDiscoveryAttempt());
+    }
+
     public function test_discovery_report_surfaces_failed_instagram_channel(): void
     {
         $ledger = app(TurnExecutionLedger::class);

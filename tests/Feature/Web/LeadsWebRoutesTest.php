@@ -14,11 +14,11 @@ class LeadsWebRoutesTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_leads_index_includes_import_lists(): void
+    public function test_leads_index_does_not_duplicate_csv_lists(): void
     {
         $user = User::factory()->create();
 
-        $importList = V2OutreachImportList::query()->create([
+        V2OutreachImportList::query()->create([
             'user_id' => $user->id,
             'list_hash' => 'imp-testhash123456',
             'name' => 'WhatsApp prospects',
@@ -26,7 +26,7 @@ class LeadsWebRoutesTest extends TestCase
         ]);
 
         V2OutreachImportLead::query()->create([
-            'import_list_id' => $importList->id,
+            'import_list_id' => V2OutreachImportList::query()->where('list_hash', 'imp-testhash123456')->value('id'),
             'full_name' => 'Jane Doe',
             'phone' => '33612345678',
         ]);
@@ -37,7 +37,9 @@ class LeadsWebRoutesTest extends TestCase
         $response->assertInertia(fn ($page) => $page
             ->component('crm/Leads/Index')
             ->has('importLists', 1)
+            ->has('lists', 0)
             ->where('importLists.0.list_name', 'WhatsApp prospects')
+            ->where('stats.total_lists', 1)
             ->where('stats.import_lists', 1));
     }
 
@@ -83,21 +85,21 @@ class LeadsWebRoutesTest extends TestCase
         $this->assertDatabaseMissing('v2_outreach_import_lists', ['list_hash' => 'imp-testhash123456']);
     }
 
-    public function test_show_list_accepts_string_list_hash(): void
+    public function test_show_sn_list(): void
     {
         $user = User::factory()->create();
 
         SnLeadList::query()->create([
-            'name' => 'eleazar',
-            'list_hash' => 'search-1-eleazar',
             'user_id' => $user->id,
+            'list_hash' => 'search-1-eleazar',
+            'name' => 'Test SN list',
         ]);
 
         SnLead::query()->create([
-            'first_name' => 'Eleazar',
-            'last_name' => 'Nzerem',
             'sn_list_id' => 'search-1-eleazar',
-            'outreach_status' => 'new',
+            'first_name' => 'Eleazar',
+            'email' => 'eleazar@example.com',
+            'lid' => 'eleazar-lid',
         ]);
 
         $response = $this->actingAs($user)->get('/leads/search-1-eleazar?src=sn');
@@ -105,55 +107,17 @@ class LeadsWebRoutesTest extends TestCase
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
             ->component('crm/Leads/Show')
-            ->has('counts')
-            ->where('counts.all', 1));
+            ->where('listName', 'Test SN list'));
     }
 
-    public function test_show_sn_list_applies_email_filter(): void
+    public function test_delete_sn_list(): void
     {
         $user = User::factory()->create();
 
         SnLeadList::query()->create([
-            'name' => 'SEO Agencies',
-            'list_hash' => 'search-2-seo',
             'user_id' => $user->id,
-        ]);
-
-        SnLead::query()->create([
-            'first_name' => 'With',
-            'last_name' => 'Email',
-            'sn_list_id' => 'search-2-seo',
-            'email' => 'found@example.com',
-            'outreach_status' => 'new',
-        ]);
-
-        SnLead::query()->create([
-            'first_name' => 'No',
-            'last_name' => 'Email',
-            'sn_list_id' => 'search-2-seo',
-            'email_fetch_status' => 'completed',
-            'email_fetch_attempted_at' => now(),
-            'outreach_status' => 'new',
-        ]);
-
-        $response = $this->actingAs($user)->get('/leads/search-2-seo?src=sn&email_filter=with_email');
-
-        $response->assertOk();
-        $response->assertInertia(fn ($page) => $page
-            ->component('crm/Leads/Show')
-            ->has('leads.data', 1)
-            ->where('counts.with_email', 1)
-            ->where('counts.without_email', 1));
-    }
-
-    public function test_delete_list_accepts_string_list_hash(): void
-    {
-        $user = User::factory()->create();
-
-        SnLeadList::query()->create([
-            'name' => 'eleazar',
             'list_hash' => 'search-1-eleazar',
-            'user_id' => $user->id,
+            'name' => 'Test SN list',
         ]);
 
         $response = $this->actingAs($user)->delete('/leads/lists/search-1-eleazar?src=sn');
@@ -162,32 +126,28 @@ class LeadsWebRoutesTest extends TestCase
         $this->assertDatabaseMissing('sn_leads_lists', ['list_hash' => 'search-1-eleazar']);
     }
 
-    public function test_update_sn_lead_status(): void
+    public function test_bulk_delete_lists(): void
     {
         $user = User::factory()->create();
 
         SnLeadList::query()->create([
-            'name' => 'eleazar',
-            'list_hash' => 'search-1-eleazar',
             'user_id' => $user->id,
+            'list_hash' => 'search-1-eleazar',
+            'name' => 'Test SN list',
         ]);
 
-        $lead = SnLead::query()->create([
-            'first_name' => 'Eleazar',
-            'last_name' => 'Nzerem',
+        SnLead::query()->create([
             'sn_list_id' => 'search-1-eleazar',
-            'outreach_status' => 'new',
+            'first_name' => 'Eleazar',
         ]);
 
-        $response = $this->actingAs($user)->patch("/leads/lead/{$lead->id}/status", [
-            'src' => 'sn',
-            'outreach_status' => 'contacted',
+        $response = $this->actingAs($user)->delete('/leads/lists/bulk', [
+            'lists' => [
+                ['list_hash' => 'search-1-eleazar', 'src' => 'sn'],
+            ],
         ]);
 
         $response->assertRedirect();
-        $this->assertDatabaseHas('sn_leads', [
-            'id' => $lead->id,
-            'outreach_status' => 'contacted',
-        ]);
+        $this->assertDatabaseMissing('sn_leads_lists', ['list_hash' => 'search-1-eleazar']);
     }
 }

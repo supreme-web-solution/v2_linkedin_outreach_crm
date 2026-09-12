@@ -47,6 +47,7 @@ class PlanContentService
                         ],
                     ], JSON_THROW_ON_ERROR),
                     700,
+                    true,
                 );
 
                 if ($payload !== []) {
@@ -95,6 +96,7 @@ class PlanContentService
                     ],
                 ], JSON_THROW_ON_ERROR),
                 800,
+                true,
             );
 
             if ($payload !== []) {
@@ -156,6 +158,7 @@ class PlanContentService
                     ],
                 ], JSON_THROW_ON_ERROR),
                 1100,
+                true,
             );
 
             if ($payload !== []) {

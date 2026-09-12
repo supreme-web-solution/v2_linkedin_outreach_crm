@@ -8,9 +8,9 @@ return [
     /*
     | Default autonomy when no ai_employee_settings row exists.
     | 1=copilot, 2=assisted, 3=autopilot, 4=autonomous
-    | Product default: Autopilot (doc "full Autonomous" deferred until undo UI matures).
+    | Product default: Assisted. Autopilot/Autonomous are explicit opt-in.
     */
-    'default_autonomy_level' => (int) env('SOCIFUSION_AI_DEFAULT_AUTONOMY', 3),
+    'default_autonomy_level' => (int) env('SOCIFUSION_AI_DEFAULT_AUTONOMY', 2),
 
     'employee_name' => env('SOCIFUSION_AI_EMPLOYEE_NAME', 'Soci'),
 
@@ -117,10 +117,19 @@ TXT,
     'web_chat_queue' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE', true),
     'web_chat_queue_name' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE_NAME', 'webhooks'),
     'web_chat_agent_queue_name' => env('SOCIFUSION_AI_WEB_CHAT_AGENT_QUEUE_NAME', 'default'),
+
+    /** Queue for durable workflow continuation ticks (ContinueWorkflowRunJob). */
+    'workflow_queue_name' => env('SOCIFUSION_AI_WORKFLOW_QUEUE_NAME', 'default'),
     'web_chat_job_timeout' => (int) env('SOCIFUSION_AI_WEB_CHAT_JOB_TIMEOUT', 600),
     'web_chat_job_tries' => (int) env('SOCIFUSION_AI_WEB_CHAT_JOB_TRIES', 3),
     'web_chat_stale_seconds' => (int) env('SOCIFUSION_AI_WEB_CHAT_STALE_SECONDS', 90),
     'web_chat_redispatch_attempts' => (int) env('SOCIFUSION_AI_WEB_CHAT_REDISPATCH_ATTEMPTS', 3),
+
+    /*
+    | LLM semantic turn planner (replaces regex as primary interpretation layer).
+    | Falls back to IntentGoalResolverService when disabled or provider unavailable.
+    */
+    'semantic_turn_planner' => env('SOCIFUSION_AI_SEMANTIC_TURN_PLANNER', true),
 
     /*
     | Agent model chain. First funded provider is used. On 429 / no credits / provider outage,

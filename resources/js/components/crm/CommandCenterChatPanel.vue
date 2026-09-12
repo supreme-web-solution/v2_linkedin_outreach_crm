@@ -157,13 +157,14 @@ const inlineApprovals = computed(() =>
                 </template>
 
                 <div
-                    v-if="inlineApprovals.length && !chatBusy"
+                    v-if="inlineApprovals.length"
                     class="flex w-full justify-start"
                 >
                     <div class="w-full max-w-[92%] space-y-2">
                         <CommandCenterReviewLaunchInline
                             :approvals="inlineApprovals"
                             :deciding-id="decidingApprovalId"
+                            :disabled="chatBusy"
                             :format-message-html="formatMessageHtml"
                             @decide="(id, decision) => decideApproval(id, decision)"
                         />

@@ -36,6 +36,7 @@ type IntegrationChannel = {
 const props = defineProps<{
     approvals: ReviewLaunchApproval[];
     decidingId?: number | null;
+    disabled?: boolean;
     draftEdits?: Record<number, string>;
     integrations?: IntegrationChannel[];
     formatMessageHtml: (content: string) => string;
@@ -171,7 +172,7 @@ function updateDraft(id: number, text: string) {
                 <Button
                     size="sm"
                     class="h-9 min-w-0 flex-1 text-xs"
-                    :disabled="decidingId === a.id"
+                    :disabled="disabled || decidingId === a.id"
                     @click="emit('decide', a.id, 'approve')"
                 >
                     <Loader2 v-if="decidingId === a.id" class="mr-1.5 size-3.5 animate-spin" />
@@ -182,7 +183,7 @@ function updateDraft(id: number, text: string) {
                     size="sm"
                     variant="outline"
                     class="h-9 min-w-0 flex-1 border-sky-300/80 bg-white/80 text-xs hover:bg-white dark:border-sky-700 dark:bg-sky-950/50"
-                    :disabled="decidingId === a.id"
+                    :disabled="disabled || decidingId === a.id"
                     @click="emit('decide', a.id, 'reject')"
                 >
                     <X class="mr-1.5 size-3.5" />

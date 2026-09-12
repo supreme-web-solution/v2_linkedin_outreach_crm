@@ -283,13 +283,20 @@ async function pollOnce(generation: number): Promise<boolean> {
             return text !== '' && !/^\.{1,3}$|^…$/.test(text);
         });
 
-        if (finalAssistant) {
+        const processingActive = Boolean(processing?.active);
+
+        if (finalAssistant && !processingActive) {
             clearPollTimer();
             awaitingReply.value = false;
             pollAfterId = 0;
             pollDeadline = 0;
             sending.value = false;
             return true;
+        }
+
+        if (processingActive) {
+            awaitingReply.value = true;
+            sending.value = true;
         }
 
         return false;

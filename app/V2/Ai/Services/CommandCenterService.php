@@ -1383,6 +1383,19 @@ class CommandCenterService
 
         $lines[] = $created['url'];
 
+        if ((int) ($approval->workflow_run_id ?? 0) > 0) {
+            app(WorkflowRuntimeService::class)->resumeAfterLaunch(
+                (int) $approval->workflow_run_id,
+                (int) $approval->id,
+                [
+                    'outreach_campaign_id' => $campaign->id,
+                    'campaign_status' => $campaign->status,
+                    'attached_lists' => $lists,
+                    'template_type' => $created['template_type'],
+                ],
+            );
+        }
+
         return implode("\n", $lines);
     }
 

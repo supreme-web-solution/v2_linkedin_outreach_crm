@@ -41,12 +41,14 @@ class LeadsWebController extends Controller
 {
     public function index(
         DashboardStatsService $dashboardStats,
-        OutreachImportListService $importListService,
         LeadListService $leadListService,
     ): Response {
         $userId = Auth::id();
 
-        $lists = $leadListService->listsForUser($userId)
+        $allLists = $leadListService->listsForUser($userId);
+
+        $lists = $allLists
+            ->filter(fn (array $list) => in_array($list['src'], ['aud', 'sn'], true))
             ->map(fn (array $list) => [
                 'id' => $list['id'],
                 'list_name' => $list['list_name'],
@@ -58,11 +60,12 @@ class LeadsWebController extends Controller
             ])
             ->values();
 
-        $importLists = collect($importListService->listsForUser($userId))
+        $importLists = $allLists
+            ->filter(fn (array $list) => $list['src'] === 'csv')
             ->map(fn (array $list) => [
                 'id' => $list['id'],
                 'list_name' => $list['list_name'],
-                'list_hash' => $list['list_hash'],
+                'list_hash' => $list['list_id'],
                 'total_leads' => $list['total_leads'],
                 'source' => $list['source'],
                 'channel' => $list['channel'] ?? null,

@@ -81,6 +81,12 @@ class InstagramAudienceBuilderService
             'query' => Str::limit($query, 120),
             'target' => $cap,
         ]);
+
+        $progress = app(WebChatTurnProgressService::class);
+        if ($progress->active()) {
+            $progress->status('Searching Instagram profiles…');
+        }
+
         $handles = [];
         foreach ($usernames ?? [] as $u) {
             $h = $this->cleanHandle((string) $u);
@@ -89,11 +95,21 @@ class InstagramAudienceBuilderService
             }
         }
 
+        $heartbeat = null;
+        if ($progress->active()) {
+            $heartbeat = function (int $attempt, int $maxAttempts, string $phase) use ($progress): void {
+                if ($attempt === 1 || $attempt % 3 === 0) {
+                    $progress->status('Searching Instagram profiles… ('.$attempt.'/'.$maxAttempts.')');
+                }
+            };
+        }
+
         try {
             $rows = $this->mindcase->instagramProfiles(
                 query: $handles === [] ? $query : null,
                 usernames: $handles,
                 maxResults: $cap,
+                heartbeat: $heartbeat,
             );
         } catch (Throwable $e) {
             $this->lastError = $e->getMessage();
@@ -107,9 +123,19 @@ class InstagramAudienceBuilderService
 
         if ($rows === []) {
             $this->lastError = 'No Instagram profiles matched that search. Try a simpler keyword or fewer results.';
+            Log::info('[Soci] Instagram Mindcase search finished — no profiles', [
+                'user_id' => $user->id,
+                'query' => Str::limit($query, 120),
+            ]);
 
             return null;
         }
+
+        Log::info('[Soci] Instagram Mindcase search finished', [
+            'user_id' => $user->id,
+            'query' => Str::limit($query, 120),
+            'profiles' => count($rows),
+        ]);
 
         $contacts = [];
         $samples = [];

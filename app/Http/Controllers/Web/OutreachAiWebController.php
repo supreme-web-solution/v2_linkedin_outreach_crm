@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
+use App\V2\Ai\Services\AiOperationBoundaryService;
 use App\V2\Services\OpenAIContentService;
 use App\V2\Services\OpenAiUserError;
 use Illuminate\Http\JsonResponse;
@@ -10,7 +11,11 @@ use Illuminate\Http\Request;
 
 class OutreachAiWebController extends Controller
 {
-    public function generateContent(Request $request, OpenAIContentService $openai): JsonResponse
+    public function generateContent(
+        Request $request,
+        OpenAIContentService $openai,
+        AiOperationBoundaryService $boundary,
+    ): JsonResponse
     {
         $data = $request->validate([
             'mode' => ['required', 'in:generate,paraphrase'],
@@ -28,6 +33,12 @@ class OutreachAiWebController extends Controller
 
         if ($data['mode'] === 'generate' && trim((string) ($data['context'] ?? '')) === '' && trim((string) ($data['current_text'] ?? '')) === '') {
             return response()->json(['message' => 'Describe what you want the message to say.'], 422);
+        }
+
+        try {
+            $boundary->assertCopyOnlyContext(trim((string) ($data['context'] ?? '')));
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
 
         try {

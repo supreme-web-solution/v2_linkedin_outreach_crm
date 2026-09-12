@@ -264,8 +264,12 @@ PROMPT;
     /**
      * @return array<string, mixed>
      */
-    public function generateAgentJson(string $systemPrompt, string $userPrompt, int $maxTokens = 900): array
+    public function generateAgentJson(string $systemPrompt, string $userPrompt, int $maxTokens = 900, bool $governed = false): array
     {
+        if (! $governed) {
+            throw new \RuntimeException('generateAgentJson is restricted to governed AI service flows.');
+        }
+
         if (! $this->isConfigured()) {
             throw new \RuntimeException(OpenAiUserError::NOT_CONFIGURED);
         }

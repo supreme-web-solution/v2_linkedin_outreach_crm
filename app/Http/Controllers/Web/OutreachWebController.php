@@ -794,19 +794,19 @@ class OutreachWebController extends Controller
         /** @var \App\Models\User $user */
         $user = auth()->user();
 
-        $base = app(LeadListService::class)->listsForUser($user->id)
+        return app(LeadListService::class)->listsForUser($user->id)
             ->map(fn (array $list) => [
                 'list_name' => $list['list_name'],
                 'list_hash' => $list['list_id'],
                 'total_leads' => $list['total_leads'],
                 'source' => $list['source'],
+                'channel' => $list['channel'] ?? null,
                 'src' => $list['src'],
                 'type' => $list['list_id'].'-'.$list['src'],
-            ]);
-
-        $importLists = collect(app(OutreachImportListService::class)->listsForUser($user->id));
-
-        return $base->concat($importLists)->sortBy('list_name')->values()->all();
+            ])
+            ->sortBy('list_name')
+            ->values()
+            ->all();
     }
 
     private function attachList(V2OutreachCampaign $campaign, string $listHash, string $listSrc, ?string $listName): V2OutreachList

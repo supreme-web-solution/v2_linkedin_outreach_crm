@@ -23,14 +23,17 @@ class FindProspectsTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Search existing SociFusion lead lists and competitor audiences that match an ICP or keyword. Returns list ids and lead counts (does not scrape LinkedIn yet).';
+        return 'Search existing SociFusion lead lists/audiences and return matching list ids and lead counts. '
+            .'Read-only: does not scrape external platforms or mutate CRM state. '
+            .'Prefer `search_prospects` for the same capability in new flows; use `discover_prospects` only for net-new external sourcing.';
     }
 
     public function schema(JsonSchema $schema): array
     {
         return [
-            'query' => $schema->string()->required()->description('ICP keywords, industry, audience name'),
-            'limit' => $schema->integer()->min(1)->max(20)->nullable(),
+            'query' => $schema->string()->required()->description('ICP keywords, industry, audience name — use "all" or list_all=true to return every list'),
+            'limit' => $schema->integer()->min(1)->max(50)->nullable(),
+            'list_all' => $schema->boolean()->nullable()->description('true = return every saved lead list (no keyword filter)'),
         ];
     }
 
@@ -38,11 +41,26 @@ class FindProspectsTool extends GatedTool
     {
         $query = Str::lower(trim((string) $request['query']));
         $limit = (int) ($request['limit'] ?? 10);
+        $listAll = (bool) ($request['list_all'] ?? false)
+            || in_array($query, ['*', 'all', 'every', 'everything'], true);
         $tokens = array_values(array_filter(preg_split('/\s+/', $query) ?: [], fn ($t) => strlen($t) >= 2));
 
         $lists = app(LeadListService::class)->listsForUser($this->context->user->id);
 
-        $matched = $lists
+        if ($listAll) {
+            $matched = $lists
+                ->sortByDesc(fn (array $list) => $list['created_at'] ?? '')
+                ->take(max(1, min(50, $limit)))
+                ->values()
+                ->map(fn (array $l) => array_merge($l, [
+                    'match_score' => 0,
+                    'note' => 'All saved lead lists',
+                    'list_hash' => (string) $l['list_id'],
+                    'list_src' => (string) $l['src'],
+                ]))
+                ->all();
+        } else {
+            $matched = $lists
             ->map(function (array $list) use ($tokens, $query) {
                 $name = Str::lower((string) $list['list_name']);
                 $score = 0;
@@ -68,15 +86,16 @@ class FindProspectsTool extends GatedTool
             ->values()
             ->all();
 
-        if ($matched === [] && $lists->isNotEmpty()) {
-            $matched = $lists->sortByDesc('total_leads')->take(min(5, $limit))->values()
-                ->map(fn (array $l) => array_merge($l, [
-                    'match_score' => 0,
-                    'note' => 'No keyword match — showing largest lists',
-                    'list_hash' => (string) $l['list_id'],
-                    'list_src' => (string) $l['src'],
-                ]))
-                ->all();
+            if ($matched === [] && $lists->isNotEmpty()) {
+                $matched = $lists->sortByDesc('total_leads')->take(min(5, $limit))->values()
+                    ->map(fn (array $l) => array_merge($l, [
+                        'match_score' => 0,
+                        'note' => 'No keyword match — showing largest lists',
+                        'list_hash' => (string) $l['list_id'],
+                        'list_src' => (string) $l['src'],
+                    ]))
+                    ->all();
+            }
         }
 
         $totalLeads = array_sum(array_map(fn ($l) => (int) ($l['total_leads'] ?? 0), $matched));

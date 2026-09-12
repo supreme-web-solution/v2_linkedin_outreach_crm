@@ -11,9 +11,22 @@ class TurnExecutionLedger
     /** @var array<string, mixed>|null */
     private static ?array $execution = null;
 
+    private static bool $discoveryAttempted = false;
+
     public function reset(): void
     {
         self::$execution = null;
+        self::$discoveryAttempted = false;
+    }
+
+    public function markDiscoveryAttempted(): void
+    {
+        self::$discoveryAttempted = true;
+    }
+
+    public function hasDiscoveryAttempt(): bool
+    {
+        return self::$discoveryAttempted || $this->ownsDiscovery() || $this->ownsOutreach();
     }
 
     /**
@@ -23,6 +36,7 @@ class TurnExecutionLedger
      */
     public function recordOutreach(string $goal, array $allocation, array $channelResults, array $campaigns): void
     {
+        self::$discoveryAttempted = true;
         self::$execution = [
             'kind' => 'find_and_outreach',
             'goal' => $goal,
@@ -38,6 +52,7 @@ class TurnExecutionLedger
      */
     public function recordDiscovery(string $goal, array $allocation, array $channelResults): void
     {
+        self::$discoveryAttempted = true;
         self::$execution = [
             'kind' => 'find_and_save',
             'goal' => $goal,
@@ -63,7 +78,7 @@ class TurnExecutionLedger
 
     public function ownsTurnResult(): bool
     {
-        return $this->ownsOutreach() || $this->ownsDiscovery();
+        return $this->ownsOutreach() || $this->ownsDiscovery() || ((self::$execution['kind'] ?? '') === 'workflow');
     }
 
     public function report(): string
@@ -75,8 +90,22 @@ class TurnExecutionLedger
         if ((self::$execution['kind'] ?? '') === 'find_and_save') {
             return $this->discoveryReport();
         }
+        if ((self::$execution['kind'] ?? '') === 'workflow') {
+            return $this->workflowReport();
+        }
 
         return $this->outreachReport();
+    }
+
+    /**
+     * @param array<string,mixed> $workflow
+     */
+    public function recordWorkflow(array $workflow): void
+    {
+        self::$execution = [
+            'kind' => 'workflow',
+            'workflow' => $workflow,
+        ];
     }
 
     private function discoveryReport(): string
@@ -211,6 +240,34 @@ class TurnExecutionLedger
         $lines[] = 'First messages are personalized from profile/company research.';
         $lines[] = 'LinkedIn sends DM only after invite acceptance.';
         $lines[] = 'Goal: start a conversation and get a reply.';
+
+        return trim(implode("\n", $lines));
+    }
+
+    private function workflowReport(): string
+    {
+        $workflow = is_array(self::$execution['workflow'] ?? null) ? self::$execution['workflow'] : [];
+        $id = (int) ($workflow['id'] ?? 0);
+        $status = (string) ($workflow['status'] ?? 'planned');
+        $goal = trim((string) ($workflow['goal'] ?? ''));
+        $steps = is_array($workflow['steps'] ?? null) ? $workflow['steps'] : [];
+
+        $lines = [];
+        $lines[] = $id > 0 ? "Workflow #{$id} is {$status}." : "Workflow is {$status}.";
+        if ($goal !== '') {
+            $lines[] = "Goal: {$goal}.";
+        }
+        if ($steps !== []) {
+            $lines[] = '';
+            $lines[] = 'Planned steps:';
+            foreach (array_slice($steps, 0, 8) as $index => $step) {
+                if (! is_array($step)) {
+                    continue;
+                }
+                $label = trim((string) ($step['step_key'] ?? $step['tool_name'] ?? 'step'));
+                $lines[] = ($index + 1).'. '.$label;
+            }
+        }
 
         return trim(implode("\n", $lines));
     }

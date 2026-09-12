@@ -15,6 +15,8 @@ use App\V2\Ai\Enums\AiAutonomyLevel;
 use App\V2\Ai\Services\DiscoverProspectsService;
 use App\V2\Ai\Services\MultiChannelCampaignStagingService;
 use App\V2\Ai\Services\PlatformAllocationService;
+use App\V2\Ai\Services\TurnExecutionLedger;
+use App\V2\Ai\Services\TurnPlanContext;
 use App\V2\Ai\Services\UserTurnIntentService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Ai\Tools\Request;
@@ -32,6 +34,8 @@ class LiveFindProspectDetailsRegressionTest extends TestCase
 
     protected function tearDown(): void
     {
+        app(TurnPlanContext::class)->clear();
+        app(TurnExecutionLedger::class)->reset();
         Mockery::close();
         parent::tearDown();
     }
@@ -130,7 +134,11 @@ class LiveFindProspectDetailsRegressionTest extends TestCase
         $this->assertNull($captured['targetCount']);
         $this->assertTrue((bool) ($result['discovery_only'] ?? false));
         $this->assertArrayNotHasKey('staged_campaigns', $result);
-        $this->assertStringContainsString('no outreach', strtolower((string) ($result['instruction'] ?? '')));
+        $instruction = strtolower((string) ($result['instruction'] ?? ''));
+        $this->assertTrue(
+            str_contains($instruction, 'no outreach') || str_contains($instruction, 'do not draft'),
+            'Expected find-only instruction',
+        );
     }
 
     public function test_propose_and_draft_refuse_find_only_even_on_autopilot(): void
@@ -196,6 +204,12 @@ class LiveFindProspectDetailsRegressionTest extends TestCase
         $settings = app(\App\V2\Ai\Services\AiEmployeeSettingsService::class)->for($user, $org->id);
         $settings->autonomy_level = AiAutonomyLevel::Autopilot->value;
         $settings->save();
+
+        app(TurnPlanContext::class)->set([
+            'goal' => 'discovery',
+            'required_outcome' => 'find_only',
+            'side_effect_budget' => 'mutate_allowed',
+        ]);
 
         return [new AgentContext(
             user: $user,

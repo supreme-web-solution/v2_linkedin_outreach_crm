@@ -40,6 +40,10 @@ abstract class GatedTool implements Tool
         $plan = app(TurnPlanContext::class)->get();
 
         $policy = app(ToolPolicyGateService::class)->check($this->toolName(), $plan);
+        $workflowMeta = is_array($plan) ? [
+            'workflow_run_id' => $plan['workflow_run_id'] ?? null,
+            'workflow_step' => $plan['workflow_step'] ?? null,
+        ] : [];
         if (! ($policy['allowed'] ?? false)) {
             $reason = (string) ($policy['reason'] ?? 'Blocked by policy gate.');
             $logger->log(
@@ -49,7 +53,7 @@ abstract class GatedTool implements Tool
                 $this->permission(),
                 'denied',
                 $this->context->conversation,
-                ['args' => $request->all(), 'plan' => $plan],
+                ['args' => $request->all(), 'plan' => $plan, 'workflow' => $workflowMeta],
                 null,
                 $reason,
             );
@@ -68,7 +72,7 @@ abstract class GatedTool implements Tool
                 $this->permission(),
                 'denied',
                 $this->context->conversation,
-                ['args' => $request->all()],
+                ['args' => $request->all(), 'workflow' => $workflowMeta],
                 null,
                 'Tool blocked by autonomy level, kill switch, or allowlist.',
             );
@@ -99,7 +103,7 @@ abstract class GatedTool implements Tool
                 $this->permission(),
                 'success',
                 $this->context->conversation,
-                ['args' => $request->all()],
+                ['args' => $request->all(), 'workflow' => $workflowMeta],
                 $payload,
                 null,
                 $durationMs,
@@ -126,7 +130,7 @@ abstract class GatedTool implements Tool
                     $action,
                     'tool',
                     null,
-                    $payload,
+                    array_merge($payload, ['workflow' => $workflowMeta]),
                     is_array($turnPlan) ? (string) ($turnPlan['required_outcome'] ?? '') : null,
                 );
             }
@@ -141,7 +145,7 @@ abstract class GatedTool implements Tool
                 $this->permission(),
                 'error',
                 $this->context->conversation,
-                ['args' => $request->all()],
+                ['args' => $request->all(), 'workflow' => $workflowMeta],
                 null,
                 $e->getMessage(),
                 $durationMs,

@@ -6,13 +6,16 @@ use App\Models\Audience;
 use App\Models\AudienceList;
 use App\Models\SnLead;
 use App\Models\SnLeadList;
+use App\Models\V2OutreachImportLead;
+use App\Models\V2OutreachImportList;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class LeadListService
 {
     /**
-     * Audience + SN lists with lead counts via one GROUP BY per source (not correlated subselects).
+     * Audience + SN + imported CSV lists with lead counts via one GROUP BY per source.
      *
      * @return Collection<int, array<string, mixed>>
      */
@@ -59,12 +62,42 @@ class LeadListService
             'list_id' => (string) $l->list_hash,
             'list_name' => $l->name ?: 'Untitled list',
             'total_leads' => (int) ($snCounts[$l->list_hash] ?? 0),
-            'source' => 'Audience',
+            'source' => 'Sales Navigator',
             'src' => 'sn',
             'created_at' => optional($l->created_at)->toIso8601String(),
         ]);
 
-        return $mappedAudiences->concat($mappedSn)
+        $csvLists = V2OutreachImportList::where('user_id', $userId)
+            ->select('id', 'name', 'list_hash', 'lead_count', 'created_at')
+            ->get();
+
+        $csvIds = $csvLists->pluck('id')->filter()->values()->all();
+        $csvCounts = $csvIds === []
+            ? collect()
+            : V2OutreachImportLead::query()
+                ->whereIn('import_list_id', $csvIds)
+                ->selectRaw('import_list_id, COUNT(*) as aggregate')
+                ->groupBy('import_list_id')
+                ->pluck('aggregate', 'import_list_id');
+
+        $mappedCsv = $csvLists->map(function ($l) use ($csvCounts) {
+            $name = (string) ($l->name ?: 'Imported list');
+            $isInstagram = str_starts_with($name, 'IG:')
+                || str_contains(Str::lower($name), 'instagram');
+
+            return [
+                'id' => $l->id,
+                'list_id' => (string) $l->list_hash,
+                'list_name' => $name,
+                'total_leads' => (int) ($csvCounts[$l->id] ?? $l->lead_count ?? 0),
+                'source' => $isInstagram ? 'Instagram' : 'Spreadsheet import',
+                'channel' => $isInstagram ? 'instagram' : null,
+                'src' => 'csv',
+                'created_at' => optional($l->created_at)->toIso8601String(),
+            ];
+        });
+
+        return $mappedAudiences->concat($mappedSn)->concat($mappedCsv)
             ->sortByDesc(fn (array $list) => $list['created_at'] ?? '')
             ->values();
     }
@@ -95,8 +128,31 @@ class LeadListService
                 ->through(fn (AudienceList $row) => $this->transformAudLead($row));
         }
 
+        if ($src === 'csv') {
+            $list = V2OutreachImportList::where('list_hash', $listId)->where('user_id', $userId)->first();
+            if (! $list) {
+                abort(404);
+            }
+
+            $query = V2OutreachImportLead::where('import_list_id', $list->id);
+            if ($search !== '') {
+                $query->where(function ($q) use ($search) {
+                    $q->where('full_name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%")
+                        ->orWhere('linkedin_id', 'like', "%{$search}%")
+                        ->orWhere('instagram_handle', 'like', "%{$search}%")
+                        ->orWhere('telegram_handle', 'like', "%{$search}%")
+                        ->orWhere('twitter_handle', 'like', "%{$search}%");
+                });
+            }
+
+            return $query->latest()->paginate($perPage)
+                ->through(fn (V2OutreachImportLead $row) => $this->transformCsvLead($row));
+        }
+
         $list = SnLeadList::where('list_hash', $listId)->where('user_id', $userId)->first();
-        if (!$list) {
+        if (! $list) {
             abort(404);
         }
 
@@ -126,7 +182,7 @@ class LeadListService
         foreach ($lists as $list) {
             $listId = trim((string) ($list['list_id'] ?? ''));
             $src = trim((string) ($list['src'] ?? ''));
-            if ($listId === '' || !in_array($src, ['aud', 'sn'], true)) {
+            if ($listId === '' || ! in_array($src, ['aud', 'sn', 'csv'], true)) {
                 continue;
             }
 
@@ -142,8 +198,16 @@ class LeadListService
         }
 
         return $merged
-            ->filter(fn (array $lead) => trim((string) ($lead['profileid'] ?? '')) !== '')
-            ->unique(fn (array $lead) => trim((string) ($lead['profileid'] ?? '')))
+            ->filter(function (array $lead): bool {
+                $name = trim((string) ($lead['name'] ?? ''));
+                $email = trim((string) ($lead['email'] ?? ''));
+                $phone = trim((string) ($lead['phone'] ?? ''));
+                $profileid = trim((string) ($lead['profileid'] ?? ''));
+                $profileUrl = trim((string) ($lead['profile_url'] ?? ''));
+
+                return $name !== '' || $email !== '' || $phone !== '' || $profileid !== '' || $profileUrl !== '';
+            })
+            ->unique(fn (array $lead) => $this->leadIdentityKey($lead))
             ->values();
     }
 
@@ -161,6 +225,15 @@ class LeadListService
                     ->latest()
                     ->get()
                     ->map(fn (AudienceList $row) => $this->transformAudLead($row));
+            }
+
+            if ($src === 'csv') {
+                $list = V2OutreachImportList::where('list_hash', $listId)->where('user_id', $userId)->firstOrFail();
+
+                return V2OutreachImportLead::where('import_list_id', $list->id)
+                    ->latest()
+                    ->get()
+                    ->map(fn (V2OutreachImportLead $row) => $this->transformCsvLead($row));
             }
 
             SnLeadList::where('list_hash', $listId)->where('user_id', $userId)->firstOrFail();
@@ -182,6 +255,15 @@ class LeadListService
                 ->whereIn('id', $leadIds)
                 ->get()
                 ->map(fn (AudienceList $row) => $this->transformAudLead($row));
+        }
+
+        if ($src === 'csv') {
+            $list = V2OutreachImportList::where('list_hash', $listId)->where('user_id', $userId)->firstOrFail();
+
+            return V2OutreachImportLead::where('import_list_id', $list->id)
+                ->whereIn('id', $leadIds)
+                ->get()
+                ->map(fn (V2OutreachImportLead $row) => $this->transformCsvLead($row));
         }
 
         SnLeadList::where('list_hash', $listId)->where('user_id', $userId)->firstOrFail();
@@ -232,5 +314,55 @@ class LeadListService
             'profile_url' => $row->lid ? 'https://www.linkedin.com/in/'.$row->lid : null,
             'source' => 'sn',
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function transformCsvLead(V2OutreachImportLead $row): array
+    {
+        $name = trim((string) ($row->full_name ?? ''));
+        $profileid = trim((string) ($row->linkedin_id ?? $row->instagram_provider_id ?? $row->telegram_provider_id ?? ''));
+
+        return [
+            'id' => $row->id,
+            'name' => $name !== '' ? $name : 'Unknown',
+            'email' => $row->email,
+            'phone' => $row->phone,
+            'headline' => null,
+            'location' => null,
+            'profileid' => $profileid,
+            'public_identifier' => $row->linkedin_id ?? $row->instagram_handle ?? $row->telegram_handle ?? $row->twitter_handle,
+            'profile_url' => $row->profile_url,
+            'instagram_handle' => $row->instagram_handle,
+            'telegram_handle' => $row->telegram_handle,
+            'twitter_handle' => $row->twitter_handle,
+            'source' => 'csv',
+        ];
+    }
+
+    /**
+     * Stable cross-source dedupe key so non-LinkedIn imports are retained.
+     */
+    private function leadIdentityKey(array $lead): string
+    {
+        $profileid = strtolower(trim((string) ($lead['profileid'] ?? '')));
+        $email = strtolower(trim((string) ($lead['email'] ?? '')));
+        $phone = preg_replace('/\D+/', '', (string) ($lead['phone'] ?? '')) ?? '';
+        $ig = strtolower(trim((string) ($lead['instagram_handle'] ?? '')));
+        $tg = strtolower(trim((string) ($lead['telegram_handle'] ?? '')));
+        $x = strtolower(trim((string) ($lead['twitter_handle'] ?? '')));
+        $url = strtolower(trim((string) ($lead['profile_url'] ?? '')));
+        $name = strtolower(trim((string) ($lead['name'] ?? '')));
+        $src = strtolower(trim((string) ($lead['source'] ?? '')));
+        $id = (string) ($lead['id'] ?? '');
+
+        foreach ([$profileid, $email, $phone, $ig, $tg, $x, $url] as $candidate) {
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        return $src.':'.$id.':'.$name;
     }
 }
