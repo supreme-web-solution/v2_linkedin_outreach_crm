@@ -15,6 +15,7 @@ use App\V2\Ai\Services\WhatsAppCommandLinkPresenter;
 use App\V2\Ai\Services\CommandCenterService;
 use App\V2\Ai\Services\ExecuteSalesPlanCommandCenterService;
 use App\V2\Ai\Services\InboxCommandCenterService;
+use App\V2\Ai\Services\OwnerAttentionDigestService;
 use App\V2\Ai\Services\WebChatProcessingService;
 use App\V2\Ai\Services\WebChatTurnRecoveryService;
 use App\V2\Services\EntitlementService;
@@ -42,9 +43,12 @@ class AiEmployeeWebController extends Controller
 
         $settings = $settingsService->for($user, $orgId);
         $conversation = $commandCenter->conversation($user, $orgId);
+        if ((bool) config('socifusion_ai.attention_digest.post_on_command_center_open', true)) {
+            app(OwnerAttentionDigestService::class)->maybePost($user, $orgId, 'command_center_open');
+        }
+        $conversation = $conversation->fresh() ?? $conversation;
         $historyWindow = $commandCenter->historyWindow($conversation);
         $pending = $commandCenter->pendingApprovals($user, $orgId);
-        $conversation = $conversation->fresh() ?? $conversation;
         $pendingTurn = $turnRecovery->resolvePendingTurn($user, $orgId, $conversation);
 
         $identity = AiChannelIdentity::query()
@@ -89,10 +93,13 @@ class AiEmployeeWebController extends Controller
 
         $settings = $settingsService->for($user, $orgId);
         $conversation = $commandCenter->conversation($user, $orgId);
+        if ((bool) config('socifusion_ai.attention_digest.post_on_command_center_open', true)) {
+            app(OwnerAttentionDigestService::class)->maybePost($user, $orgId, 'command_center_open');
+        }
+        $conversation = $conversation->fresh() ?? $conversation;
         $historyWindow = $commandCenter->historyWindow($conversation);
         $pending = $commandCenter->pendingApprovals($user, $orgId);
         $processing = app(WebChatProcessingService::class);
-        $conversation = $conversation->fresh() ?? $conversation;
         $pendingTurn = $turnRecovery->resolvePendingTurn($user, $orgId, $conversation);
 
         return response()->json([

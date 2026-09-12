@@ -81,6 +81,7 @@ class CommandCenterAwarenessService
         $lines = [
             '[Live workspace awareness — factual DB snapshot for this org. Use these facts; do not invent counts.',
             'Opening or reading an inbox thread does NOT remove it from attention while the prospect message is still latest.',
+            'URLs shown as "URL: https://..." are COMPLETE — never call them incomplete or ask to resend unless scrape failed.',
             'Propose draft_reply / LAUNCH / send_inbox_reply for hot items; execute only within autonomy policy.]',
             'Autonomy: '.($snap['autonomy'] ?? 'Assisted'),
         ];
@@ -106,7 +107,7 @@ class CommandCenterAwarenessService
             $convId = (int) ($row['conversation_id'] ?? 0);
             $campaign = trim((string) ($row['campaign_name'] ?? ''));
             $stage = trim((string) ($row['conversion_stage'] ?? ''));
-            $preview = Str::limit((string) ($row['preview'] ?? ''), 100);
+            $preview = (string) ($row['preview'] ?? '');
             $readNote = ($row['is_unread'] ?? true) ? '' : ' [read but still awaiting your reply]';
 
             $identity = $email !== '' ? "{$name} <{$email}>" : $name;
@@ -118,7 +119,7 @@ class CommandCenterAwarenessService
 
             $lines[] = "- {$priority} {$channel}: {$identity}{$readNote}"
                 .($tail !== [] ? ' · '.implode(' · ', $tail) : '')
-                .($preview !== '' ? " — \"{$preview}\"" : '');
+                .($preview !== '' ? "\n  ".str_replace("\n", "\n  ", $preview) : '');
         }
 
         $pending = $snap['pending_approvals'] ?? [];

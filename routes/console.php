@@ -1,6 +1,7 @@
 <?php
 
 use App\V2\Services\CallOrchestrationService;
+use App\Jobs\V2\PostOwnerAttentionDigestsJob;
 use App\Jobs\V2\ProcessNurtureDueLeadsJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -60,3 +61,13 @@ Artisan::command('nurture:flag-due', function () {
 })->purpose('Mark nurture leads whose follow-up date has passed');
 
 Schedule::command('nurture:flag-due')->dailyAt('08:00')->withoutOverlapping();
+
+Artisan::command('socifusion:attention-digest', function () {
+    PostOwnerAttentionDigestsJob::dispatchSync();
+    $this->info('Attention digests processed.');
+})->purpose('Post owner attention digests into Command Center chats');
+
+Schedule::command('socifusion:attention-digest')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();

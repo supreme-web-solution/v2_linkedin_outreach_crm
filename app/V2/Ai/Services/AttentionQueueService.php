@@ -5,6 +5,7 @@ namespace App\V2\Ai\Services;
 use App\Models\User;
 use App\Models\V2Conversation;
 use App\Models\V2Message;
+use App\V2\Ai\Support\InboundMessagePresenter;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Services\InboxAttentionService;
 use App\V2\Services\InboxUnreadService;
@@ -118,6 +119,9 @@ class AttentionQueueService
                 $prospectEmail = trim((string) ($lead?->email ?? '')) ?: null;
             }
 
+            $body = (string) $row['body'];
+            $urls = InboundMessagePresenter::extractUrls($body);
+
             $items[] = [
                 'conversation_id' => $conversation->id,
                 'priority' => $classification['priority'],
@@ -125,7 +129,8 @@ class AttentionQueueService
                 'prospect_email' => $prospectEmail,
                 'channel' => $conversation->provider,
                 'channel_label' => OutreachChannelRegistry::channelLabel((string) $conversation->provider),
-                'preview' => Str::limit((string) $row['body'], 160, '…'),
+                'preview' => InboundMessagePresenter::previewWithUrls($body, 140),
+                'urls' => $urls,
                 'intent' => $classification['intent'],
                 'stage' => $classification['stage'],
                 'recommended_action' => $classification['recommended_action'],

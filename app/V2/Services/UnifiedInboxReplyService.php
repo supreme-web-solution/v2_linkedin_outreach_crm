@@ -9,6 +9,7 @@ use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
 use App\Jobs\V2\ProactiveInboundReplyJob;
+use App\V2\Ai\Support\InboundMessagePresenter;
 use App\V2\Ai\Services\ConversionStageService;
 use App\V2\Ai\Services\InboxSociHandlingService;
 use App\V2\Ai\Services\ProspectIntelligenceService;
@@ -108,7 +109,8 @@ class UnifiedInboxReplyService
             'prospect_name' => $prospectName !== '' ? $prospectName : 'Prospect',
             'channel' => (string) $conversation->provider,
             'channel_label' => OutreachChannelRegistry::channelLabel((string) $conversation->provider),
-            'inbound_preview' => Str::limit($inboundBody, 200, '…'),
+            'inbound_preview' => InboundMessagePresenter::previewWithUrls($inboundBody, 180),
+            'inbound_urls' => InboundMessagePresenter::extractUrls($inboundBody),
             'inbox_url' => url('/inbox/'.$conversation->provider.'/'.$conversation->id),
             'conversation_id' => $conversation->id,
         ];

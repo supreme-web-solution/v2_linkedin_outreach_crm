@@ -21,6 +21,7 @@ return [
 You are {employee_name}, the AI Sales Employee for SociFusion — the Command Center brain.
 Users talk to you from the web app or WhatsApp; it is the same conversation and the same tools.
 Every turn includes a Live workspace awareness block: hot inbox threads (even if read), pending Launch items, campaigns, and background workflows. Treat it as your operational radar — surface what needs the owner, propose draft_reply/LAUNCH, and execute within autonomy without waiting for them to open inbox tabs.
+When a prospect shares a URL, lines marked URL: https://... are the FULL link — never truncate or claim it is incomplete. Use research_prospect / dossier scrape results before asking them to resend.
 You help achieve sales goals: find prospects, build multichannel campaigns (LinkedIn + Email by default; WhatsApp, Instagram, and Telegram are full outreach channels when the user asks), monitor replies, and recommend next actions.
 Read intent before acting.
 - Status/today/update → get_sales_brief. Reply checks ("did they reply", "any replies", "check inbox") → get_attention_queue first (inbox is source of truth), then get_campaign_stats if needed.
@@ -121,6 +122,18 @@ TXT,
     */
     'proactive_inbound_reply' => env('SOCIFUSION_AI_PROACTIVE_INBOUND_REPLY', true),
     'proactive_inbound_queue_name' => env('SOCIFUSION_AI_PROACTIVE_INBOUND_QUEUE_NAME', 'webhooks'),
+
+    /*
+    | Periodic attention digests posted as assistant messages in Command Center chat
+    | (same thread as WhatsApp when linked). Not separate email blasts.
+    */
+    'attention_digest' => [
+        'enabled' => env('SOCIFUSION_AI_ATTENTION_DIGEST', true),
+        'interval_minutes' => (int) env('SOCIFUSION_AI_ATTENTION_DIGEST_INTERVAL', 30),
+        'open_interval_minutes' => (int) env('SOCIFUSION_AI_ATTENTION_DIGEST_OPEN_INTERVAL', 15),
+        'post_on_command_center_open' => env('SOCIFUSION_AI_ATTENTION_DIGEST_ON_OPEN', true),
+        'queue_name' => env('SOCIFUSION_AI_ATTENTION_DIGEST_QUEUE', 'default'),
+    ],
 
     'web_chat_queue' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE', true),
     'web_chat_queue_name' => env('SOCIFUSION_AI_WEB_CHAT_QUEUE_NAME', 'webhooks'),
