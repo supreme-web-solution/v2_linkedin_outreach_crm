@@ -90,7 +90,8 @@ class WorkflowConversationNotifier
             return;
         }
 
-        $requested = (int) ($plan['constraints']['target_count'] ?? $meta['latest_state']['requested_quantity'] ?? 0);
+        $latestState = is_array($meta['latest_state'] ?? null) ? $meta['latest_state'] : [];
+        $requested = (int) ($plan['constraints']['target_count'] ?? $latestState['requested_quantity'] ?? 0);
         $discovered = (int) ($meta['cumulative_candidate_delta'] ?? 0);
         $platforms = is_array($meta['platforms_searched'] ?? null) ? implode(' + ', $meta['platforms_searched']) : null;
 
@@ -119,7 +120,8 @@ class WorkflowConversationNotifier
      */
     private function prospectCountForDisplay(array $meta): int
     {
-        $fromState = (int) ($meta['latest_state']['intersection_eligible_count'] ?? 0);
+        $latestState = is_array($meta['latest_state'] ?? null) ? $meta['latest_state'] : [];
+        $fromState = (int) ($latestState['intersection_eligible_count'] ?? 0);
         $fromDelta = (int) ($meta['cumulative_candidate_delta'] ?? 0);
         $lists = is_array($meta['discovery_lists'] ?? null) ? $meta['discovery_lists'] : [];
         $fromLists = $lists === [] ? 0 : array_sum(array_map(

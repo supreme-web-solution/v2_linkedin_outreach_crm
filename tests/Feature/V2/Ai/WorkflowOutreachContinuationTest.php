@@ -101,6 +101,34 @@ class WorkflowOutreachContinuationTest extends TestCase
         $this->assertSame('completed', $awaiting->status);
     }
 
+    public function test_resume_after_launch_without_latest_state_in_meta(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $this->seedSaasFounders($user, 100);
+        $plan = $this->outreachPlan(100);
+
+        $this->simulateDiscoveryHandler([fn () => null]);
+
+        $runtime = app(WorkflowRuntimeService::class);
+        $run = $runtime->start($user, $org->id, $plan);
+        $runtime->tick($run->fresh()->id);
+        $runtime->tick($run->fresh()->id);
+
+        $run = $run->fresh();
+        $meta = is_array($run->meta) ? $run->meta : [];
+        unset($meta['latest_state']);
+        $run->update(['meta' => $meta, 'status' => 'waiting']);
+
+        $runtime->resumeAfterLaunch($run->id, (int) $run->meta['approval_id'], [
+            'outreach_campaign_id' => 99,
+            'campaign_status' => 'active',
+        ]);
+
+        $run = $run->fresh();
+        $this->assertSame('completed', $run->status);
+        $this->assertTrue($run->meta['executed'] ?? false);
+    }
+
     public function test_setup_only_completes_after_prepare_without_launch(): void
     {
         [$user, $org] = $this->userWithOrg();

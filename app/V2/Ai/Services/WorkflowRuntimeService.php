@@ -543,7 +543,8 @@ class WorkflowRuntimeService
             $meta['awaiting_approval'] = false;
             $meta['approval_id'] = $approvalId;
             $meta['outreach_campaign_id'] = (int) ($launchResult['outreach_campaign_id'] ?? 0);
-            $meta['step_history'][] = [
+            $history = is_array($meta['step_history'] ?? null) ? $meta['step_history'] : [];
+            $history[] = [
                 'step_key' => 'launch',
                 'status' => 'completed',
                 'result_summary' => [
@@ -551,8 +552,12 @@ class WorkflowRuntimeService
                     'outreach_campaign_id' => $meta['outreach_campaign_id'],
                 ],
             ];
+            $meta['step_history'] = $history;
 
-            $state = is_array($meta['latest_state']) ? $meta['latest_state'] : [];
+            $state = is_array($meta['latest_state'] ?? null)
+                ? $meta['latest_state']
+                : (is_array($meta['baseline_state'] ?? null) ? $meta['baseline_state'] : []);
+            $meta['latest_state'] = $state;
             $run->update(['meta' => $meta, 'status' => 'running']);
 
             if ($this->planner->isWorkflowComplete($plan, $state, $meta)) {

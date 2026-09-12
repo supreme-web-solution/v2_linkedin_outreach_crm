@@ -40,4 +40,15 @@ class AiEmployeeSetting extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    public function getEmployeeNameAttribute(?string $value): string
+    {
+        $name = trim((string) $value);
+
+        if ($name === '' || strcasecmp($name, 'Alex') === 0) {
+            return (string) config('socifusion_ai.employee_name', 'Soci');
+        }
+
+        return $name;
+    }
 }

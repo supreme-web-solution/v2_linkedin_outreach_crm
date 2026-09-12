@@ -54,6 +54,24 @@ class AiEmployeeSettingsUpdateTest extends TestCase
         );
     }
 
+    public function test_legacy_alex_employee_name_reads_as_soci(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+
+        AiEmployeeSetting::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'enabled' => true,
+            'kill_switch' => false,
+            'autonomy_level' => AiAutonomyLevel::Autopilot->value,
+            'employee_name' => 'Alex',
+        ]);
+
+        $settings = app(AiEmployeeSettingsService::class)->for($user, $org->id);
+
+        $this->assertSame('Soci', $settings->employee_name);
+    }
+
     public function test_user_override_takes_precedence_over_org_default(): void
     {
         [$user, $org] = $this->userWithOrg();
