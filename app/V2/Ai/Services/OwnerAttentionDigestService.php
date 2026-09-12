@@ -2,11 +2,13 @@
 
 namespace App\V2\Ai\Services;
 
+use App\Models\AiActionApproval;
 use App\Models\AiConversation;
-use App\Models\AiMessage;
 use App\Models\User;
+use App\Models\V2Conversation;
+use App\Models\V2Message;
+use App\V2\Ai\Enums\AiAutonomyLevel;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Str;
 
 /**
  * Posts periodic owner-attention digests into the Command Center chat thread.
@@ -17,6 +19,7 @@ class OwnerAttentionDigestService
         private readonly CommandCenterAwarenessService $awareness,
         private readonly CommandCenterService $commandCenter,
         private readonly AiEmployeeSettingsService $settingsService,
+        private readonly CommandCenterPushService $push,
     ) {}
 
     public function maybePost(User $user, int $organizationId, string $trigger = 'scheduled'): bool
@@ -34,7 +37,12 @@ class OwnerAttentionDigestService
             return false;
         }
 
-        $content = $this->buildDigestMessage($user, $organizationId);
+        $autonomy = $this->settingsService->autonomy($settings);
+        if ($autonomy->value >= AiAutonomyLevel::Autopilot->value) {
+            $this->maybeAutoHandleHotThreads($user, $organizationId);
+        }
+
+        $content = $this->buildDigestMessage($user, $organizationId, $autonomy);
         if ($content === null) {
             return false;
         }
@@ -46,17 +54,15 @@ class OwnerAttentionDigestService
             return false;
         }
 
-        AiMessage::query()->create([
-            'conversation_id' => $conversation->id,
-            'role' => 'assistant',
-            'content' => $content,
-            'meta' => [
-                'source' => 'attention_digest',
-                'channel' => 'web',
-                'trigger' => $trigger,
-                'digest_hash' => $hash,
-            ],
-        ]);
+        $approvalId = $this->latestPendingDraftReplyId($user, $organizationId);
+
+        $this->push->postAssistant($user, $organizationId, $content, [
+            'source' => 'attention_digest',
+            'trigger' => $trigger,
+            'digest_hash' => $hash,
+            'tool' => $approvalId ? 'draft_reply' : null,
+            'payload' => $approvalId ? ['type' => 'draft_reply'] : null,
+        ], $approvalId);
 
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
         $meta['attention_digest'] = [
@@ -96,7 +102,7 @@ class OwnerAttentionDigestService
         }
     }
 
-    public function buildDigestMessage(User $user, int $organizationId): ?string
+    public function buildDigestMessage(User $user, int $organizationId, ?AiAutonomyLevel $autonomy = null): ?string
     {
         $snap = $this->awareness->snapshot($user, $organizationId);
         $brief = is_array($snap['inbox_brief'] ?? null) ? $snap['inbox_brief'] : [];
@@ -111,6 +117,7 @@ class OwnerAttentionDigestService
             return null;
         }
 
+        $autonomy ??= $this->settingsService->autonomy($this->settingsService->for($user, $organizationId));
         $employee = $this->settingsService->for($user, $organizationId)->employee_name ?: 'Soci';
         $lines = ["📋 **{$employee} attention digest**"];
 
@@ -169,9 +176,74 @@ class OwnerAttentionDigestService
             $lines[] = "🌱 **Nurture:** {$nurtureDue} follow-up(s) due — ask me to show the nurture queue.";
         }
 
-        $lines[] = 'Reply here: **LAUNCH #** to approve, or tell me who to draft for (email/name works even if you read the thread).';
+        if ($autonomy->value >= AiAutonomyLevel::Autopilot->value) {
+            $lines[] = 'Autopilot is on — Soci drafts and sends inbox replies automatically when possible. Tap **Send** below if a reply is waiting for approval.';
+        } else {
+            $lines[] = 'Reply here: **LAUNCH #** to approve, or tell me who to draft for (email/name works even if you read the thread).';
+        }
 
         return implode("\n\n", $lines);
+    }
+
+    private function maybeAutoHandleHotThreads(User $user, int $organizationId): void
+    {
+        if (! (bool) config('socifusion_ai.proactive_inbound_reply', true)) {
+            return;
+        }
+
+        $snap = $this->awareness->snapshot($user, $organizationId);
+        $handling = app(InboxSociHandlingService::class);
+
+        foreach ($snap['awaiting_reply'] ?? [] as $row) {
+            if (! is_array($row) || ($row['priority'] ?? '') !== 'hot') {
+                continue;
+            }
+
+            $convId = (int) ($row['conversation_id'] ?? 0);
+            if ($convId <= 0) {
+                continue;
+            }
+
+            $v2Conversation = V2Conversation::query()
+                ->where('user_id', $user->id)
+                ->whereKey($convId)
+                ->first();
+
+            if (! $v2Conversation) {
+                continue;
+            }
+
+            $latestInbound = V2Message::query()
+                ->where('conversation_id', $v2Conversation->id)
+                ->where('direction', 'inbound')
+                ->orderByDesc('id')
+                ->first();
+
+            if (! $latestInbound || $handling->isAlreadyHandled($v2Conversation, (int) $latestInbound->id)) {
+                continue;
+            }
+
+            app(ProactiveInboundReplyService::class)->handle(
+                $v2Conversation->id,
+                $user->id,
+                (int) $latestInbound->id,
+            );
+
+            return;
+        }
+    }
+
+    private function latestPendingDraftReplyId(User $user, int $organizationId): ?int
+    {
+        $approval = AiActionApproval::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $organizationId)
+            ->where('status', 'pending')
+            ->where('tool', 'draft_reply')
+            ->orderByDesc('id')
+            ->first();
+
+        return $approval ? (int) $approval->id : null;
     }
 
     /**

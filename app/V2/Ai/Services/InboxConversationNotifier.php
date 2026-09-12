@@ -2,14 +2,16 @@
 
 namespace App\V2\Ai\Services;
 
-use App\Models\AiConversation;
-use App\Models\AiMessage;
 use App\Models\User;
 use App\Models\V2Conversation;
 use App\V2\Outreach\OutreachChannelRegistry;
 
 class InboxConversationNotifier
 {
+    public function __construct(
+        private readonly CommandCenterPushService $push,
+    ) {}
+
     public function notify(
         User $user,
         int $organizationId,
@@ -21,17 +23,9 @@ class InboxConversationNotifier
             return;
         }
 
-        $conversation = app(CommandCenterService::class)->conversation($user, $organizationId);
-
-        AiMessage::query()->create([
-            'conversation_id' => $conversation->id,
-            'role' => 'assistant',
-            'content' => $content,
-            'meta' => array_merge([
-                'source' => 'inbound_reply_watch',
-                'channel' => 'web',
-            ], $meta),
-        ]);
+        $this->push->postAssistant($user, $organizationId, $content, array_merge([
+            'source' => 'inbound_reply_watch',
+        ], $meta));
     }
 
     /**
@@ -85,14 +79,17 @@ class InboxConversationNotifier
         ]);
 
         if ($autoSent) {
-            $lines[] = 'Soci sent a tailored reply automatically.';
-            $lines[] = "[Open thread]({$inboxUrl})";
-        } elseif ($approvalId) {
-            $lines[] = 'Proposed reply:';
+            $lines[] = '✅ Soci sent a tailored reply automatically.';
             if ($draft !== '') {
                 $lines[] = "> {$draft}";
             }
-            $lines[] = "Review in **Launch {$approvalId}** or [open inbox]({$inboxUrl}).";
+            $lines[] = "[Open thread]({$inboxUrl})";
+        } elseif ($approvalId) {
+            $lines[] = 'Proposed reply — tap **Send** to approve:';
+            if ($draft !== '') {
+                $lines[] = "> {$draft}";
+            }
+            $lines[] = "Or say **LAUNCH {$approvalId}** · [open inbox]({$inboxUrl})";
         } elseif ($draft !== '') {
             $lines[] = 'Draft reply (Copilot — review before sending):';
             $lines[] = "> {$draft}";
@@ -101,11 +98,13 @@ class InboxConversationNotifier
             $lines[] = "[Open inbox to reply]({$inboxUrl})";
         }
 
-        $this->notify($user, $organizationId, implode("\n\n", $lines), [
+        $this->push->postAssistant($user, $organizationId, implode("\n\n", $lines), [
+            'source' => 'proactive_inbound',
             'v2_conversation_id' => $v2Conversation->id,
-            'approval_id' => $approvalId,
             'auto_sent' => $autoSent,
             'classification_priority' => $classification['priority'] ?? null,
-        ]);
+            'tool' => $approvalId ? 'draft_reply' : null,
+            'payload' => $approvalId ? ['type' => 'draft_reply'] : null,
+        ], $approvalId);
     }
 }

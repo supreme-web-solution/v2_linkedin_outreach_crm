@@ -235,6 +235,74 @@ class UserTurnIntentService
         return false;
     }
 
+    /**
+     * User wants Soci to draft or send a Unified Inbox reply (not a new campaign).
+     */
+    public function isInboxReplyRequest(string $message): bool
+    {
+        $lower = Str::lower(trim($message));
+        if ($lower === '') {
+            return false;
+        }
+
+        if ($this->isOutreachCommand($lower) || $this->isProspectDiscoveryRequest($lower)) {
+            return false;
+        }
+
+        $patterns = [
+            '/\b(generate|write|draft|create|compose|prepare)\b.{0,50}\b(reply|response|email|message)\b/i',
+            '/\b(send|reply|respond)\b.{0,40}\b(to|for|back to)\b/i',
+            '/\bemail response for\b/i',
+            '/\breply to\b.{0,60}\b(email|message|inbox|thread)\b/i',
+            '/\bfor that email we (received|got)\b/i',
+            '/\bdraft.{0,30}\b(for|to)\b/i',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $lower)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function wantsDraftOnly(string $message): bool
+    {
+        $lower = Str::lower(trim($message));
+
+        return (bool) preg_match(
+            '/\b(don\'?t|do not|dont|not)\s+(send|launch|deliver|ship)\b|\b(draft only|for review|don\'t send|do not send)\b/i',
+            $lower,
+        );
+    }
+
+    /**
+     * @return array{email: string|null, name: string|null}
+     */
+    public function extractInboxReplyTarget(string $message): array
+    {
+        $email = null;
+        $name = null;
+
+        if (preg_match('/[\w.+-]+@[\w.-]+\.\w+/', $message, $match)) {
+            $email = Str::lower(trim($match[0]));
+        }
+
+        if (preg_match('/\bfor\s+([a-z0-9][\w.-]{1,60})\b/i', $message, $match)) {
+            $candidate = trim($match[1]);
+            if (! str_contains($candidate, '@') && ! in_array(Str::lower($candidate), ['that', 'the', 'this', 'them', 'him', 'her'], true)) {
+                $name = $candidate;
+            }
+        }
+
+        if ($name === null && preg_match('/\breply to\s+([a-z0-9][\w\s.-]{1,40}?)(?:\s+(?:on|via|in|for|about)\b|$)/i', $message, $match)) {
+            $name = trim($match[1]);
+        }
+
+        return ['email' => $email, 'name' => $name];
+    }
+
     /** @deprecated Use isProspectDiscoveryRequest() */
     public function isAcquisitionCommand(string $message): bool
     {

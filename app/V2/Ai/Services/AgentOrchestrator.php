@@ -461,6 +461,51 @@ class AgentOrchestrator
             return ['early' => $payload];
         }
 
+        $inboxPreflight = app(InboxReplyTurnPreflightService::class)->tryHandle(
+            $user,
+            $organizationId,
+            $conversation,
+            $message,
+            $channel,
+        );
+
+        if ($inboxPreflight && ($inboxPreflight['handled'] ?? false)) {
+            AiMessage::query()->create([
+                'conversation_id' => $conversation->id,
+                'role' => 'user',
+                'content' => $message,
+                'provider_message_id' => $providerMessageId,
+                'meta' => ['channel' => $channel],
+            ]);
+
+            $reply = (string) ($inboxPreflight['reply'] ?? '');
+            $approval = $inboxPreflight['approval'] ?? null;
+
+            AiMessage::query()->create([
+                'conversation_id' => $conversation->id,
+                'role' => 'assistant',
+                'content' => $reply,
+                'meta' => array_filter([
+                    'channel' => $channel,
+                    'control' => 'inbox_reply_preflight',
+                    'approval_id' => $approval instanceof AiActionApproval ? $approval->id : null,
+                ]),
+            ]);
+
+            $payload = $this->payload(
+                $user,
+                $organizationId,
+                $conversation->id,
+                $reply,
+                $approval instanceof AiActionApproval && $approval->status === 'pending'
+                    ? $approval
+                    : null,
+            );
+            $payload['status'] = 'done';
+
+            return ['early' => $payload];
+        }
+
         if ($control && ! empty($control['rewrite'])) {
             $promptMessage = (string) $control['rewrite'];
         }
@@ -581,6 +626,12 @@ class AgentOrchestrator
                     $reply,
                     $latestApproval,
                     $promptMessage,
+                );
+                $latestApproval = $this->maybeAutoSendDraftReply(
+                    $user,
+                    $organizationId,
+                    $reply,
+                    $latestApproval,
                 );
             }
         } catch (Throwable $e) {
@@ -749,6 +800,38 @@ class AgentOrchestrator
         $approved = $launch['approval'] ?? null;
 
         return $approved instanceof AiActionApproval ? $approved : $latestApproval->fresh();
+    }
+
+    private function maybeAutoSendDraftReply(
+        User $user,
+        int $organizationId,
+        string &$reply,
+        ?AiActionApproval $latestApproval,
+    ): ?AiActionApproval {
+        if (! $latestApproval || $latestApproval->status !== 'pending') {
+            return $latestApproval;
+        }
+
+        if ($latestApproval->tool !== 'draft_reply') {
+            return $latestApproval;
+        }
+
+        $settings = $this->settingsService->for($user, $organizationId);
+        $autonomy = AiAutonomyLevel::tryFrom((int) $settings->autonomy_level) ?? AiAutonomyLevel::Assisted;
+        if ($autonomy->value < AiAutonomyLevel::Autopilot->value) {
+            return $latestApproval;
+        }
+
+        try {
+            $result = app(ReplySendFromPlanService::class)->sendFromApproval($latestApproval, $user);
+            $reply = trim($reply."\n\n✅ ".($result['message'] ?? 'Reply sent.'));
+        } catch (\Throwable $e) {
+            report($e);
+
+            return $latestApproval;
+        }
+
+        return $latestApproval->fresh();
     }
 
     /**
