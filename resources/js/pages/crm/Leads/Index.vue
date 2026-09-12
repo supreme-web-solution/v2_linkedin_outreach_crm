@@ -167,6 +167,10 @@ onMounted(() => {
 });
 
 function isInstagramList(list: LeadList): boolean {
+    if (list.src !== 'csv') {
+        return false;
+    }
+
     return list.channel === 'instagram'
         || list.source === 'Instagram'
         || /^IG:/i.test(list.list_name);

@@ -231,12 +231,15 @@ class UserTurnIntentService
         }
 
         $patterns = [
-            '/\b(don\'?t|do not|dont)\s+(send|launch|start|activate|run|message|dm|email)\b/',
+            '/\b(don\'?t|do not|dont)\s+(send|launch|start|activate|run|message|dm|email|sen)\b/',
+            '/\b(but|and)\s+(don\'?t|do not|dont|not)\s+(sen|send|launch)\b/',
+            '/\bdont\s+sen\b/',
             '/\b(not|never)\s+(send|launch|start|activate|run)\b/',
             '/\b(no\s+send|without\s+sending|do\s+not\s+send)\b/',
             '/\bno\s+(launch|send|start|activate|run)\b/',
             '/\b(setup|set\s+up|stage|prepare|draft|create)\b.{0,40}\b(but|and)\s+(don\'?t|do not|dont|not)\s+(send|launch|start|activate|run)\b/',
-            '/\b(create|build|draft|stage|prepare)\b.{0,30}\b(campaign|outreach|sequence)\b.{0,40}\b(but|and)\s+(don\'?t|do not|dont|not)\s+(send|launch|start|activate|run)\b/',
+            '/\b(create|build|draft|stage|prepare)\b.{0,30}\b(campaign|campagin|outreach|sequence)\b.{0,40}\b(but|and)\s+(don\'?t|do not|dont|not)\s+(send|launch|start|activate|run)\b/',
+            '/\bset\s+up\s+a\s+camp[a-z]*\b.{0,20}\b(but|and)\s+(don\'?t|do not|dont|not)\s+(sen|send|launch)\b/',
             '/\bjust\s+(setup|set\s+up|set\s+it\s+up|stage|prepare|draft|create)\b/',
             '/\b(setup|set\s+up|stage|prepare)\s+only\b/',
             '/\bready\s+for\s+review\b/',
@@ -245,6 +248,36 @@ class UserTurnIntentService
             '/\breview\s*&\s*launch\s+later\b/',
             '/\b(not\s+now|launch\s+later|send\s+later|hold|wait\s+for\s+my\s+go)\b/',
             '/\b(plan|draft|stage|prepare)\b.{0,20}\b(campaign|outreach|sequence)\b.{0,20}\b(first)\b/',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $lower)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * User wants to launch, send, or stage the outreach campaign (not inbox reply).
+     */
+    public function isCampaignActionRequest(string $message): bool
+    {
+        $lower = Str::lower(trim($message));
+        if ($lower === '') {
+            return false;
+        }
+
+        if ($this->isInboxReplyRequest($message)) {
+            return false;
+        }
+
+        $patterns = [
+            '/\b(send|launch|start|run|activate)\b.{0,25}\b(the\s+)?campaign\b/',
+            '/\b(create|build|stage|set\s+up)\b.{0,40}\b(campaign|outreach)\b.{0,40}\b(to|for)\b/',
+            '/\b(send|launch|start)\s+it\b/',
+            '/\breview\s*&\s*launch\b/',
         ];
 
         foreach ($patterns as $pattern) {

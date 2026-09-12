@@ -506,6 +506,60 @@ class AgentOrchestrator
             return ['early' => $payload];
         }
 
+        $campaignPreflight = app(CampaignOutreachPreflightService::class)->tryHandle(
+            $user,
+            $organizationId,
+            $conversation,
+            $message,
+        );
+
+        if ($campaignPreflight && ($campaignPreflight['handled'] ?? false)) {
+            AiMessage::query()->create([
+                'conversation_id' => $conversation->id,
+                'role' => 'user',
+                'content' => $message,
+                'provider_message_id' => $providerMessageId,
+                'meta' => ['channel' => $channel],
+            ]);
+
+            $reply = (string) ($campaignPreflight['reply'] ?? '');
+            $approval = $campaignPreflight['approval'] ?? null;
+
+            if ($approval instanceof AiActionApproval && $channel === 'whatsapp') {
+                app(CommandCenterPushService::class)->mirrorToWhatsApp(
+                    $user,
+                    $organizationId,
+                    $reply,
+                    $approval->id,
+                    ['source' => 'campaign_preflight', 'tool' => $approval->tool],
+                );
+            }
+
+            AiMessage::query()->create([
+                'conversation_id' => $conversation->id,
+                'role' => 'assistant',
+                'content' => $reply,
+                'meta' => array_filter([
+                    'channel' => $channel,
+                    'control' => 'campaign_preflight',
+                    'approval_id' => $approval instanceof AiActionApproval ? $approval->id : null,
+                ]),
+            ]);
+
+            $payload = $this->payload(
+                $user,
+                $organizationId,
+                $conversation->id,
+                $reply,
+                $approval instanceof AiActionApproval && $approval->status === 'pending'
+                    ? $approval
+                    : null,
+            );
+            $payload['status'] = 'done';
+
+            return ['early' => $payload];
+        }
+
         if ($control && ! empty($control['rewrite'])) {
             $promptMessage = (string) $control['rewrite'];
         }
@@ -600,7 +654,7 @@ class AgentOrchestrator
         $reply = '';
 
         $workflowDiscoveryAck = isset($plan['workflow_run_id'])
-            && ($plan['required_outcome'] ?? '') === 'find_only';
+            && in_array((string) ($plan['required_outcome'] ?? ''), ['find_only', 'setup_only'], true);
 
         if ($workflowDiscoveryAck) {
             $reply = app(WorkflowDiscoveryAckService::class)->build($user, $organizationId, $plan);

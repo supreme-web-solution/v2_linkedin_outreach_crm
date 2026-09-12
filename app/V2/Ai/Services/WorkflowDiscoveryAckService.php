@@ -42,8 +42,11 @@ class WorkflowDiscoveryAckService
             default => 'Searching for prospects now',
         };
 
+        $outcome = (string) ($plan['required_outcome'] ?? '');
         $lines = [
-            "I'm finding {$countPhrase} for you. {$searchLine} — discovery runs in the background and I'll update you here when the list is saved.",
+            $outcome === 'setup_only'
+                ? "I'm finding {$countPhrase} and staging a campaign for Review & Launch. {$searchLine} — nothing sends until you tap Launch."
+                : "I'm finding {$countPhrase} for you. {$searchLine} — discovery runs in the background and I'll update you here when the list is saved.",
         ];
 
         $settings = $this->settingsService->for($user, $organizationId);

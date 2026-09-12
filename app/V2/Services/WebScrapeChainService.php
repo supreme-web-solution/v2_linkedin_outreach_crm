@@ -87,7 +87,14 @@ class WebScrapeChainService
                 ->withHeaders(['User-Agent' => 'SociFusionBot/1.0 (+https://socifusion.com)'])
                 ->get($url);
         } catch (\Throwable $e) {
-            report($e);
+            if ($e instanceof \Illuminate\Http\Client\ConnectionException) {
+                Log::info('[WebScrapeChain] Could not reach host', [
+                    'url' => $url,
+                    'error' => $e->getMessage(),
+                ]);
+            } else {
+                report($e);
+            }
 
             return $this->failure($url, 'Could not fetch that page.');
         }

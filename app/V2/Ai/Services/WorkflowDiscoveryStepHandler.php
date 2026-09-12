@@ -23,7 +23,11 @@ class WorkflowDiscoveryStepHandler
     {
         $targetCount = max(1, min(100, (int) ($arguments['target_count'] ?? 1)));
         $segment = trim((string) ($arguments['segment'] ?? $plan['objective']['segment'] ?? 'prospects'));
-        $query = $segment !== '' ? $segment : 'prospects';
+        $criteria = trim((string) ($plan['objective']['criteria'] ?? ''));
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        $rawQuery = $criteria !== '' ? $criteria : ($segment !== '' ? $segment : 'prospects');
+        $query = app(WorkspaceContextService::class)->enrichDiscoveryQuery($user, $orgId, $rawQuery);
+        $query = $this->normalizeDiscoveryQuery($user, $orgId, $query);
 
         $preferFresh = (bool) ($arguments['new_only'] ?? $plan['constraints']['new_only'] ?? false);
         $platform = $this->platformResolver->resolve($plan, $arguments, $query);
@@ -169,5 +173,28 @@ class WorkflowDiscoveryStepHandler
         }
 
         return is_array($samples) ? $samples : [];
+    }
+
+    private function normalizeDiscoveryQuery(User $user, int $organizationId, string $query): string
+    {
+        $query = trim($query);
+        if ($query === '') {
+            $query = 'prospects';
+        }
+
+        if (! preg_match('/^(prospects?|customers?|clients?|leads?|my business)$/i', $query)) {
+            return $query;
+        }
+
+        $settings = app(AiEmployeeSettingsService::class)->for($user, $organizationId);
+        $profile = app(WorkspaceContextService::class)->businessProfile($settings);
+        $summary = trim((string) ($profile['summary'] ?? ''));
+        $icp = app(WorkspaceContextService::class)->storedIcp($settings);
+        $icpLine = trim(collect([
+            $icp['industry'] ?? null,
+            $icp['decision_maker'] ?? null,
+        ])->filter()->implode(' '));
+
+        return $summary !== '' ? $summary : ($icpLine !== '' ? $icpLine : 'B2B decision makers');
     }
 }

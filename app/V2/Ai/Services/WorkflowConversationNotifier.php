@@ -16,8 +16,13 @@ class WorkflowConversationNotifier
         private readonly CommandCenterPushService $push,
     ) {}
 
-    public function notify(AiWorkflowRun $run, string $content, ?string $whatsappBody = null): void
-    {
+    public function notify(
+        AiWorkflowRun $run,
+        string $content,
+        ?string $whatsappBody = null,
+        ?int $approvalId = null,
+        ?string $approvalTool = null,
+    ): void {
         if (! $run->conversation_id || trim($content) === '') {
             return;
         }
@@ -28,12 +33,18 @@ class WorkflowConversationNotifier
             return;
         }
 
-        $this->push->postAssistant($user, $orgId, trim($content), [
+        $meta = [
             'source' => 'workflow_runtime',
             'workflow_run_id' => $run->id,
             'workflow_status' => $run->status,
             'whatsapp_body' => $whatsappBody ?? $this->plainWithLinks($content),
-        ]);
+        ];
+        if ($approvalId !== null && $approvalId > 0) {
+            $meta['tool'] = $approvalTool ?? 'draft_campaign_plan';
+            $meta['payload'] = ['type' => 'campaign_plan'];
+        }
+
+        $this->push->postAssistant($user, $orgId, trim($content), $meta, $approvalId);
     }
 
     public function notifyCompleted(AiWorkflowRun $run): void
@@ -65,12 +76,7 @@ class WorkflowConversationNotifier
         }
 
         if ($outcome === 'setup_only') {
-            $approvalId = (int) ($result['approval_id'] ?? 0);
-
-            $this->notify($run, implode("\n", array_filter([
-                "✅ Workflow #{$run->id} staged your outreach plan.",
-                $approvalId > 0 ? "Open Review & Launch for plan #{$approvalId} — nothing sends until you LAUNCH." : null,
-            ])));
+            $this->notifyCampaignReady($run, $meta, $result);
 
             return;
         }
@@ -288,12 +294,43 @@ class WorkflowConversationNotifier
             }
         }
 
-        $this->notify($run, implode("\n", array_filter([
-            "✅ Workflow #{$run->id} — discovery complete. Reply-first outreach is ready for Review & Launch.",
-            $platforms ? "Lists saved from: {$platforms} ({$eligible} prospects)." : "Prospects ready: {$eligible}.",
-            $launchLines !== [] ? implode("\n", $launchLines) : 'Open Review & Launch to approve the staged plan.',
-            'Nothing sends until you LAUNCH. First messages earn a reply — no SociFusion pitch yet.',
-        ])));
+        $approvalId = $approvalIds[0] ?? null;
+        $content = implode("\n", array_filter([
+            "✅ Campaign ready for Review & Launch.",
+            $platforms ? "Prospects from {$platforms} ({$eligible})." : "Prospects ready: {$eligible}.",
+            'Tap **Launch** below when you\'re ready — nothing sends until you approve.',
+        ]));
+        $whatsappBody = implode("\n", array_filter([
+            'Campaign ready for Review & Launch.',
+            $platforms ? "From {$platforms} ({$eligible} prospects)." : "Prospects ready: {$eligible}.",
+            'Tap Launch below — nothing sends until you approve.',
+        ]));
+
+        $this->notify($run, $content, $whatsappBody, $approvalId, 'draft_campaign_plan');
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     * @param  array<string, mixed>  $result
+     */
+    private function notifyCampaignReady(AiWorkflowRun $run, array $meta, array $result): void
+    {
+        $approvalId = (int) ($result['approval_id'] ?? $meta['approval_id'] ?? 0);
+        $platforms = is_array($meta['platforms_searched'] ?? null) ? implode(' + ', $meta['platforms_searched']) : null;
+        $eligible = $this->prospectCountForDisplay($meta);
+
+        $content = implode("\n", array_filter([
+            "✅ Workflow #{$run->id} — campaign staged.",
+            $platforms ? "Prospects from {$platforms} ({$eligible})." : null,
+            'Review the plan below, then tap **Launch** when you\'re ready. Nothing sends until you approve.',
+        ]));
+        $whatsappBody = implode("\n", array_filter([
+            "Workflow #{$run->id} — campaign staged.",
+            $platforms ? "From {$platforms} ({$eligible} prospects)." : null,
+            'Tap Launch below when ready. Nothing sends until you approve.',
+        ]));
+
+        $this->notify($run, $content, $whatsappBody, $approvalId > 0 ? $approvalId : null, 'draft_campaign_plan');
     }
 
     private function plainWithLinks(string $markdown): string

@@ -64,6 +64,25 @@ class LeadListServiceTest extends TestCase
         $this->assertSame(1, (int) ($csvRow['total_leads'] ?? 0));
     }
 
+    public function test_audience_lists_with_ig_prefix_stay_audience_not_instagram(): void
+    {
+        $user = User::factory()->create();
+
+        Audience::query()->create([
+            'user_id' => $user->id,
+            'audience_id' => 'aud-li-mislabel',
+            'audience_name' => 'IG: prospects (10) (10)',
+        ]);
+
+        $row = app(LeadListService::class)->listsForUser($user->id)
+            ->first(fn (array $l) => $l['list_id'] === 'aud-li-mislabel');
+
+        $this->assertNotNull($row);
+        $this->assertSame('aud', $row['src']);
+        $this->assertSame('Audience', $row['source']);
+        $this->assertArrayNotHasKey('channel', $row);
+    }
+
     public function test_lists_for_user_marks_instagram_csv_channel(): void
     {
         $user = User::factory()->create();

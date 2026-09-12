@@ -64,6 +64,17 @@ class UserTurnIntentServiceTest extends TestCase
         $this->assertTrue($intent->wantsCampaignSetupOnly($prompt));
         $this->assertFalse($intent->wantsCampaignSetupOnly('launch a campaign for these leads now'));
         $this->assertTrue($intent->wantsCampaignSetupOnly('create the outreach sequence but do not send yet'));
+        $this->assertTrue($intent->wantsCampaignSetupOnly('help me find 10 customers set up a campaign but dont send yet'));
+        $this->assertTrue($intent->wantsCampaignSetupOnly('help me find 10 customers set up a campagin but dont sen yet'));
+    }
+
+    public function test_campaign_action_request_detects_send_the_campaign(): void
+    {
+        $intent = app(UserTurnIntentService::class);
+
+        $this->assertTrue($intent->isCampaignActionRequest('send the campaign'));
+        $this->assertTrue($intent->isCampaignActionRequest('Create and send an Instagram campaign to the 10 leads'));
+        $this->assertFalse($intent->isCampaignActionRequest('reply to Sarah in the inbox'));
     }
 
     public function test_company_mention_without_outreach_verb_stays_non_outreach(): void

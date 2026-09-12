@@ -93,6 +93,32 @@ class SemanticTurnPlanNormalizer
     }
 
     /**
+     * Find + stage campaign without send → one setup_only workflow (discover then prepare).
+     *
+     * @param  array<string, mixed>  $semantic
+     * @return array<string, mixed>
+     */
+    private function applySetupOnlySemantics(array $semantic, string $originalMessage): array
+    {
+        $intent = app(UserTurnIntentService::class);
+        if (! $intent->wantsCampaignSetupOnly($originalMessage)) {
+            return $semantic;
+        }
+
+        $semantic['prepare_only'] = true;
+        $semantic['send_requested'] = false;
+
+        if ($intent->isProspectDiscoveryRequest($originalMessage)) {
+            $semantic['user_objective'] = 'discover_prospects';
+            $semantic['execution_mode'] = 'prepare_outreach';
+        } elseif (in_array($semantic['execution_mode'], ['find_and_save', 'unspecified', 'clarify'], true)) {
+            $semantic['execution_mode'] = 'prepare_outreach';
+        }
+
+        return $semantic;
+    }
+
+    /**
      * @param  array<string, mixed>  $semantic
      * @return array<string, mixed>
      */
@@ -100,6 +126,7 @@ class SemanticTurnPlanNormalizer
     {
         $semantic = $this->sanitizeSemantic($semantic);
         $semantic = $this->applyIncrementalDiscoverySemantics($semantic, $originalMessage);
+        $semantic = $this->applySetupOnlySemantics($semantic, $originalMessage);
 
         [$goal, $requiredOutcome, $sideEffectBudget] = $this->resolveEnforcement($semantic);
 

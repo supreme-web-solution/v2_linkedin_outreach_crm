@@ -468,6 +468,7 @@ class WorkflowRuntimeService
                 && ! $completed
                 && $this->planner->isProspectQuotaMet($plan, $reEvaluated, $freshMeta)
                 && $freshRun
+                && (string) ($plan['required_outcome'] ?? '') !== 'setup_only'
             ) {
                 app(WorkflowConversationNotifier::class)->notifyDiscoveryComplete($freshRun);
             }

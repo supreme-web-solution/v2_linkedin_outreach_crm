@@ -256,12 +256,10 @@ class LinkedInAudienceBuilderService
             return null;
         }
 
-        $audienceName = trim((string) ($filters['audience_name'] ?? 'LinkedIn Search'));
-        $audienceName = trim(preg_replace('/\s+/', ' ', $audienceName) ?? '');
-        // Never let sequence/copy prose become the list title.
-        if ($audienceName === '' || strlen($audienceName) > 80 || preg_match('/after acceptance|diagnostic|follow-?up|connection invite/i', $audienceName)) {
-            $audienceName = 'LinkedIn Search '.now()->format('M j, g:ia');
-        }
+        $audienceName = $this->sanitizeAudienceName(
+            trim((string) ($filters['audience_name'] ?? 'LinkedIn Search')),
+            $filters,
+        );
         $audienceName = Str::limit($audienceName, 80, '');
 
         // Keep hash short for DB columns (outreach lists were 50; SN lists 64).
@@ -615,5 +613,27 @@ class LinkedInAudienceBuilderService
         }
 
         return '';
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    private function sanitizeAudienceName(string $name, array $filters): string
+    {
+        $name = trim(preg_replace('/\s+/', ' ', $name) ?? '');
+
+        if (preg_match('/^IG:/i', $name)) {
+            $keywords = trim((string) ($filters['keywords'] ?? ''));
+            $name = $keywords !== ''
+                ? Str::limit('LI: '.$keywords, 80, '')
+                : 'LinkedIn Search';
+        }
+
+        // Never let sequence/copy prose become the list title.
+        if ($name === '' || strlen($name) > 80 || preg_match('/after acceptance|diagnostic|follow-?up|connection invite/i', $name)) {
+            $name = 'LinkedIn Search '.now()->format('M j, g:ia');
+        }
+
+        return Str::limit($name, 80, '');
     }
 }
