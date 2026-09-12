@@ -271,14 +271,53 @@ class ProcessOutreachLeadJob implements ShouldQueue
         }
 
         if ($status === 'deferred') {
-            $runAt = $result['next_run_at'] ?? now()->addDay()->startOfDay()->addMinutes(10);
             $reason = (string) ($result['payload']['reason'] ?? 'daily_limit');
+            $runAt = $result['next_run_at'] ?? (
+                str_contains($reason, 'handle_resolve')
+                    ? now()->addMinutes(2)
+                    : now()->addDay()->startOfDay()->addMinutes(10)
+            );
+
+            $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
+            if (str_contains($reason, 'handle_resolve')) {
+                $resolveKey = (string) ($node['channel'] ?? 'instagram').'_resolve_attempts';
+                $attempts = (int) ($channelState[$resolveKey] ?? 0) + 1;
+                $channelState[$resolveKey] = $attempts;
+
+                if ($attempts <= 3) {
+                    app(\App\V2\Outreach\OutreachContactEnrichmentService::class)
+                        ->resolveHandlesForCampaign($campaign, 50);
+                }
+
+                if ($attempts > 5) {
+                    $platform = app(\App\V2\Services\UnipileTemporaryLimitGuard::class)
+                        ->platformLabel((string) ($node['channel'] ?? 'instagram'));
+                    $failReason = "Could not resolve {$platform} contact — check Integrations and the @handle on this lead.";
+                    $logger->log(
+                        $campaign->id,
+                        $lead->id,
+                        $run?->id,
+                        $node,
+                        'skipped',
+                        "Skipped \"{$nodeLabel}\" for {$lead->full_name} — {$failReason}",
+                        $result['payload'] ?? [],
+                    );
+                    if (OutreachSendProof::nodeIsOutboundSend($node)) {
+                        $lead->update(['status' => 'skipped']);
+                        $progress->update(['run_status' => 9, 'next_run_at' => null, 'channel_state' => $channelState]);
+                        $completion->maybeFinish($campaign, $run);
+                    }
+
+                    return;
+                }
+            }
             $isEscalated = ! empty($result['payload']['escalated']) || str_starts_with($reason, 'escalated_');
             $isTemp = str_starts_with($reason, 'temporary_');
             $channel = (string) ($result['payload']['channel'] ?? $node['channel'] ?? 'linkedin');
             $platform = app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->platformLabel($channel);
 
             $deferMessage = match (true) {
+                str_contains($reason, 'handle_resolve') => "Resolving {$platform} contact for {$lead->full_name} — \"{$nodeLabel}\" retries ".$runAt->diffForHumans().'.',
                 str_contains($reason, 'provider_outage') => "{$platform} provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                 $isEscalated => "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).',
                 $isTemp => "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
@@ -297,7 +336,11 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
             $lead->update(['status' => 'pending']);
             // Same node retries later; keys are not advanced.
-            $progress->update(['next_run_at' => $runAt, 'run_status' => 0]);
+            $progress->update([
+                'next_run_at' => $runAt,
+                'run_status' => 0,
+                'channel_state' => $channelState,
+            ]);
             self::dispatch($campaign->id, $lead->id, $run?->id)->delay($runAt);
 
             return;

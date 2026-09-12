@@ -125,6 +125,10 @@ class PlanContentService
      */
     public function enrichCampaign(array $base): array
     {
+        if (! empty($base['single_channel_only']) && trim((string) ($base['primary_channel'] ?? '')) !== '') {
+            return $base;
+        }
+
         if (! $this->openai->isConfigured()) {
             return $base;
         }

@@ -9,6 +9,7 @@ use App\Models\V2OutreachList;
 use App\V2\Ai\Support\CampaignDisplayName;
 use App\V2\Ai\Support\PlanLeadList;
 use App\V2\Ai\Support\SenderIdentity;
+use App\V2\Outreach\OutreachChannelRegistry;
 use Illuminate\Support\Str;
 
 class CampaignDraftFromPlanService
@@ -72,12 +73,19 @@ class CampaignDraftFromPlanService
             $audience['list_name'],
         );
 
-        $primaryChannel = $this->singleChannel->primaryChannelFromList($audience);
-        if ($primaryChannel !== null) {
-            $payload['primary_channel'] = $primaryChannel;
+        $planChannel = Str::lower(trim((string) ($payload['primary_channel'] ?? '')));
+        $singleChannelOnly = ! empty($payload['single_channel_only']);
+
+        if ($singleChannelOnly && $planChannel !== '' && OutreachChannelRegistry::isEnabled($planChannel)) {
             $payload = $this->singleChannel->applyPrimaryChannel($payload);
-        } elseif (! empty($payload['primary_channel'])) {
-            $payload = $this->singleChannel->applyPrimaryChannel($payload);
+        } else {
+            $primaryChannel = $this->singleChannel->primaryChannelFromList($audience);
+            if ($primaryChannel !== null) {
+                $payload['primary_channel'] = $primaryChannel;
+                $payload = $this->singleChannel->applyPrimaryChannel($payload);
+            } elseif ($planChannel !== '') {
+                $payload = $this->singleChannel->applyPrimaryChannel($payload);
+            }
         }
 
         $resolved = app(PlanSequenceNodeBuilder::class)->resolve($payload);

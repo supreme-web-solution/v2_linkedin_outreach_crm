@@ -42,13 +42,18 @@ class SingleChannelOutreachService
 
         $src = Str::lower((string) ($listRow['list_src'] ?? ''));
         $origin = Str::lower((string) ($listRow['origin'] ?? ''));
-
-        if ($origin === 'linkedin_search' || $src === 'sn' || $src === 'aud') {
-            return 'linkedin';
-        }
+        $name = Str::lower(trim((string) ($listRow['list_name'] ?? '')));
 
         if ($origin === 'instagram_search' || ($listRow['platform'] ?? '') === 'instagram') {
             return 'instagram';
+        }
+
+        if ($src === 'csv' && ($name !== '' && (str_starts_with($name, 'ig:') || str_contains($name, 'instagram')))) {
+            return 'instagram';
+        }
+
+        if ($origin === 'linkedin_search' || $src === 'sn' || $src === 'aud') {
+            return 'linkedin';
         }
 
         return null;

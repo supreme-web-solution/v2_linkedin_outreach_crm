@@ -40,10 +40,6 @@ class WorkflowPrepareOutreachStepHandler
         $eligible = max(1, (int) ($arguments['eligible_count'] ?? $stateEval['intersection_eligible_count'] ?? 1));
         $setupOnly = (bool) ($arguments['setup_only'] ?? false)
             || (string) ($plan['required_outcome'] ?? '') === 'setup_only';
-        $channel = strtolower(trim((string) ($plan['constraints']['preferred_channel'] ?? 'linkedin')));
-        if (! in_array($channel, ['linkedin', 'instagram', 'whatsapp', 'email'], true)) {
-            $channel = 'linkedin';
-        }
 
         $discoveryLists = is_array($arguments['discovery_lists'] ?? null) ? $arguments['discovery_lists'] : [];
         $conversation = $conversationId ? AiConversation::query()->find($conversationId) : null;
@@ -99,6 +95,8 @@ class WorkflowPrepareOutreachStepHandler
         if ($list === null) {
             throw new \RuntimeException('No prospect list available to stage outreach.');
         }
+
+        $channel = $this->resolveOutreachChannel($plan, $list, $discoveryLists);
 
         $label = ucfirst($channel === 'instagram' ? 'Instagram' : ($channel === 'whatsapp' ? 'WhatsApp' : 'LinkedIn'));
         $theme = Str::limit(trim(preg_replace('/\s+/', ' ', $segment) ?: 'Conversation-first'), 36, '');
@@ -181,6 +179,42 @@ class WorkflowPrepareOutreachStepHandler
             'eligible_count' => $eligible,
             'campaign_name' => $campaignName,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     */
+    /**
+     * @param  array<string, mixed>  $plan
+     * @param  array<string, mixed>|null  $list
+     * @param  list<array<string, mixed>>  $discoveryLists
+     */
+    private function resolveOutreachChannel(array $plan, ?array $list, array $discoveryLists): string
+    {
+        $fromList = $list !== null
+            ? app(SingleChannelOutreachService::class)->primaryChannelFromList($list)
+            : null;
+
+        if ($fromList !== null) {
+            return $fromList;
+        }
+
+        foreach ($discoveryLists as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $fromDiscovery = app(SingleChannelOutreachService::class)->primaryChannelFromList($row);
+            if ($fromDiscovery !== null) {
+                return $fromDiscovery;
+            }
+        }
+
+        $channel = strtolower(trim((string) ($plan['constraints']['preferred_channel'] ?? '')));
+        if (in_array($channel, ['linkedin', 'instagram', 'whatsapp', 'email', 'telegram', 'twitter'], true)) {
+            return $channel;
+        }
+
+        return 'linkedin';
     }
 
     /**

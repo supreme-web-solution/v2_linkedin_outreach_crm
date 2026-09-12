@@ -182,8 +182,14 @@ class PlanSequenceNodeBuilder
             return $this->ensureEndNode($this->rekeyNodes($this->buildOneShotNodes($payload)));
         }
 
-        $nodes = $this->applyInviteAcceptedIntelligence($nodes, $payload);
-        $nodes = $this->applyFirstDegreeAudienceIntelligence($nodes, $payload);
+        if (! $this->isLinkedInPrimary($payload)) {
+            $nodes = $this->stripLinkedInOnlySteps($nodes);
+        } else {
+            $nodes = $this->applyInviteAcceptedIntelligence($nodes, $payload);
+            $nodes = $this->applyFirstDegreeAudienceIntelligence($nodes, $payload);
+        }
+
+        $nodes = $this->enforceSingleChannelOnly($nodes, $payload);
 
         return $this->ensureEndNode($this->rekeyNodes($nodes));
     }
@@ -363,7 +369,7 @@ class PlanSequenceNodeBuilder
                 $label = 'Instagram DM';
                 $config = $this->personalizedFirstTouchConfig();
             } elseif (preg_match('/follow.?up|message|dm|touch|diagnostic|value|close|question/i', $text)) {
-                if (str_contains($channels, 'email') && ! str_contains($channels, 'linkedin')) {
+                if ($this->isSingleChannel($payload, 'email')) {
                     $channel = 'email';
                     $action = 'send_email';
                     $label = 'Follow-up Email';
@@ -371,10 +377,25 @@ class PlanSequenceNodeBuilder
                         'subject' => 'Following up',
                         'body' => 'Hi {{firstName}}, just checking in.',
                     ];
-                } elseif (str_contains($channels, 'whatsapp') && ! str_contains($channels, 'linkedin')) {
+                } elseif ($this->isSingleChannel($payload, 'whatsapp')) {
                     $channel = 'whatsapp';
                     $action = 'send_message';
                     $label = 'WhatsApp Follow-up';
+                    $config = ['message' => 'Hi {{firstName}}, just bumping this.'];
+                } elseif ($this->isSingleChannel($payload, 'instagram')) {
+                    $channel = 'instagram';
+                    $action = 'send_message';
+                    $label = 'Instagram Follow-up';
+                    $config = ['message' => 'Just floating this back up — still curious how this is going on your side.'];
+                } elseif ($this->isSingleChannel($payload, 'telegram')) {
+                    $channel = 'telegram';
+                    $action = 'send_message';
+                    $label = 'Telegram Follow-up';
+                    $config = ['message' => 'Hi {{firstName}}, just bumping this.'];
+                } elseif ($this->isSingleChannel($payload, 'twitter')) {
+                    $channel = 'twitter';
+                    $action = 'send_message';
+                    $label = 'Twitter Follow-up';
                     $config = ['message' => 'Hi {{firstName}}, just bumping this.'];
                 } else {
                     $isFirstTouch = ! preg_match('/follow.?up|value follow|professional close/i', $text);
@@ -449,6 +470,10 @@ class PlanSequenceNodeBuilder
      */
     private function applyInviteAcceptedIntelligence(array $nodes, array $payload): array
     {
+        if (! $this->isLinkedInPrimary($payload)) {
+            return $nodes;
+        }
+
         $nodes = $this->dedupeTopLevelInvites($nodes);
 
         if ($this->containsCondition($nodes, 'invite_accepted')) {
@@ -698,6 +723,11 @@ class PlanSequenceNodeBuilder
     private function primaryChannel(array $payload): string
     {
         $explicit = Str::lower(trim((string) ($payload['primary_channel'] ?? $payload['send_channel'] ?? '')));
+        if (! empty($payload['single_channel_only'])
+            && in_array($explicit, ['linkedin', 'email', 'whatsapp', 'telegram', 'instagram', 'twitter'], true)) {
+            return $explicit;
+        }
+
         if (in_array($explicit, ['linkedin', 'email', 'whatsapp', 'telegram', 'instagram', 'twitter'], true)) {
             return $explicit;
         }
@@ -706,11 +736,14 @@ class PlanSequenceNodeBuilder
         $oneShot = ! empty($payload['one_shot']) || ! empty($payload['one_time'])
             || (($payload['sequence_mode'] ?? '') === 'one_shot');
 
-        // One-shot: prefer the messaging channel the user asked for (phone→WA, @→IG/TG),
-        // not LinkedIn just because it appears first in a combo string.
-        $priority = $oneShot
-            ? ['whatsapp', 'instagram', 'telegram', 'twitter', 'email', 'linkedin']
-            : ['linkedin', 'email', 'whatsapp', 'telegram', 'instagram', 'twitter'];
+        // Soci single-channel plans must never default follow-ups to LinkedIn.
+        if (! empty($payload['single_channel_only'])) {
+            $priority = ['instagram', 'whatsapp', 'telegram', 'twitter', 'email', 'linkedin'];
+        } else {
+            $priority = $oneShot
+                ? ['whatsapp', 'instagram', 'telegram', 'twitter', 'email', 'linkedin']
+                : ['linkedin', 'email', 'whatsapp', 'telegram', 'instagram', 'twitter'];
+        }
 
         $mentioned = [];
         foreach ($priority as $ch) {
@@ -728,6 +761,129 @@ class PlanSequenceNodeBuilder
         }
 
         return $mentioned[0];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function isSingleChannel(array $payload, string $channel): bool
+    {
+        if (! empty($payload['single_channel_only'])) {
+            return $this->primaryChannel($payload) === $channel;
+        }
+
+        $channels = Str::lower((string) ($payload['preferred_channels'] ?? $payload['channels'] ?? ''));
+
+        return str_contains($channels, $channel) && ! str_contains($channels, 'linkedin');
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function isLinkedInPrimary(array $payload): bool
+    {
+        return $this->primaryChannel($payload) === 'linkedin';
+    }
+
+    /**
+     * Remove LinkedIn invites/conditions from non-LinkedIn Soci plans.
+     *
+     * @param  list<array<string, mixed>>  $nodes
+     * @return list<array<string, mixed>>
+     */
+    private function stripLinkedInOnlySteps(array $nodes): array
+    {
+        $out = [];
+
+        foreach ($nodes as $node) {
+            if (! is_array($node)) {
+                continue;
+            }
+
+            $type = (string) ($node['type'] ?? '');
+
+            if ($type === 'action') {
+                $channel = Str::lower((string) ($node['channel'] ?? ''));
+                $action = (string) ($node['action'] ?? '');
+                if ($channel === 'linkedin' && in_array($action, ['send_invite', 'visit_profile', 'like_post'], true)) {
+                    continue;
+                }
+            }
+
+            if ($type === 'condition' && ($node['condition'] ?? '') === 'invite_accepted') {
+                $accepted = is_array($node['branches']['accepted'] ?? null) ? $node['branches']['accepted'] : [];
+                $out = array_merge($out, $this->stripLinkedInOnlySteps($accepted));
+
+                continue;
+            }
+
+            if ($type === 'condition') {
+                foreach (['accepted', 'not_accepted'] as $branch) {
+                    $kids = $node['branches'][$branch] ?? null;
+                    if (is_array($kids)) {
+                        $node['branches'][$branch] = $this->stripLinkedInOnlySteps($kids);
+                    }
+                }
+            }
+
+            $out[] = $node;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Soci plans: one channel only — every send step uses primary_channel.
+     *
+     * @param  list<array<string, mixed>>  $nodes
+     * @param  array<string, mixed>  $payload
+     * @return list<array<string, mixed>>
+     */
+    private function enforceSingleChannelOnly(array $nodes, array $payload): array
+    {
+        if (empty($payload['single_channel_only'])) {
+            return $nodes;
+        }
+
+        $primary = $this->primaryChannel($payload);
+        if (! in_array($primary, ['linkedin', 'email', 'whatsapp', 'telegram', 'instagram', 'twitter'], true)) {
+            return $nodes;
+        }
+
+        foreach ($nodes as $i => $node) {
+            if (! is_array($node)) {
+                continue;
+            }
+
+            if (($node['type'] ?? '') === 'condition') {
+                $nodes[$i]['channel'] = $primary;
+                foreach (['accepted', 'not_accepted'] as $branch) {
+                    $kids = $node['branches'][$branch] ?? null;
+                    if (is_array($kids)) {
+                        $nodes[$i]['branches'][$branch] = $this->enforceSingleChannelOnly($kids, $payload);
+                    }
+                }
+                continue;
+            }
+
+            if (($node['type'] ?? '') !== 'action') {
+                continue;
+            }
+
+            $action = OutreachChannelRegistry::normalizeAction(
+                $primary,
+                (string) ($node['action'] ?? ''),
+            );
+            $nodes[$i]['channel'] = $primary;
+            $nodes[$i]['action'] = $action;
+
+            $label = trim((string) ($node['label'] ?? ''));
+            if ($label === '' || str_contains(Str::lower($label), 'linkedin') && $primary !== 'linkedin') {
+                $nodes[$i]['label'] = Str::headline($primary.' '.str_replace('_', ' ', $action));
+            }
+        }
+
+        return $nodes;
     }
 
     /**

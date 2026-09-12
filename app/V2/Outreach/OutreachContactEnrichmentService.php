@@ -9,7 +9,10 @@ use App\Models\AudienceList;
 use App\Models\SnLead;
 use App\Models\User;
 use App\Models\V2LeadContactOverlay;
+use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachImportLead;
+use App\Models\V2OutreachLead;
+use Illuminate\Support\Facades\Log;
 use App\V2\Services\EmailEnrichmentLimiter;
 use App\V2\Services\UnipileProfileContactService;
 
@@ -364,6 +367,156 @@ class OutreachContactEnrichmentService
             'skipped' => $skipped,
             'remaining' => max(0, count($candidates) - $limit),
         ];
+    }
+
+    /**
+     * Resolve @handles to provider IDs for every lead in a campaign before the first send.
+     * Soci-created Instagram/Telegram/X campaigns should not require manual "Resolve handles".
+     *
+     * @return array{resolved: int, failed: int, skipped: int, remaining: int}
+     */
+    public function resolveHandlesForCampaign(V2OutreachCampaign $campaign, ?int $limit = null): array
+    {
+        $user = User::query()->find((int) $campaign->user_id);
+        if (! $user) {
+            return ['resolved' => 0, 'failed' => 0, 'skipped' => 0, 'remaining' => 0];
+        }
+
+        $nodes = is_array($campaign->node_model) ? $campaign->node_model : [];
+        $required = OutreachChannelRegistry::requiredChannelsForNodes($nodes);
+        $channels = array_values(array_intersect(
+            OutreachChannelRegistry::enabledSocialHandleChannels(),
+            $required,
+        ));
+
+        if ($channels === []) {
+            return ['resolved' => 0, 'failed' => 0, 'skipped' => 0, 'remaining' => 0];
+        }
+
+        $cap = max(1, min(500, $limit ?? 500));
+        $resolved = 0;
+        $failed = 0;
+        $skipped = 0;
+        $lookups = 0;
+
+        $leads = V2OutreachLead::query()
+            ->where('outreach_campaign_id', $campaign->id)
+            ->orderBy('id')
+            ->limit($cap)
+            ->get();
+
+        foreach ($leads as $lead) {
+            $meta = is_array($lead->meta) ? $lead->meta : [];
+
+            foreach ($channels as $channel) {
+                $providerField = "{$channel}_provider_id";
+                if (trim((string) ($meta[$providerField] ?? '')) !== '') {
+                    continue;
+                }
+
+                $handle = $this->socialHandleForLead($lead, $meta, $channel);
+                if ($handle === '' && $channel === 'telegram') {
+                    $handle = preg_replace('/\D+/', '', (string) ($lead->phone ?? '')) ?? '';
+                }
+                if ($handle === '') {
+                    continue;
+                }
+
+                if ($lookups > 0) {
+                    $this->paceMessagingLookup();
+                }
+                $lookups++;
+
+                try {
+                    $providerId = $this->contactService->resolvePlatformIdentifier($user, $channel, $handle);
+                } catch (\Throwable $e) {
+                    $skipped++;
+                    Log::info('[Outreach] Handle resolve skipped for campaign lead', [
+                        'campaign_id' => $campaign->id,
+                        'lead_id' => $lead->id,
+                        'channel' => $channel,
+                        'error' => $e->getMessage(),
+                    ]);
+
+                    continue;
+                }
+
+                if ($providerId === null || $providerId === '') {
+                    $failed++;
+
+                    continue;
+                }
+
+                $handleField = "{$channel}_handle";
+                if (trim((string) ($meta[$handleField] ?? '')) === '') {
+                    $meta[$handleField] = ltrim($handle, '@');
+                }
+                $meta[$providerField] = $providerId;
+                $lead->forceFill(['meta' => $meta])->save();
+                $this->persistProviderIdForLeadSource($lead, $channel, $providerId, (int) $user->id);
+                $resolved++;
+            }
+        }
+
+        $remaining = V2OutreachLead::query()
+            ->where('outreach_campaign_id', $campaign->id)
+            ->where(function ($q) use ($channels) {
+                foreach ($channels as $channel) {
+                    $q->orWhere(function ($inner) use ($channel) {
+                        $inner->where(function ($m) use ($channel) {
+                            $m->whereNull('meta->'.$channel.'_provider_id')
+                                ->orWhere('meta->'.$channel.'_provider_id', '');
+                        })->where(function ($m) use ($channel) {
+                            $m->whereNotNull('meta->'.$channel.'_handle')
+                                ->where('meta->'.$channel.'_handle', '!=', '');
+                        });
+                    });
+                }
+            })
+            ->count();
+
+        return [
+            'resolved' => $resolved,
+            'failed' => $failed,
+            'skipped' => $skipped,
+            'remaining' => max(0, $remaining),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    public function socialHandleForLead(V2OutreachLead $lead, array $meta, string $channel): string
+    {
+        $handle = ltrim(trim((string) ($meta["{$channel}_handle"] ?? '')), '@');
+        if ($handle !== '') {
+            return $handle;
+        }
+
+        return $this->handleFromProfileUrl((string) ($lead->profile_url ?? ''), $channel);
+    }
+
+    public function handleFromProfileUrl(string $profileUrl, string $channel): string
+    {
+        $profileUrl = trim($profileUrl);
+        if ($profileUrl === '') {
+            return '';
+        }
+
+        $pattern = match ($channel) {
+            'instagram' => '~instagram\.com/([^/?#]+)~i',
+            'twitter' => '~(?:twitter\.com|x\.com)/([^/?#]+)~i',
+            'telegram' => '~t\.me/([^/?#]+)~i',
+            default => null,
+        };
+
+        if ($pattern === null || ! preg_match($pattern, $profileUrl, $matches)) {
+            return '';
+        }
+
+        $handle = ltrim(trim((string) ($matches[1] ?? '')), '@');
+
+        return in_array(strtolower($handle), ['p', 'reel', 'stories'], true) ? '' : $handle;
     }
 
     /**
@@ -722,6 +875,25 @@ class OutreachContactEnrichmentService
             SnLead::where('id', $candidate['record_id'])->update([$field => $providerId]);
         } elseif (($candidate['src'] ?? '') === 'csv') {
             V2OutreachImportLead::where('id', $candidate['record_id'])->update([$field => $providerId]);
+        }
+    }
+
+    private function persistProviderIdForLeadSource(V2OutreachLead $lead, string $channel, string $providerId, int $userId): void
+    {
+        $field = "{$channel}_provider_id";
+        $src = (string) ($lead->source_list_src ?? '');
+        $recordId = (int) ($lead->source_record_id ?? 0);
+
+        if ($src === 'csv' && $recordId > 0) {
+            V2OutreachImportLead::query()->where('id', $recordId)->update([$field => $providerId]);
+        }
+
+        $linkedinKey = $this->resolver->normalizeLinkedinKey((string) ($lead->provider_profile_id ?? ''));
+        if ($linkedinKey !== '') {
+            V2LeadContactOverlay::updateOrCreate(
+                ['user_id' => $userId, 'linkedin_key' => $linkedinKey],
+                [$field => $providerId],
+            );
         }
     }
 

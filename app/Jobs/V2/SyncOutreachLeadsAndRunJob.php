@@ -97,6 +97,31 @@ class SyncOutreachLeadsAndRunJob implements ShouldQueue
                 $fresh = $fresh->fresh() ?? $fresh;
             }
 
+            if ($fresh) {
+                try {
+                    $handles = app(\App\V2\Outreach\OutreachContactEnrichmentService::class)
+                        ->resolveHandlesForCampaign($fresh);
+                    if (($handles['resolved'] ?? 0) > 0 || ($handles['failed'] ?? 0) > 0) {
+                        $logger->log(
+                            $campaign->id,
+                            null,
+                            null,
+                            null,
+                            'info',
+                            sprintf(
+                                'Resolved %d social handle(s) before outreach (%d failed, %d need channel connected).',
+                                (int) ($handles['resolved'] ?? 0),
+                                (int) ($handles['failed'] ?? 0),
+                                (int) ($handles['skipped'] ?? 0),
+                            ),
+                        );
+                    }
+                } catch (Throwable $handleError) {
+                    report($handleError);
+                }
+                $fresh = $fresh->fresh() ?? $fresh;
+            }
+
             if ($fresh && ! empty(($fresh->meta['ai_personalize_first_touch'] ?? false)) && ! $this->waitsForInviteAccept($fresh)) {
                 PersonalizeCampaignFirstTouchJob::dispatch($fresh->id, 40);
             }

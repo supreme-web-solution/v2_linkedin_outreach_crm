@@ -45,11 +45,31 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
         $recipientId = $this->contactResolver->messagingRecipientId($row, $this->channelKey);
         if ($recipientId === null || $recipientId === '') {
             $recipientId = $this->resolveRecipientIdJustInTime($campaign, $lead, $row);
+            if ($recipientId !== null && $recipientId !== '') {
+                $row = $this->leadContactRow($lead->fresh() ?? $lead);
+            }
         }
         if ($recipientId === null || $recipientId === '') {
+            $label = OutreachChannelRegistry::channelLabel($this->channelKey);
+            $handle = $this->socialHandle($lead, $row);
+
+            if ($handle !== '' && in_array($this->channelKey, ['instagram', 'telegram', 'twitter'], true)) {
+                return [
+                    'status' => 'deferred',
+                    'error_message' => "Resolving {$label} handle @{$handle} before send.",
+                    'next_run_at' => now()->addMinutes(2),
+                    'payload' => [
+                        'reason' => 'handle_resolve_pending',
+                        'channel' => $this->channelKey,
+                        'handle' => $handle,
+                    ],
+                ];
+            }
+
             $hint = match ($this->channelKey) {
-                'whatsapp' => 'Run Verify WhatsApp before sending.',
-                'instagram', 'twitter' => 'Run Resolve handles before sending.',
+                'whatsapp' => 'No WhatsApp number on this lead — verify phone first.',
+                'instagram' => 'No Instagram @handle on this lead.',
+                'twitter' => 'No X/Twitter @handle on this lead.',
                 default => 'Missing recipient identifier.',
             };
 
@@ -231,7 +251,7 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
             return $existing;
         }
 
-        $identifier = trim((string) ($row[$this->channelKey.'_handle'] ?? ''));
+        $identifier = $this->socialHandle($lead, $row);
         if ($identifier === '' && $this->channelKey === 'telegram') {
             $identifier = preg_replace('/\D+/', '', (string) ($row['phone'] ?? '')) ?? '';
         }
@@ -248,16 +268,49 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
             $providerId = (string) app(\App\V2\Services\UnipileProfileContactService::class)
                 ->resolvePlatformIdentifier($owner, $this->channelKey, $identifier);
             if ($providerId === '') {
+                Log::info('[Outreach] JIT handle resolve returned empty', [
+                    'campaign_id' => $campaign->id,
+                    'lead_id' => $lead->id,
+                    'channel' => $this->channelKey,
+                    'handle' => $identifier,
+                ]);
+
                 return null;
             }
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::info('[Outreach] JIT handle resolve failed', [
+                'campaign_id' => $campaign->id,
+                'lead_id' => $lead->id,
+                'channel' => $this->channelKey,
+                'handle' => $identifier,
+                'error' => $e->getMessage(),
+            ]);
+
             return null;
         }
 
         $meta = is_array($lead->meta) ? $lead->meta : [];
+        $handleField = $this->channelKey.'_handle';
+        if (trim((string) ($meta[$handleField] ?? '')) === '') {
+            $meta[$handleField] = ltrim($identifier, '@');
+        }
         $meta[$field] = $providerId;
         $lead->forceFill(['meta' => $meta])->save();
 
         return $providerId;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    private function socialHandle(V2OutreachLead $lead, array $row): string
+    {
+        $handle = ltrim(trim((string) ($row[$this->channelKey.'_handle'] ?? '')), '@');
+        if ($handle !== '') {
+            return $handle;
+        }
+
+        return app(\App\V2\Outreach\OutreachContactEnrichmentService::class)
+            ->handleFromProfileUrl((string) ($lead->profile_url ?? ''), $this->channelKey);
     }
 }
