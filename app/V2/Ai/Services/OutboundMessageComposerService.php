@@ -213,7 +213,7 @@ class OutboundMessageComposerService
             if ($role === 'assistant' && $source === 'outreach_campaign') {
                 $body = "[Automated campaign step]\n{$body}";
             }
-            $normalizedThread[] = ['role' => $role, 'content' => Str::limit($body, 800)];
+            $normalizedThread[] = ['role' => $role, 'content' => Str::limit($body, 1500)];
         }
 
         $brief = [
@@ -227,7 +227,8 @@ class OutboundMessageComposerService
             'inbox_thread' => $normalizedThread !== [] ? $normalizedThread : null,
             'latest_inbound' => Str::limit(trim($inboundBody), 1500),
             'sender_name' => $options['sender_name'] ?? null,
-            'agent_notes' => isset($options['agent_notes']) ? Str::limit(trim((string) $options['agent_notes']), 1500) : null,
+            'agent_notes' => isset($options['agent_notes']) ? Str::limit(trim((string) $options['agent_notes']), 2000) : null,
+            'conversion_action' => $options['conversion_action'] ?? null,
             'research_required' => (bool) ($options['research_required'] ?? false),
             'forbid_links' => (bool) ($options['forbid_links'] ?? false),
             'must_include_url' => isset($options['must_include_url']) && trim((string) $options['must_include_url']) !== ''

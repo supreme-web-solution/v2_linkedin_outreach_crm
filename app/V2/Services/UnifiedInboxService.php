@@ -593,6 +593,11 @@ class UnifiedInboxService
         $attachments = is_array($emailItem['attachments'] ?? null) ? $emailItem['attachments'] : [];
         $existing = null;
 
+        if ($emailItem['provider_message_id'] !== ''
+            && $this->isProviderMessageSuppressed($conversation, $emailItem['provider_message_id'])) {
+            return;
+        }
+
         if ($emailItem['provider_message_id'] !== '') {
             $existing = V2Message::query()
                 ->where('conversation_id', $conversation->id)
@@ -885,6 +890,10 @@ class UnifiedInboxService
             $isOutbound = $this->isTruthy($item['is_sender'] ?? false)
                 || $this->isTruthy($item['from_me'] ?? false);
             $direction = $isOutbound ? 'outbound' : 'inbound';
+
+            if ($providerMessageId !== '' && $this->isProviderMessageSuppressed($conversation, $providerMessageId)) {
+                continue;
+            }
 
             if ($providerMessageId !== '') {
                 $existing = V2Message::query()
@@ -2615,5 +2624,20 @@ class UnifiedInboxService
         )));
 
         return in_array($object, ['message', 'chat_message'], true);
+    }
+
+    private function isProviderMessageSuppressed(V2Conversation $conversation, string $providerMessageId): bool
+    {
+        $providerMessageId = trim($providerMessageId);
+        if ($providerMessageId === '') {
+            return false;
+        }
+
+        $meta = is_array($conversation->meta) ? $conversation->meta : [];
+        $suppressed = is_array($meta['suppressed_provider_message_ids'] ?? null)
+            ? $meta['suppressed_provider_message_ids']
+            : [];
+
+        return in_array($providerMessageId, array_map('strval', $suppressed), true);
     }
 }

@@ -497,6 +497,7 @@ class UnifiedInboxReplyService
                         $orgId,
                     ),
                     'agent_notes' => trim(implode("\n\n", array_filter($agentNotes))),
+                    'conversion_action' => (string) ($next['action'] ?? ''),
                     'research_required' => $researchRequired,
                     'forbid_links' => (bool) ($next['forbid_links'] ?? false),
                     'must_include_url' => $mustUrl,

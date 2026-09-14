@@ -142,6 +142,8 @@ const expandedQuotes = ref<Record<number, boolean>>({});
 
 const localMessages = ref<MessageItem[]>([...props.messages]);
 const localHasOlderMessages = ref(Boolean(props.has_older_messages));
+/** Local deletes that must not reappear via poll merge before the next full props refresh. */
+const suppressedMessageIds = ref<Set<number>>(new Set());
 const loadingOlder = ref(false);
 const localConversations = ref<ConversationsPaginator>({ ...props.conversations, data: [...props.conversations.data] });
 const localOutreachContext = ref<OutreachContext | null>(props.outreachContext);
@@ -155,9 +157,15 @@ let preserveScrollOnMessageGrow = false;
 function mergeMessages(existing: MessageItem[], incoming: MessageItem[]): MessageItem[] {
     const byId = new Map<number, MessageItem>();
     for (const msg of existing) {
+        if (suppressedMessageIds.value.has(msg.id)) {
+            continue;
+        }
         byId.set(msg.id, msg);
     }
     for (const msg of incoming) {
+        if (suppressedMessageIds.value.has(msg.id)) {
+            continue;
+        }
         byId.set(msg.id, msg);
     }
     return [...byId.values()].sort((a, b) => a.id - b.id);
@@ -165,8 +173,13 @@ function mergeMessages(existing: MessageItem[], incoming: MessageItem[]): Messag
 
 watch(
     () => [props.selected?.id, props.messages, props.has_older_messages] as const,
-    ([, messages, hasOlder]) => {
-        localMessages.value = [...messages];
+    ([selectedId, messages, hasOlder], [prevSelectedId]) => {
+        if (selectedId !== prevSelectedId) {
+            suppressedMessageIds.value = new Set();
+        }
+        localMessages.value = (messages as MessageItem[]).filter(
+            (msg) => !suppressedMessageIds.value.has(msg.id),
+        );
         localHasOlderMessages.value = Boolean(hasOlder);
     },
 );
@@ -461,6 +474,10 @@ function deleteMessage(msg: MessageItem) {
     deletingMessageId.value = msg.id;
     router.delete(`/inbox/${props.platform}/${props.selected.id}/messages/${msg.id}`, {
         preserveScroll: true,
+        onSuccess: () => {
+            suppressedMessageIds.value.add(msg.id);
+            localMessages.value = localMessages.value.filter((row) => row.id !== msg.id);
+        },
         onFinish: () => { deletingMessageId.value = null; },
     });
 }

@@ -1,10 +1,13 @@
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import {
     formatChatDateDivider,
     formatChatMessageTime,
     showChatDateDivider,
 } from '@/lib/chatTimeline';
 import { formatChatMarkdown } from '@/lib/chatMarkdown';
+
+/** Must stay in sync with AiEmployeeWebController chat validation max. */
+export const COMMAND_CENTER_CHAT_MAX_CHARS = 32000;
 
 export type CommandCenterChatMessage = {
     id?: number;
@@ -527,6 +530,7 @@ function onChatScroll() {
 async function send(textOverride?: string) {
     const text = (textOverride ?? draft.value).trim();
     if (!text || sending.value || awaitingReply.value) return;
+    if (text.length > COMMAND_CENTER_CHAT_MAX_CHARS) return;
 
     if (!conversationId.value) {
         await bootstrap(true);
@@ -560,9 +564,20 @@ async function send(textOverride?: string) {
             }),
             credentials: 'same-origin',
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({} as Record<string, unknown>));
         if (!res.ok && res.status !== 202) {
-            throw new Error(data.message ?? 'Request failed');
+            const validation =
+                data?.errors && typeof data.errors === 'object'
+                    ? Object.values(data.errors as Record<string, string[]>)
+                          .flat()
+                          .filter(Boolean)
+                          .join(' ')
+                    : '';
+            throw new Error(
+                validation ||
+                    (typeof data.message === 'string' ? data.message : '') ||
+                    `Request failed (${res.status})`,
+            );
         }
 
         conversationId.value = data.conversation_id ?? conversationId.value;
@@ -612,14 +627,21 @@ async function send(textOverride?: string) {
         sending.value = false;
         awaitingReply.value = false;
         await scrollBottom();
-    } catch {
+    } catch (err) {
         stopPolling();
         sending.value = false;
+        const detail = err instanceof Error ? err.message.trim() : '';
+        const looksLikeValidation =
+            /must not be greater than|may not be greater than|too long|characters/i.test(detail);
         chat.value = [
             ...chat.value,
             {
                 role: 'assistant',
-                content: 'Something went wrong. Check AI provider config and try again.',
+                content: looksLikeValidation
+                    ? detail || 'That message is too long for chat. Paste a shorter ICP summary, or split it into sections.'
+                    : detail && !/failed to fetch|networkerror/i.test(detail)
+                      ? detail
+                      : 'Something went wrong. Check AI provider config and try again.',
                 channel: 'web',
                 created_at: new Date().toISOString(),
             },
@@ -789,9 +811,22 @@ async function clearChat(): Promise<boolean> {
  * Always returns the same module-level refs so navigations stay non-blocking.
  */
 export function useCommandCenterChat() {
+    const draftOverLimit = computed(
+        () => draft.value.length > COMMAND_CENTER_CHAT_MAX_CHARS,
+    );
+    const draftCharCount = computed(() => draft.value.length);
+    const canSendDraft = computed(() => {
+        const text = draft.value.trim();
+        return text !== '' && text.length <= COMMAND_CENTER_CHAT_MAX_CHARS;
+    });
+
     return {
         chat,
         draft,
+        draftOverLimit,
+        draftCharCount,
+        canSendDraft,
+        maxChatChars: COMMAND_CENTER_CHAT_MAX_CHARS,
         conversationId,
         settings,
         pendingApprovalsCount,

@@ -648,15 +648,17 @@ class OneShotOutboundCommandCenterService
      */
     private function recentThread(AiConversation $conversation): array
     {
+        $paste = app(LongPasteDigestService::class);
+
         return AiMessage::query()
             ->where('conversation_id', $conversation->id)
             ->orderByDesc('id')
             ->limit(8)
-            ->get(['role', 'content'])
+            ->get(['role', 'content', 'meta'])
             ->reverse()
             ->map(fn (AiMessage $message) => [
                 'role' => (string) $message->role,
-                'content' => Str::limit(trim((string) $message->content), 400, ''),
+                'content' => $paste->forThreadMessage($message, 400),
             ])
             ->filter(fn (array $row) => $row['content'] !== '')
             ->values()

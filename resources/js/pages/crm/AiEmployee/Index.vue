@@ -162,6 +162,10 @@ const sharedChat = useCommandCenterChat();
 const {
     chat,
     draft,
+    draftOverLimit,
+    draftCharCount,
+    canSendDraft,
+    maxChatChars,
     conversationId,
     sending,
     awaitingReply,
@@ -859,17 +863,31 @@ async function disconnectWhatsApp() {
                         :status-label="processingLabel"
                     />
                 </div>
-                <form class="flex shrink-0 gap-2 border-t p-3" @submit.prevent="send()">
-                    <Input
-                        v-model="draft"
-                        placeholder="What do you want to accomplish?"
-                        class="flex-1"
-                        :disabled="chatBusy || !employeeSettings.enabled || employeeSettings.kill_switch"
-                    />
-                    <Button type="submit" :disabled="chatBusy || !draft.trim()">
-                        <Loader2 v-if="chatBusy" class="size-4 animate-spin" />
-                        <Send v-else class="size-4" />
-                    </Button>
+                <form class="flex shrink-0 flex-col gap-1 border-t p-3" @submit.prevent="send()">
+                    <div class="flex gap-2">
+                        <Input
+                            v-model="draft"
+                            placeholder="What do you want to accomplish?"
+                            class="flex-1"
+                            :class="draftOverLimit ? 'border-red-500 focus-visible:ring-red-500' : ''"
+                            :disabled="chatBusy || !employeeSettings.enabled || employeeSettings.kill_switch"
+                        />
+                        <Button
+                            type="submit"
+                            :disabled="chatBusy || !canSendDraft || !employeeSettings.enabled || employeeSettings.kill_switch"
+                        >
+                            <Loader2 v-if="chatBusy" class="size-4 animate-spin" />
+                            <Send v-else class="size-4" />
+                        </Button>
+                    </div>
+                    <p
+                        v-if="draftOverLimit || draftCharCount > maxChatChars * 0.9"
+                        class="text-[11px]"
+                        :class="draftOverLimit ? 'text-red-600' : 'text-muted-foreground'"
+                    >
+                        {{ draftCharCount.toLocaleString() }} / {{ maxChatChars.toLocaleString() }}
+                        <span v-if="draftOverLimit"> — shorten to send</span>
+                    </p>
                 </form>
             </div>
         </div>

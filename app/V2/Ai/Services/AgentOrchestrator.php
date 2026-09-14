@@ -66,7 +66,7 @@ class AgentOrchestrator
             'role' => 'user',
             'content' => $message,
             'provider_message_id' => $providerMessageId,
-            'meta' => ['channel' => $channel],
+            'meta' => $this->userMessageMeta($channel, $message),
         ]);
 
         return $this->runAgentAndPersistReply(
@@ -119,7 +119,7 @@ class AgentOrchestrator
                 'conversation_id' => $conversation->id,
                 'role' => 'user',
                 'content' => $message,
-                'meta' => ['channel' => 'web'],
+                'meta' => $this->userMessageMeta('web', $message),
             ]);
 
             $payload = $this->runAgentAndPersistReply(
@@ -139,7 +139,7 @@ class AgentOrchestrator
             'conversation_id' => $conversation->id,
             'role' => 'user',
             'content' => $message,
-            'meta' => ['channel' => 'web', 'queued' => true],
+            'meta' => $this->userMessageMeta('web', $message, ['queued' => true]),
         ]);
 
         $this->webChatProcessing->markPending(
@@ -435,8 +435,9 @@ class AgentOrchestrator
                 'role' => 'user',
                 'content' => $message,
                 'provider_message_id' => $providerMessageId,
-                'meta' => ['channel' => $channel],
+                'meta' => $this->userMessageMeta($channel, $message),
             ]);
+            app(LongPasteDigestService::class)->rememberOnWorkstream($conversation, $message);
 
             $reply = (string) ($control['reply'] ?? '');
 
@@ -474,8 +475,9 @@ class AgentOrchestrator
                 'role' => 'user',
                 'content' => $message,
                 'provider_message_id' => $providerMessageId,
-                'meta' => ['channel' => $channel],
+                'meta' => $this->userMessageMeta($channel, $message),
             ]);
+            app(LongPasteDigestService::class)->rememberOnWorkstream($conversation, $message);
 
             $reply = (string) ($inboxRetryPreflight['reply'] ?? '');
             $approval = $inboxRetryPreflight['approval'] ?? null;
@@ -522,8 +524,9 @@ class AgentOrchestrator
                 'role' => 'user',
                 'content' => $message,
                 'provider_message_id' => $providerMessageId,
-                'meta' => ['channel' => $channel],
+                'meta' => $this->userMessageMeta($channel, $message),
             ]);
+            app(LongPasteDigestService::class)->rememberOnWorkstream($conversation, $message);
 
             $reply = (string) ($campaignPreflight['reply'] ?? '');
             $approval = $campaignPreflight['approval'] ?? null;
@@ -571,11 +574,25 @@ class AgentOrchestrator
         $modeChangeNote = $this->autonomyContext->syncConversationMode($conversation, $settings);
         $promptMessage = $this->autonomyContext->promptPrefix($settings, $modeChangeNote).$promptMessage;
 
+        app(LongPasteDigestService::class)->rememberOnWorkstream($conversation, $message);
+
         return [
             'conversation' => $conversation,
             'prompt_message' => $promptMessage,
             'settings' => $settings,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $extra
+     * @return array<string, mixed>
+     */
+    private function userMessageMeta(string $channel, string $message, array $extra = []): array
+    {
+        return app(LongPasteDigestService::class)->enrichUserMeta(
+            array_merge(['channel' => $channel], $extra),
+            $message,
+        );
     }
 
     /**

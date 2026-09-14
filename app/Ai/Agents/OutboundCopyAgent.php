@@ -46,7 +46,16 @@ class OutboundCopyAgent implements Agent, HasStructuredOutput
         $modeGuidance = match ($mode) {
             'first_touch' => 'Mode: FIRST TOUCH outbound. Open the relationship. For non-email DMs, prefer a situational question over a product pitch.',
             'follow_up' => 'Mode: FOLLOW-UP. Reference prior outreach naturally, then one short context-aware question grounded in their world. Never write empty check-ins or “just bumping” filler. Do not restart the pitch from scratch.',
-            'inbox_reply' => 'Mode: INBOX REPLY in an active thread. Respond to what they actually said. Never write operator instructions ("Reply with…"). Never invent facts. Match thread tone. For early email replies, prefer 2–4 short paragraphs with substance — not a chat bubble.',
+            'inbox_reply' => implode(' ', [
+                'Mode: INBOX REPLY in an active thread.',
+                'Read inbox_thread (last messages) + thread_summary + latest_inbound + agent_notes BEFORE writing.',
+                'Primary job after the opener is CONVERSION, not another research monologue.',
+                'If agent_notes / Required next action says share sales page or webinar: acknowledge briefly, include that ONE URL, invite them to look — do not ask another discovery question instead of the link.',
+                'If it says book_meeting: include the booking URL and propose the call — do not re-pitch the product.',
+                'If forbid_links / qualify: ONE situational question only — no product dump, no URLs.',
+                'Never write operator instructions ("Reply with…"). Never invent facts. Match thread tone.',
+                'For early email replies, prefer 2–4 short paragraphs with substance — not a chat bubble.',
+            ]),
             'personalized' => 'Mode: PERSONALIZED outbound grounded ONLY in evidence in the brief. Do not invent employers, metrics, or prior conversations.',
             default => 'Mode: cold/one-shot outbound. If prior_draft_to_improve is set, rewrite using research — do not keep vague wording.',
         };

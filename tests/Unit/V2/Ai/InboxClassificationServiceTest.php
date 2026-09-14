@@ -35,10 +35,34 @@ class InboxClassificationServiceTest extends TestCase
 
         $result = $service->classifyWithKeywords('Can you tell me more about how onboarding works?');
 
-        $this->assertSame('needs_judgment', $result['priority']);
+        $this->assertSame('hot', $result['priority']);
         $this->assertSame('wants_info', $result['intent']);
         $this->assertSame('hard', $result['buying_signal']);
         $this->assertSame('read', $result['asset_preference']);
+    }
+
+    public function test_classifies_learn_more_about_services_as_wants_info(): void
+    {
+        $service = new InboxClassificationService;
+
+        $result = $service->classifyWithKeywords(
+            'good i will like to learn more about you guys and your services'
+        );
+
+        $this->assertSame('wants_info', $result['intent']);
+        $this->assertSame('hard', $result['buying_signal']);
+    }
+
+    public function test_classifies_want_to_know_more_as_wants_info(): void
+    {
+        $service = new InboxClassificationService;
+
+        $result = $service->classifyWithKeywords(
+            'Yes, I would be interested. thanks for reaching out , i want to know more'
+        );
+
+        $this->assertSame('wants_info', $result['intent']);
+        $this->assertSame('hard', $result['buying_signal']);
     }
 
     public function test_classifies_outbound_answer_as_qualifying_not_a_pitch(): void

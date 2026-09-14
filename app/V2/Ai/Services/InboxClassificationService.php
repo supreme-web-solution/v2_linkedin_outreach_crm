@@ -181,13 +181,16 @@ class InboxClassificationService
         }
 
         $pricing = (bool) preg_match('/\b(pricing|price|cost|how much|quote|budget)\b/i', $text);
-        if ($pricing
-            || preg_match('/\b(tell me more|send (me )?(the )?(link|page|info)|sales page|how does (it|this) work|what (is|does) (it|this)|can you (send|share)|send it over)\b/i', $text)
-        ) {
+        $wantsInfo = $pricing
+            || (bool) preg_match(
+                '/\b(tell me more|know more|learn more|more about (you|your|the|what)|about your (company|services?|offer|product|work)|send (me )?(the )?(link|page|info)|sales page|how does (it|this) work|what (is|does) (it|this)|can you (send|share)|send it over|want to know more|i want to know)\b/i',
+                $text,
+            );
+        if ($wantsInfo) {
             $evidence = $pricing ? ['question', 'pricing'] : ['question'];
 
             return $this->payload(
-                priority: $pricing ? 'hot' : 'needs_judgment',
+                priority: $pricing ? 'hot' : 'hot',
                 intent: 'wants_info',
                 stage: 'engaged',
                 recommendedAction: 'Share the sales page (one link). Do not add a meeting link yet.',
@@ -197,7 +200,7 @@ class InboxClassificationService
             );
         }
 
-        if (preg_match('/\b(i\'d like|i would like|we\'d like|we would like|want more|more predictable|sounds (useful|interesting)|that would be useful|how can you help|interested in|yes please|definitely|would love|let\'s do it|lets do it)\b/i', $text)) {
+        if (preg_match('/\b(i\'d like|i would like|we\'d like|we would like|would be interested|am interested|want more|more predictable|sounds (useful|interesting)|that would be useful|how can you help|interested in|yes[,.]?\s*i (would|will)|yes please|definitely|would love|let\'s do it|lets do it)\b/i', $text)) {
             return $this->payload(
                 priority: 'hot',
                 intent: 'interested',

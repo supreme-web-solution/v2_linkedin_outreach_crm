@@ -42,7 +42,8 @@ class PlanContentService
                         'example_customers' => $customers,
                         'competitors' => $competitors,
                         'stated_geography' => $geography,
-                        'source_notes' => $notes,
+                        // Long owner pastes: keep enough signal for niches/buyers; avoid provider timeouts.
+                        'source_notes' => Str::limit((string) ($notes ?? ''), 12000, ''),
                         'required_json_keys' => [
                             'who_we_sell_to',
                             'primary_outcome',
@@ -310,6 +311,9 @@ Rules:
 - Write as a human building a real company ICP — specific enough that a teammate could search and message tomorrow without asking again.
 - Mirror THEIR market. If they sell to clinics, farms, schools, contractors, or brands, the ICP is that world. Never default to SaaS, founders, or "B2B services" unless their materials say so.
 - Do not invent titles, industries, geos, or pains that are not implied.
+- When source_notes is a long ICP essay: DISTILL. Do not copy paragraphs into who_we_sell_to or summary.
+- niches must be 4–10 short buyer niches usable as Instagram/LinkedIn search keywords (noun + role when possible), taken from THEIR priority industries and buyers — e.g. "saas founders", "ecommerce operators", "agency owners". Never one long sentence.
+- who_we_sell_to is 1–2 sharp sentences about the buyer company, not a service catalog.
 - search_query must be executable people-search language for THIS audience (who + what they care about + geo if known). Not a slogan. Not a pitch.
 - search_titles are 1–4 job titles as they would appear on a profile, taken from this ICP — not a global title list.
 - decision_makers is an array of {title, why}. Also set decision_maker to those titles joined by commas (legacy field).

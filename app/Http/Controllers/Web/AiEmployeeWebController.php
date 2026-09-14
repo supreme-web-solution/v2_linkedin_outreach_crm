@@ -275,7 +275,8 @@ class AiEmployeeWebController extends Controller
         abort_unless($orgId > 0, 403);
 
         $data = $request->validate([
-            'message' => ['required', 'string', 'max:8000'],
+            // Long ICP pastes are common (10k–20k). Distill server-side; do not reject as "AI config".
+            'message' => ['required', 'string', 'max:32000'],
             'conversation_id' => ['nullable', 'integer'],
         ]);
 

@@ -425,6 +425,20 @@ class UnifiedInboxWebController extends Controller
             ->where('id', $messageId)
             ->firstOrFail();
 
+        $providerMessageId = trim((string) ($message->provider_message_id ?? ''));
+        if ($providerMessageId !== '') {
+            $meta = is_array($conversation->meta) ? $conversation->meta : [];
+            $suppressed = is_array($meta['suppressed_provider_message_ids'] ?? null)
+                ? $meta['suppressed_provider_message_ids']
+                : [];
+            $suppressed[] = $providerMessageId;
+            $meta['suppressed_provider_message_ids'] = array_values(array_unique(array_slice(
+                array_values(array_filter(array_map('strval', $suppressed))),
+                -200,
+            )));
+            $conversation->forceFill(['meta' => $meta])->save();
+        }
+
         $message->delete();
 
         $latest = V2Message::query()

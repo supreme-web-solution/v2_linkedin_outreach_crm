@@ -68,7 +68,7 @@ class WorkstreamMemoryService
         $allowed = [
             'list_hash', 'audience_ref', 'research_url', 'offer_override',
             'last_recipient', 'last_channel', 'goal', 'preferred_channel',
-            'outreach_hold', 'quality_warning',
+            'outreach_hold', 'quality_warning', 'owner_paste_digest',
         ];
         $patch = [];
         foreach ($allowed as $key) {
@@ -81,7 +81,8 @@ class WorkstreamMemoryService
                 if ($value === '') {
                     continue;
                 }
-                $patch[$key] = Str::limit($value, 400, '');
+                $limit = $key === 'owner_paste_digest' ? 1600 : 400;
+                $patch[$key] = Str::limit($value, $limit, '');
             } elseif ($value !== null) {
                 $patch[$key] = $value;
             }
@@ -138,6 +139,10 @@ class WorkstreamMemoryService
         }
         if (! empty($ws['quality_warning']) && is_string($ws['quality_warning'])) {
             $lines[] = '- Discovery quality: '.Str::limit(trim($ws['quality_warning']), 180, '');
+        }
+        if (! empty($ws['owner_paste_digest']) && is_string($ws['owner_paste_digest'])) {
+            $lines[] = '- Owner long paste (digest — full text is in chat history):';
+            $lines[] = Str::limit(trim($ws['owner_paste_digest']), 900, '…');
         }
 
         return count($lines) > 1 ? implode("\n", $lines) : '';

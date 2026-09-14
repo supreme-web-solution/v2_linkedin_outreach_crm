@@ -8,7 +8,6 @@ use App\Models\AiConversation;
 use App\Models\AiMessage;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -163,9 +162,13 @@ class SemanticTurnPlanService
     ): array {
         $settings = app(AiEmployeeSettingsService::class)->for($user, $organizationId);
         $workspace = app(WorkspaceContextService::class);
+        $paste = app(LongPasteDigestService::class)->forCurrentPlanner($message);
 
         return [
-            'user_message' => $message,
+            'user_message' => $paste['user_message'],
+            'long_paste' => $paste['long_paste'],
+            'paste_chars' => $paste['paste_chars'],
+            'paste_digest' => $paste['paste_digest'],
             'thread' => $this->recentThread($conversation),
             'workspace' => [
                 'business' => $workspace->businessProfile($settings)['summary'] ?? null,
@@ -232,15 +235,17 @@ class SemanticTurnPlanService
             return [];
         }
 
+        $paste = app(LongPasteDigestService::class);
+
         return AiMessage::query()
             ->where('conversation_id', $conversation->id)
             ->orderByDesc('id')
             ->limit(12)
-            ->get(['role', 'content'])
+            ->get(['role', 'content', 'meta'])
             ->reverse()
             ->map(fn (AiMessage $message) => [
                 'role' => (string) $message->role,
-                'content' => Str::limit(trim((string) $message->content), 600, ''),
+                'content' => $paste->forThreadMessage($message, 600),
             ])
             ->filter(fn (array $row) => $row['content'] !== '')
             ->values()
