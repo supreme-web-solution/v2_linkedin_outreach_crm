@@ -41,11 +41,14 @@ class PostExecutionVerifierService
         }
 
         // Assisted cold one-shots stage Review & Launch — zero external sends on the planning turn is expected.
+        // Same for "book N meetings" turns that only start a workflow.
         if ($expected > 0
             && $outcome === 'send_now'
             && $actualExternalDelta === 0
             && ! $singleRecipient
             && ! $this->workflowStillOrchestrating($plan)
+            && max(0, (int) (($after['workflow_runs'] ?? 0) - ($before['workflow_runs'] ?? 0))) === 0
+            && (int) ($plan['workflow_run_id'] ?? 0) <= 0
         ) {
             $warnings[] = 'Requested outreach execution completed with zero recorded external send actions.';
         }
@@ -53,7 +56,7 @@ class PostExecutionVerifierService
         if ($channelEligible !== null && $expected > 0 && $channelEligible < $expected) {
             $asyncDiscovery = ! $singleRecipient && (
                 $this->workflowStillOrchestrating($plan)
-                || ($outcome === 'find_only' && (int) ($plan['workflow_run_id'] ?? 0) > 0)
+                || (int) ($plan['workflow_run_id'] ?? 0) > 0
             );
 
             if (! $asyncDiscovery && ! $singleRecipient) {
@@ -61,15 +64,28 @@ class PostExecutionVerifierService
             }
         }
 
-        // Send metrics apply only to send_now — never confuse discovery target_count with "sends".
-        if ($outcome === 'send_now' && ! $singleRecipient && ($executionMetrics['attempted'] ?? 0) > 0) {
-            $successful = (int) ($executionMetrics['successful'] ?? 0);
-            $failed = (int) ($executionMetrics['failed'] ?? 0);
-            if ($successful + $failed !== (int) $executionMetrics['attempted']) {
-                $warnings[] = 'Execution metrics inconsistent: attempted does not equal successful + failed.';
-            }
-            if ($expected > 0 && $successful < $expected && ($stateEval['channel'] ?? null) !== null) {
-                $warnings[] = "Reported {$successful} successful sends, not {$expected} as requested.";
+        // Send metrics apply only to send_now — compare THIS TURN's delta, never lifetime totals.
+        // Starting a workflow ("book 30 meetings…") must not warn about historical sends.
+        $workflowStartedThisTurn = max(0, (int) (($after['workflow_runs'] ?? 0) - ($before['workflow_runs'] ?? 0))) > 0;
+        if ($outcome === 'send_now'
+            && ! $singleRecipient
+            && ! $this->workflowStillOrchestrating($plan)
+            && ! $workflowStartedThisTurn
+            && (int) ($plan['workflow_run_id'] ?? 0) <= 0
+        ) {
+            $beforeMetrics = is_array($before['execution_metrics'] ?? null) ? $before['execution_metrics'] : [];
+            $afterMetrics = $executionMetrics;
+            $attemptedDelta = max(0, (int) ($afterMetrics['attempted'] ?? 0) - (int) ($beforeMetrics['attempted'] ?? 0));
+            $successfulDelta = max(0, (int) ($afterMetrics['successful'] ?? 0) - (int) ($beforeMetrics['successful'] ?? 0));
+            $failedDelta = max(0, (int) ($afterMetrics['failed'] ?? 0) - (int) ($beforeMetrics['failed'] ?? 0));
+
+            if ($attemptedDelta > 0) {
+                if ($successfulDelta + $failedDelta !== $attemptedDelta) {
+                    $warnings[] = 'Execution metrics inconsistent: attempted does not equal successful + failed.';
+                }
+                if ($expected > 0 && $successfulDelta < $expected) {
+                    $warnings[] = "Reported {$successfulDelta} successful sends, not {$expected} as requested.";
+                }
             }
         }
 

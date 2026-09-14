@@ -30,9 +30,21 @@ class WorkflowDiscoveryStepHandler
         $orgId = (int) ($user->current_organization_id ?? 0);
         $workspace = app(WorkspaceContextService::class);
         $hints = $workspace->discoverySearchHints($user, $orgId, $plan);
-        $rawQuery = $hints['query'] !== ''
-            ? $hints['query']
-            : ($criteria !== '' ? $criteria : ($segment !== '' ? $segment : 'prospects'));
+
+        // Prefer THIS TURN's audience wording over a long stored ICP / planner essay.
+        $turnAudience = trim((string) ($arguments['segment'] ?? ''));
+        if ($turnAudience === '') {
+            $turnAudience = trim((string) ($plan['objective']['segment'] ?? $plan['semantic']['target_segment'] ?? ''));
+        }
+        if ($turnAudience === '' && $criteria !== '') {
+            $turnAudience = $criteria;
+        }
+
+        $rawQuery = $turnAudience !== ''
+            ? $turnAudience
+            : ($hints['query'] !== ''
+                ? $hints['query']
+                : ($segment !== '' ? $segment : 'prospects'));
         $query = $workspace->enrichDiscoveryQuery($user, $orgId, $rawQuery, $plan);
         $query = $this->normalizeDiscoveryQuery($user, $orgId, $query);
 
@@ -94,7 +106,23 @@ class WorkflowDiscoveryStepHandler
                 continue;
             }
 
-            $best = $this->freshBestMatch($channelResult, is_array($channelResult['lists'] ?? null) ? $channelResult['lists'] : []);
+            $spillLists = is_array($channelResult['lists'] ?? null) ? $channelResult['lists'] : [];
+            $spillMerged = ! empty($channelResult['best_match']['spill_merged']);
+
+            if ($spillMerged && $spillLists !== []) {
+                foreach ($spillLists as $row) {
+                    if (! is_array($row) || empty($row['list_hash']) || ! empty($row['reused_recent'])) {
+                        continue;
+                    }
+                    $lists[] = array_merge($row, ['primary_channel' => (string) $channel]);
+                    $saved += (int) ($row['total_leads'] ?? 0);
+                    $samples = array_merge($samples, $this->collectSamples($channelResult, $row));
+                }
+
+                continue;
+            }
+
+            $best = $this->freshBestMatch($channelResult, $spillLists);
             if ($best === null) {
                 continue;
             }
@@ -111,6 +139,11 @@ class WorkflowDiscoveryStepHandler
         $reportedTotal = (int) ($result['total_leads_in_matches'] ?? 0);
         if ($reportedTotal > 0) {
             $saved = $reportedTotal;
+        }
+
+        // Never claim more net-new people than this step requested.
+        if ($targetCount > 0) {
+            $saved = min($saved, $targetCount);
         }
 
         $samples = array_slice($samples, 0, 5);

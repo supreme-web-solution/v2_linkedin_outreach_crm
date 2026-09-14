@@ -132,9 +132,13 @@ class WorkspaceContextService
             ?? ($profile['geography'] ?? '')
         ));
 
-        $audience = $handoff !== ''
-            ? $handoff
-            : ($segment !== '' ? $segment : ($searchQuery !== '' ? $searchQuery : trim(implode(' ', array_filter([$decisionMaker, $industry, $summary])))));
+        $audience = $this->preferSearchAudience([
+            $handoff,
+            $segment,
+            $searchQuery,
+            trim(implode(' ', array_filter([$decisionMaker, $industry]))),
+            $summary,
+        ]);
 
         $titleFromIcp = trim((string) ($searchTitles[0] ?? ''));
         $titleSource = $titleFromIcp !== '' ? $titleFromIcp : $decisionMaker;
@@ -148,11 +152,47 @@ class WorkspaceContextService
             'title' => $title,
             'geography' => $geography !== '' ? $geography : null,
             'audience_name' => Str::limit(
-                $segment !== '' ? $segment : ($decisionMaker !== '' ? $decisionMaker : ($searchQuery !== '' ? $searchQuery : 'LinkedIn Search')),
+                $segment !== '' && strlen($segment) <= 80
+                    ? $segment
+                    : ($decisionMaker !== '' ? $decisionMaker : ($searchQuery !== '' ? $searchQuery : 'LinkedIn Search')),
                 80,
                 '',
             ),
         ];
+    }
+
+    /**
+     * Prefer short turn/segment wording over long ICP essays for Unipile/Mindcase.
+     *
+     * @param  list<string>  $candidates
+     */
+    private function preferSearchAudience(array $candidates): string
+    {
+        $short = [];
+        $long = [];
+        foreach ($candidates as $candidate) {
+            $text = trim((string) $candidate);
+            if ($text === '') {
+                continue;
+            }
+            if (strlen($text) <= 90 && substr_count($text, ' ') <= 12) {
+                $short[] = $text;
+            } else {
+                $long[] = $text;
+            }
+        }
+
+        if ($short !== []) {
+            return $short[0];
+        }
+
+        if ($long !== []) {
+            $compressed = app(PlanChannelIntentService::class)->compressBuyerKeyword($long[0]);
+
+            return $compressed !== '' ? $compressed : Str::limit($long[0], 80, '');
+        }
+
+        return '';
     }
 
     /**
@@ -213,9 +253,20 @@ class WorkspaceContextService
             $query = '';
         }
 
+        $intent = app(PlanChannelIntentService::class);
+        $fromTurn = $intent->compressBuyerKeyword($query);
+        if ($fromTurn !== '') {
+            return $fromTurn;
+        }
+
         $hints = $this->discoverySearchHints($user, $organizationId, $plan);
-        if ($hints['query'] !== '') {
-            return $hints['query'];
+        $fromHints = $intent->compressBuyerKeyword($hints['query'] ?? '');
+        if ($fromHints !== '') {
+            return $fromHints;
+        }
+
+        if (($hints['query'] ?? '') !== '') {
+            return (string) $hints['query'];
         }
 
         return $query;

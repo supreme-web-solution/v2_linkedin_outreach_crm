@@ -82,6 +82,76 @@ class DiscoveryPlanExecutionTest extends TestCase
         $this->assertTrue($result['discovery_result']['search_failed']);
     }
 
+    public function test_parallel_step_caps_provider_returned_at_requested_and_keeps_spill_lists(): void
+    {
+        $handler = app(WorkflowDiscoveryStepHandler::class);
+        $method = new \ReflectionMethod($handler, 'buildParallelStepResult');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($handler, [
+            'mode' => 'parallel',
+            'total_leads_in_matches' => 62,
+            'platforms_searched' => ['instagram', 'linkedin'],
+            'channel_results' => [
+                'instagram' => [
+                    'best_match' => [
+                        'list_hash' => 'ig-1',
+                        'total_leads' => 6,
+                        'auto_sourced' => true,
+                    ],
+                    'lists' => [[
+                        'list_hash' => 'ig-1',
+                        'total_leads' => 6,
+                        'auto_sourced' => true,
+                    ]],
+                ],
+                'linkedin' => [
+                    'best_match' => [
+                        'list_hash' => 'li-spill',
+                        'total_leads' => 24,
+                        'auto_sourced' => true,
+                        'spill_merged' => true,
+                    ],
+                    'lists' => [
+                        [
+                            'list_hash' => 'li-1',
+                            'total_leads' => 15,
+                            'auto_sourced' => true,
+                        ],
+                        [
+                            'list_hash' => 'li-spill',
+                            'total_leads' => 9,
+                            'auto_sourced' => true,
+                        ],
+                        // Prior matched lists must not inflate progress when spill_merged.
+                        [
+                            'list_hash' => 'li-old',
+                            'total_leads' => 32,
+                            'auto_sourced' => true,
+                            'reused_recent' => true,
+                        ],
+                    ],
+                ],
+            ],
+        ], 30, 'all');
+
+        $this->assertSame(30, $result['provider_returned']);
+        $hashes = collect($result['discovery_lists'])->pluck('list_hash')->all();
+        $this->assertContains('ig-1', $hashes);
+        $this->assertContains('li-1', $hashes);
+        $this->assertContains('li-spill', $hashes);
+        $this->assertNotContains('li-old', $hashes);
+    }
+
+    public function test_compress_strips_trailing_and(): void
+    {
+        $keyword = app(PlanChannelIntentService::class)->compressBuyerKeyword(
+            'united kingdom saas founders and'
+        );
+
+        $this->assertSame('united kingdom saas founders', strtolower($keyword));
+    }
+
     public function test_discovery_notifier_reports_shortfall_honestly(): void
     {
         [$user, $org, $conversation] = $this->fixtures();

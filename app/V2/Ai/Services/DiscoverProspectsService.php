@@ -285,6 +285,20 @@ class DiscoverProspectsService
         $searchFilters = is_array($autoSourced['search_filters'] ?? null) ? $autoSourced['search_filters'] : null;
         $firstDegree = (bool) ($autoSourced['first_degree_only'] ?? false);
 
+        // Fresh LinkedIn pulls must report ONLY the newly saved list — matchLeadLists
+        // often still returns prior strong-name lists and previously inflated totals (e.g. 62 of 30).
+        if ($autoSourced !== null) {
+            $freshRow = array_merge($autoSourced, [
+                'origin' => 'linkedin_search',
+                'primary_channel' => 'linkedin',
+                'platform' => 'linkedin',
+                'match_score' => 100,
+            ]);
+            $merged = collect([$freshRow]);
+            $totalLeads = (int) ($autoSourced['total_leads'] ?? 0);
+            $resolved = $autoSourced;
+        }
+
         return [
             'query' => $query,
             'platform' => 'linkedin',
@@ -550,10 +564,24 @@ class DiscoverProspectsService
         $ready = collect($channelResults)->contains(fn (array $r) => ! empty($r['ready_for_campaign']));
         $successfulPlatforms = $this->successfulDiscoveryPlatforms($channelResults);
         $failedNotes = $this->failedDiscoveryNotes($channelResults);
-        $totalSaved = (int) collect($lists)
-            ->filter(fn (array $row) => empty($row['reused_recent']))
-            ->sum(fn (array $r) => (int) ($r['total_leads'] ?? 0));
-        $availableIncludingReuse = (int) collect($lists)->sum(fn (array $r) => (int) ($r['total_leads'] ?? 0));
+
+        // Count only each channel's best fresh list — never sum prior matched lists
+        // that LinkedIn discover() may still attach alongside a new search.
+        $totalSaved = 0;
+        foreach ($channelResults as $result) {
+            if (! is_array($result)) {
+                continue;
+            }
+            $best = is_array($result['best_match'] ?? null) ? $result['best_match'] : null;
+            if ($best === null || ! empty($best['reused_recent'])) {
+                continue;
+            }
+            $totalSaved += max(0, (int) ($best['total_leads'] ?? 0));
+        }
+        $availableIncludingReuse = max(
+            $totalSaved,
+            (int) collect($lists)->sum(fn (array $r) => (int) ($r['total_leads'] ?? 0)),
+        );
 
         $next = [
             $allocationPlan['summary'],
@@ -660,12 +688,10 @@ class DiscoverProspectsService
             }
         }
 
-        // Already have a fresh list on the spill channel — only top up when that channel itself underfilled.
+        // Already have a fresh list on the spill channel — top up the deficit only.
+        // Do NOT re-search for existing+deficit and replace: that discards the first list
+        // and previously inflated counts when both lists were summed.
         $needOnSpill = $deficit;
-        if ($existingFresh > 0 && $spillChannel === 'linkedin') {
-            // LinkedIn list exists but total plan still short because Instagram failed — search again for the gap.
-            $needOnSpill = $deficit;
-        }
 
         Log::info('[Soci] Discovery shortfall spillover', [
             'user_id' => $user->id,
@@ -673,6 +699,7 @@ class DiscoverProspectsService
             'fresh_saved' => $freshSaved,
             'deficit' => $needOnSpill,
             'spill_channel' => $spillChannel,
+            'existing_on_spill' => $existingFresh,
         ]);
 
         if ($spillChannel === 'linkedin') {
@@ -681,7 +708,7 @@ class DiscoverProspectsService
                 $query,
                 $competitors,
                 $limit,
-                $needOnSpill + $existingFresh, // ask for combined size so Unipile pulls enough
+                $needOnSpill,
                 true,
                 $geography,
                 $networkDegree,
@@ -691,9 +718,12 @@ class DiscoverProspectsService
                 $profileUrl,
                 'linkedin',
             );
-            $channelResults['linkedin'] = $topUp;
+            $channelResults['linkedin'] = $this->mergeSpillChannelResult(
+                is_array($existing) ? $existing : null,
+                $topUp,
+            );
         } elseif ($spillChannel === 'instagram') {
-            $channelResults['instagram'] = $this->discoverInstagram(
+            $topUp = $this->discoverInstagram(
                 $user,
                 $query,
                 $needOnSpill,
@@ -701,9 +731,76 @@ class DiscoverProspectsService
                 $geography,
                 true,
             );
+            $channelResults['instagram'] = $this->mergeSpillChannelResult(
+                is_array($existing) ? $existing : null,
+                $topUp,
+            );
         }
 
         return $channelResults;
+    }
+
+    /**
+     * Keep the first fresh list and append the spillover top-up so we don't lose people
+     * or double-count by replacing a 15-list with a fresh 24-list.
+     *
+     * @param  array<string, mixed>|null  $existing
+     * @param  array<string, mixed>  $topUp
+     * @return array<string, mixed>
+     */
+    private function mergeSpillChannelResult(?array $existing, array $topUp): array
+    {
+        if ($existing === null || empty($existing['best_match']) || ! empty($existing['best_match']['reused_recent'])) {
+            return $topUp;
+        }
+
+        $existingBest = is_array($existing['best_match']) ? $existing['best_match'] : [];
+        $topBest = is_array($topUp['best_match'] ?? null) ? $topUp['best_match'] : null;
+        if ($topBest === null || (int) ($topBest['total_leads'] ?? 0) <= 0 || ! empty($topBest['reused_recent'])) {
+            return $existing;
+        }
+
+        $combinedLeads = max(0, (int) ($existingBest['total_leads'] ?? 0))
+            + max(0, (int) ($topBest['total_leads'] ?? 0));
+
+        $lists = [];
+        foreach ([$existingBest, $topBest] as $row) {
+            if (! empty($row['list_hash'])) {
+                $lists[] = $row;
+            }
+        }
+        foreach (array_merge(
+            is_array($existing['lists'] ?? null) ? $existing['lists'] : [],
+            is_array($topUp['lists'] ?? null) ? $topUp['lists'] : [],
+        ) as $row) {
+            if (! is_array($row) || empty($row['list_hash'])) {
+                continue;
+            }
+            $hash = (string) $row['list_hash'];
+            if (collect($lists)->contains(fn (array $known) => (string) ($known['list_hash'] ?? '') === $hash)) {
+                continue;
+            }
+            if (! empty($row['reused_recent'])) {
+                continue;
+            }
+            $lists[] = $row;
+        }
+
+        return array_merge($topUp, [
+            'best_match' => array_merge($topBest, [
+                'total_leads' => $combinedLeads,
+                'list_name' => trim((string) (($existingBest['list_name'] ?? 'List').' + spillover')),
+                'spill_merged' => true,
+                'spill_list_hashes' => array_values(array_filter(array_map(
+                    fn (array $row) => (string) ($row['list_hash'] ?? ''),
+                    $lists,
+                ))),
+            ]),
+            'lists' => $lists,
+            'total_leads_in_matches' => $combinedLeads,
+            'ready_for_campaign' => true,
+            'auto_sourced' => true,
+        ]);
     }
 
     /**

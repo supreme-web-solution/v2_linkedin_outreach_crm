@@ -112,15 +112,17 @@ class WorkflowConversationNotifier
         $discovered = max(0, (int) ($meta['cumulative_candidate_delta'] ?? 0));
         $platforms = $this->formatPlatforms($meta);
         $failures = $this->formatPlatformFailures($meta);
-        $short = $requested > 0 && $discovered < $requested;
+        // Never flash "62 of 30" from duplicate list summing — cap the headline at the ask.
+        $displayFound = $requested > 0 ? min($discovered, $requested) : $discovered;
+        $short = $requested > 0 && $displayFound < $requested;
 
         $this->notify($run, implode("\n", array_filter([
             $short
-                ? "✅ Workflow #{$run->id} — found {$discovered} of {$requested} prospects (short of target)."
-                : "✅ Workflow #{$run->id} — found {$discovered}".($requested > 0 ? " of {$requested}" : '').' prospects.',
-            $platforms ? "Saved to Leads from {$platforms}." : ($discovered > 0 ? 'Saved to Leads.' : null),
+                ? "✅ Workflow #{$run->id} — found {$displayFound} of {$requested} prospects (short of target)."
+                : "✅ Workflow #{$run->id} — found {$displayFound}".($requested > 0 ? " of {$requested}" : '').' prospects.',
+            $platforms ? "Saved to Leads from {$platforms}." : ($displayFound > 0 ? 'Saved to Leads.' : null),
             $failures,
-            $discovered > 0
+            $displayFound > 0
                 ? 'Staging reply-first outreach for Review & Launch…'
                 : 'No new prospects saved yet — I will not invent a full count.',
         ])));

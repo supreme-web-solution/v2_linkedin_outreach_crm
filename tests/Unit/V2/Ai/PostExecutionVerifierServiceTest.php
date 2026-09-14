@@ -113,4 +113,44 @@ class PostExecutionVerifierServiceTest extends TestCase
             fn ($w) => is_string($w) && str_contains(strtolower($w), 'successful sends')
         ));
     }
+
+    public function test_send_now_that_starts_workflow_does_not_warn_on_historical_sends(): void
+    {
+        $user = User::factory()->create();
+        $org = V2Organization::query()->create([
+            'name' => 'Send Now Org',
+            'slug' => 'send-now-'.uniqid(),
+            'owner_id' => $user->id,
+        ]);
+
+        $svc = app(PostExecutionVerifierService::class);
+        $before = $svc->snapshot($user, $org->id);
+        $before['execution_metrics'] = [
+            'attempted' => 3,
+            'successful' => 3,
+            'failed' => 0,
+        ];
+        $after = $before;
+        $after['workflow_runs'] = (int) ($before['workflow_runs'] ?? 0) + 1;
+        $after['execution_metrics'] = [
+            'attempted' => 3,
+            'successful' => 3,
+            'failed' => 0,
+        ];
+
+        $result = $svc->verify($user, $org->id, [
+            'required_outcome' => 'send_now',
+            'workflow_run_id' => 7,
+            'measurable_expectations' => ['target_count' => 30],
+            'state_evaluation' => [
+                'channel_eligible_count' => 0,
+                'channel' => 'linkedin',
+            ],
+        ], $before, $after);
+
+        $this->assertTrue($result['ok']);
+        $this->assertFalse(collect($result['warnings'])->contains(
+            fn ($w) => is_string($w) && str_contains(strtolower($w), 'successful sends')
+        ));
+    }
 }

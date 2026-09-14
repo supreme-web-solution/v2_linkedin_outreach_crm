@@ -176,6 +176,13 @@ class PlanChannelIntentService
             return '';
         }
 
+        // Drop dangling connectors from compression ("uk saas founders and").
+        $text = trim(preg_replace('/\b(and|or|with|for|to|about)$/i', '', $text) ?? '');
+        $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
+        if ($text === '' || strlen($text) < 3) {
+            return '';
+        }
+
         return Str::limit($text, 80, '');
     }
 

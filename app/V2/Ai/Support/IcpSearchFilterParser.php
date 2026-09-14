@@ -420,7 +420,8 @@ class IcpSearchFilterParser
             $parts[] = $industry;
         }
 
-        if ($titles !== [] && $industries === []) {
+        // Keep role signal in keywords even when industry is present ("SaaS founder", not just "SaaS").
+        if ($titles !== []) {
             $parts[] = Str::lower($titles[0]);
         }
 
