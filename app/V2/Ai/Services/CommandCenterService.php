@@ -512,7 +512,7 @@ class CommandCenterService
             if ($quality !== []) {
                 $score = isset($quality['score']) ? round(((float) $quality['score']) * 100).'%' : null;
                 $bits = array_filter([
-                    isset($quality['pass']) ? ((bool) $quality['pass'] ? 'pass' : 'fail') : null,
+                    isset($quality['pass']) ? ((bool) $quality['pass'] ? 'pass' : (! empty($quality['advisory']) ? 'advisory' : 'fail')) : null,
                     $score !== null ? 'score '.$score : null,
                     isset($quality['research_ok']) ? ((bool) $quality['research_ok'] ? 'research ok' : 'research thin') : null,
                     isset($quality['grounded']) ? ((bool) $quality['grounded'] ? 'grounded' : 'not grounded') : null,
@@ -522,6 +522,14 @@ class CommandCenterService
                 ]);
                 if ($bits !== []) {
                     $lines[] = '• Draft quality: '.implode(' · ', $bits);
+                }
+                if (! empty($quality['warnings']) && is_array($quality['warnings'])) {
+                    foreach ($quality['warnings'] as $warning) {
+                        $warning = trim((string) $warning);
+                        if ($warning !== '') {
+                            $lines[] = '• Warning: '.$warning;
+                        }
+                    }
                 }
             }
             $lines[] = '• Status: researched → drafted → awaiting approval (not sent)';

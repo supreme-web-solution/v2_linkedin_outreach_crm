@@ -39,7 +39,7 @@ class OutboundCopyAgent implements Agent, HasStructuredOutput
                 'Do not dump everything into a single block. Do not use markdown bullets unless the brief asks. Soft value is fine; hard pitch and calendar links are not for first cold email unless the brief requires it.',
             ]),
             'linkedin' => 'Channel is LinkedIn DM: concise, professional, conversational. Earn a reply. No hard pitch, no calendar link on first touch unless the brief requires it.',
-            'instagram', 'whatsapp', 'telegram', 'twitter' => 'Channel is a short chat DM ('.$channel.'): casual, like texting. Earn a reply. No hard pitch, no calendar link unless the brief requires it.',
+            'instagram', 'whatsapp', 'telegram', 'twitter' => 'Channel is a short chat DM ('.$channel.'): casual, like texting. Earn a reply. No hard pitch, no calendar link unless the brief requires it. Phone/handle-only contacts often have no research — that is normal; do not invent personalization.',
             default => 'Adapt naturally to channel '.$channel.'.',
         };
 
@@ -55,6 +55,7 @@ class OutboundCopyAgent implements Agent, HasStructuredOutput
             'You write one message a real prospect will read for a sales Command Center.',
             $channelGuidance,
             $modeGuidance,
+            'Honor owner_brief / handoff intent: if they ask for a simple greeting or short opener and recipient_research is empty, write a brief honest greeting that invites a reply. Do not refuse by returning empty text, and do not invent company-specific personalization.',
             'Never invent products beyond sender_offer / offer_override.',
             'Never invent facts not in recipient_research / evidence / thread.',
             'When copy_prefs is present: honor tone, preferred_angle, style_notes, and do_not_say; use proof_points only when relevant to their situation (never invent metrics).',

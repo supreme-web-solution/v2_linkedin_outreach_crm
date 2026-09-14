@@ -187,6 +187,7 @@ class ColdOutboundPhaseAGatesTest extends TestCase
                 'has_clear_cta' => true,
                 'invents_facts' => false,
                 'research_claimed_but_missing' => false,
+                'block_severity' => 'hard',
                 'evidence_used' => [],
                 'issues' => ['Draft is reusable fluff with no research observation.'],
                 'summary' => 'Too generic',
@@ -199,6 +200,7 @@ class ColdOutboundPhaseAGatesTest extends TestCase
                 'has_clear_cta' => true,
                 'invents_facts' => false,
                 'research_claimed_but_missing' => false,
+                'block_severity' => 'hard',
                 'evidence_used' => [],
                 'issues' => ['Still not grounded.'],
                 'summary' => 'Still too generic',
@@ -227,6 +229,171 @@ class ColdOutboundPhaseAGatesTest extends TestCase
         $this->assertTrue($result['handled'] ?? false);
         $this->assertNull($result['approval'] ?? null);
         $this->assertStringContainsString('quality gate', strtolower((string) ($result['reply'] ?? '')));
+    }
+
+    public function test_whatsapp_thin_context_advisory_still_stages(): void
+    {
+        [$user, $org, $conversation] = $this->seedConversation();
+
+        config()->set('ai.providers.openai.key', 'sk-test');
+        config()->set('socifusion_ai.model_failover', ['openai' => null]);
+
+        $this->mock(OutboundMessageComposerService::class, function ($mock) {
+            $mock->shouldReceive('researchIsSubstantial')->andReturn(false);
+            $mock->shouldReceive('researchUrl')->never();
+            $mock->shouldReceive('compose')->once()->andReturn([
+                'body' => 'Hello — hope you’re doing well. Mind if I say a quick hi?',
+                'subject' => null,
+            ]);
+        });
+
+        OutboundDraftQualityAgent::fake([
+            [
+                'pass' => false,
+                'score' => 0.35,
+                'grounded' => true,
+                'not_generic' => false,
+                'has_clear_cta' => true,
+                'invents_facts' => false,
+                'research_claimed_but_missing' => false,
+                'block_severity' => 'advisory',
+                'evidence_used' => [],
+                'issues' => ['Short greeting with limited recipient context.'],
+                'summary' => 'Thin WhatsApp opener',
+            ],
+        ]);
+
+        $this->mock(\App\V2\Ai\Services\SemanticTurnPlanService::class, function ($mock) {
+            $mock->shouldReceive('interpret')->once()->andReturn([
+                'semantic' => [
+                    'cold_one_shot' => true,
+                    'preferred_channel' => 'whatsapp',
+                    'handoff_brief' => 'just send a hello greeting to him',
+                ],
+                'enforcement' => [],
+            ]);
+        });
+
+        $result = app(OneShotOutboundCommandCenterService::class)->tryHandle(
+            $user,
+            $org->id,
+            $conversation,
+            'whatsapp 08085204156 — just send a hello greeting to him',
+            'web',
+        );
+
+        $this->assertTrue($result['handled'] ?? false);
+        $this->assertNotNull($result['approval'] ?? null);
+        $this->assertStringContainsString('advisory', strtolower((string) ($result['reply'] ?? '')));
+        $payload = is_array($result['approval']?->payload) ? $result['approval']->payload : [];
+        $this->assertSame('whatsapp', $payload['primary_channel'] ?? null);
+        $this->assertTrue((bool) ($payload['quality']['advisory'] ?? false));
+        $this->assertStringContainsString('Hello', (string) ($payload['message'] ?? ''));
+    }
+
+    public function test_invented_facts_still_hard_block_on_whatsapp(): void
+    {
+        [$user, $org, $conversation] = $this->seedConversation();
+
+        config()->set('ai.providers.openai.key', 'sk-test');
+        config()->set('socifusion_ai.model_failover', ['openai' => null]);
+
+        $this->mock(OutboundMessageComposerService::class, function ($mock) {
+            $mock->shouldReceive('researchIsSubstantial')->andReturn(false);
+            $mock->shouldReceive('compose')->twice()->andReturn([
+                'body' => 'Saw your Series B and your Lagos warehouse expansion — free next Tuesday?',
+                'subject' => null,
+            ]);
+        });
+
+        OutboundDraftQualityAgent::fake([
+            [
+                'pass' => false,
+                'score' => 0.1,
+                'grounded' => false,
+                'not_generic' => true,
+                'has_clear_cta' => true,
+                'invents_facts' => true,
+                'research_claimed_but_missing' => false,
+                'block_severity' => 'hard',
+                'evidence_used' => [],
+                'issues' => ['Invented funding and warehouse details with no research.'],
+                'summary' => 'Invented facts',
+            ],
+            [
+                'pass' => false,
+                'score' => 0.1,
+                'grounded' => false,
+                'not_generic' => true,
+                'has_clear_cta' => true,
+                'invents_facts' => true,
+                'research_claimed_but_missing' => false,
+                'block_severity' => 'hard',
+                'evidence_used' => [],
+                'issues' => ['Still invents facts.'],
+                'summary' => 'Still invented',
+            ],
+        ]);
+
+        $this->mock(\App\V2\Ai\Services\SemanticTurnPlanService::class, function ($mock) {
+            $mock->shouldReceive('interpret')->once()->andReturn([
+                'semantic' => [
+                    'cold_one_shot' => true,
+                    'preferred_channel' => 'whatsapp',
+                    'handoff_brief' => 'WhatsApp 08085204156',
+                ],
+                'enforcement' => [],
+            ]);
+        });
+
+        $result = app(OneShotOutboundCommandCenterService::class)->tryHandle(
+            $user,
+            $org->id,
+            $conversation,
+            'whatsapp 08085204156 about their Series B',
+            'web',
+        );
+
+        $this->assertTrue($result['handled'] ?? false);
+        $this->assertNull($result['approval'] ?? null);
+        $this->assertStringContainsString('quality gate', strtolower((string) ($result['reply'] ?? '')));
+    }
+
+    public function test_should_hard_block_helpers_respect_channel_and_severity(): void
+    {
+        $service = app(OutboundDraftQualityService::class);
+
+        $this->assertFalse($service->shouldHardBlockStaging([
+            'pass' => false,
+            'source' => 'laravel_ai',
+            'block_severity' => 'advisory',
+            'invents_facts' => false,
+            'research_claimed_but_missing' => false,
+        ], 'whatsapp'));
+
+        $this->assertTrue($service->shouldHardBlockStaging([
+            'pass' => false,
+            'source' => 'laravel_ai',
+            'block_severity' => 'hard',
+            'invents_facts' => false,
+            'research_claimed_but_missing' => false,
+        ], 'whatsapp'));
+
+        $this->assertTrue($service->shouldHardBlockStaging([
+            'pass' => false,
+            'source' => 'laravel_ai',
+            'block_severity' => 'advisory',
+            'invents_facts' => true,
+            'research_claimed_but_missing' => false,
+        ], 'whatsapp'));
+
+        $this->assertTrue($service->shouldHardBlockStaging([
+            'pass' => false,
+            'source' => 'laravel_ai',
+            'block_severity' => '',
+            'invents_facts' => false,
+            'research_claimed_but_missing' => false,
+        ], 'email', 'Example Co helps ops teams ship faster every week with clear workflows.', 'https://example.com'));
     }
 
     public function test_format_plan_card_shows_research_and_quality_for_cold_outbound(): void

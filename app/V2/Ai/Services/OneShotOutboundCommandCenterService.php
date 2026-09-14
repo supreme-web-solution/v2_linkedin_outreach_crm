@@ -311,7 +311,17 @@ class OneShotOutboundCommandCenterService
             $researchUrl !== '' ? $researchUrl : null,
         );
 
-        if ($draft !== '' && ! ($quality['pass'] ?? false) && ($quality['source'] ?? '') === 'laravel_ai') {
+        $shouldRewrite = $draft !== ''
+            && ! ($quality['pass'] ?? false)
+            && ($quality['source'] ?? '') === 'laravel_ai'
+            && $this->draftQuality->shouldHardBlockStaging(
+                $quality,
+                $channel,
+                $researchNotes,
+                $researchUrl !== '' ? $researchUrl : null,
+            );
+
+        if ($shouldRewrite) {
             // One rewrite pass with quality issues as guidance (still domain-agnostic).
             $rewriteBrief = $composeBrief."\n\nQuality issues to fix:\n- ".implode("\n- ", $quality['issues'] ?: ['Make the draft grounded and non-generic.']);
             $composed = $this->composer->compose(
@@ -335,8 +345,21 @@ class OneShotOutboundCommandCenterService
             );
         }
 
-        $qualityHardFail = ! ($quality['pass'] ?? false)
-            && in_array((string) ($quality['source'] ?? ''), ['laravel_ai', 'copy_guard', 'research_gate'], true);
+        $qualityHardFail = $draft === ''
+            || (
+                ! ($quality['pass'] ?? false)
+                && in_array((string) ($quality['source'] ?? ''), ['laravel_ai', 'copy_guard', 'research_gate'], true)
+                && $this->draftQuality->shouldHardBlockStaging(
+                    $quality,
+                    $channel,
+                    $researchNotes,
+                    $researchUrl !== '' ? $researchUrl : null,
+                )
+            );
+        $qualityAdvisory = $draft !== ''
+            && ! ($quality['pass'] ?? false)
+            && ! $qualityHardFail
+            && in_array((string) ($quality['source'] ?? ''), ['laravel_ai', 'fallback'], true);
 
         if ($draft === '' || $qualityHardFail) {
             return [
@@ -414,6 +437,10 @@ class OneShotOutboundCommandCenterService
             'quality' => [
                 'score' => $quality['score'] ?? null,
                 'pass' => $quality['pass'] ?? null,
+                'advisory' => $qualityAdvisory,
+                'block_severity' => $qualityAdvisory
+                    ? 'advisory'
+                    : (string) ($quality['block_severity'] ?? (($quality['pass'] ?? false) ? 'none' : 'hard')),
                 'research_ok' => $researchUrl === '' || $this->draftQuality->researchGateAllowsDraft($researchUrl, $researchNotes),
                 'grounded' => $quality['grounded'] ?? null,
                 'not_generic' => $quality['not_generic'] ?? null,
@@ -421,7 +448,12 @@ class OneShotOutboundCommandCenterService
                 'summary' => $quality['summary'] ?? null,
                 'issues' => $quality['issues'] ?? [],
                 'evidence_used' => $quality['evidence_used'] ?? [],
-                'warnings' => $identityCheck['warnings'] ?? [],
+                'warnings' => array_values(array_filter(array_merge(
+                    $identityCheck['warnings'] ?? [],
+                    $qualityAdvisory
+                        ? ['Thin-context draft staged with an advisory quality warning — review before Launch.']
+                        : [],
+                ))),
             ],
         ];
 
@@ -484,13 +516,16 @@ class OneShotOutboundCommandCenterService
         $qualityLine = isset($quality['score'])
             ? 'Draft quality: '.round((float) $quality['score'] * 100).'%'.(
                 ! empty($quality['summary']) ? ' — '.$quality['summary'] : ''
-            )
+            ).($qualityAdvisory ? ' (advisory — staged for your review)' : '')
             : null;
-        $warningLine = ! empty($identityCheck['warnings'])
-            ? implode("\n", $identityCheck['warnings'])
-            : null;
+        $warningLine = ! empty($plan['quality']['warnings'])
+            ? implode("\n", $plan['quality']['warnings'])
+            : (! empty($identityCheck['warnings'])
+                ? implode("\n", $identityCheck['warnings'])
+                : null);
 
-        if ($setupOnly || $autonomy->value <= AiAutonomyLevel::Copilot->value) {
+        // Advisory thin-context drafts always need human Launch — never auto-send.
+        if ($setupOnly || $qualityAdvisory || $autonomy->value <= AiAutonomyLevel::Copilot->value) {
             return [
                 'handled' => true,
                 'reply' => implode("\n\n", array_filter([

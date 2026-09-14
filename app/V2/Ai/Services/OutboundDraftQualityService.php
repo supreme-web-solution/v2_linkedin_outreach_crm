@@ -37,6 +37,7 @@ class OutboundDraftQualityService
      *     has_clear_cta:bool,
      *     invents_facts:bool,
      *     research_claimed_but_missing:bool,
+     *     block_severity:string,
      *     evidence_used:list<string>,
      *     issues:list<string>,
      *     summary:string,
@@ -59,6 +60,7 @@ class OutboundDraftQualityService
             'has_clear_cta' => true,
             'invents_facts' => false,
             'research_claimed_but_missing' => false,
+            'block_severity' => $draft !== '' ? 'none' : 'hard',
             'evidence_used' => [],
             'issues' => $draft === '' ? ['Draft is empty.'] : [],
             'summary' => $draft === '' ? 'Empty draft' : 'Quality judge unavailable — structural checks only',
@@ -74,6 +76,7 @@ class OutboundDraftQualityService
             return array_merge($fallback, [
                 'pass' => false,
                 'score' => 0.2,
+                'block_severity' => 'hard',
                 'issues' => $structural,
                 'summary' => 'Failed structural recipient-facing checks',
                 'source' => 'copy_guard',
@@ -89,6 +92,7 @@ class OutboundDraftQualityService
                     'score' => 0.25,
                     'grounded' => false,
                     'research_claimed_but_missing' => true,
+                    'block_severity' => 'hard',
                     'issues' => ['Research URL was provided but readable research is too thin to personalize safely.'],
                     'summary' => 'Thin research',
                     'source' => 'research_gate',
@@ -124,14 +128,18 @@ class OutboundDraftQualityService
                 is_array($raw['evidence_used'] ?? null) ? $raw['evidence_used'] : [],
             )));
 
+            $pass = (bool) ($raw['pass'] ?? false);
+            $severity = $this->normalizeSeverity((string) ($raw['block_severity'] ?? ''), $pass);
+
             return [
-                'pass' => (bool) ($raw['pass'] ?? false),
+                'pass' => $pass,
                 'score' => max(0.0, min(1.0, (float) ($raw['score'] ?? 0))),
                 'grounded' => (bool) ($raw['grounded'] ?? false),
                 'not_generic' => (bool) ($raw['not_generic'] ?? false),
                 'has_clear_cta' => (bool) ($raw['has_clear_cta'] ?? false),
                 'invents_facts' => (bool) ($raw['invents_facts'] ?? false),
                 'research_claimed_but_missing' => (bool) ($raw['research_claimed_but_missing'] ?? false),
+                'block_severity' => $severity,
                 'evidence_used' => $evidence,
                 'issues' => $issues,
                 'summary' => trim((string) ($raw['summary'] ?? 'Quality evaluated')),
@@ -142,6 +150,66 @@ class OutboundDraftQualityService
 
             return $fallback;
         }
+    }
+
+    /**
+     * Whether one-shot staging must refuse (vs stage with an advisory quality warning).
+     *
+     * @param  array<string, mixed>  $quality
+     */
+    public function shouldHardBlockStaging(
+        array $quality,
+        string $channel,
+        string $researchNotes = '',
+        ?string $researchUrl = null,
+    ): bool {
+        if ($quality['pass'] ?? false) {
+            return false;
+        }
+
+        $source = (string) ($quality['source'] ?? '');
+        if (in_array($source, ['copy_guard', 'research_gate'], true)) {
+            return true;
+        }
+
+        if (! empty($quality['invents_facts']) || ! empty($quality['research_claimed_but_missing'])) {
+            return true;
+        }
+
+        $severity = $this->normalizeSeverity((string) ($quality['block_severity'] ?? ''), false);
+        if ($severity === 'hard') {
+            return true;
+        }
+        if ($severity === 'advisory') {
+            return false;
+        }
+
+        // Agent omitted / unclear severity: researched cold stays strict; thin-context can soft-stage.
+        $url = trim((string) $researchUrl);
+        if ($url !== '' || $this->composer->researchIsSubstantial($researchNotes)) {
+            return true;
+        }
+
+        return ! $this->isThinContextChannel($channel);
+    }
+
+    public function isThinContextChannel(string $channel): bool
+    {
+        return in_array(strtolower(trim($channel)), ['whatsapp', 'telegram', 'twitter', 'instagram'], true);
+    }
+
+    private function normalizeSeverity(string $raw, bool $pass): string
+    {
+        $severity = strtolower(trim($raw));
+        if (! in_array($severity, ['none', 'advisory', 'hard'], true)) {
+            return $pass ? 'none' : 'hard';
+        }
+
+        if ($pass) {
+            return 'none';
+        }
+
+        return $severity === 'none' ? 'advisory' : $severity;
     }
 
     /**
