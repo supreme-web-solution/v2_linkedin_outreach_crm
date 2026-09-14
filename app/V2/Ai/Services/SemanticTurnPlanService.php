@@ -79,8 +79,10 @@ class SemanticTurnPlanService
 
         $started = hrtime(true);
         $plannerInput = $this->plannerInput($user, $organizationId, $trimmed, $conversation);
+        $providerNames = array_keys($chain);
 
         try {
+            // Laravel AI walks this chain on overloaded / rate-limit / credits / connection failures.
             $response = (new SemanticTurnPlanAgent)->prompt(
                 json_encode($plannerInput, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
                 provider: $chain,
@@ -91,6 +93,8 @@ class SemanticTurnPlanService
             if ($raw === []) {
                 Log::warning('[Soci] Semantic planner returned empty structured output — regex fallback', [
                     'user_id' => $user->id,
+                    'providers' => $providerNames,
+                    'has_failover' => count($providerNames) > 1,
                 ]);
 
                 return null;
@@ -112,6 +116,7 @@ class SemanticTurnPlanService
                     'thread_turns' => count($plannerInput['thread']),
                     'pending_plans_waiting' => $plannerInput['pending_plans_waiting'],
                     'provider' => 'laravel_ai_structured',
+                    'provider_chain' => $providerNames,
                 ],
                 output: ['semantic' => $semantic, 'enforcement' => [
                     'goal' => $enforcement['goal'] ?? null,
@@ -130,6 +135,11 @@ class SemanticTurnPlanService
             Log::warning('[Soci] Semantic turn planner failed — regex fallback', [
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
+                'providers' => $providerNames,
+                'has_failover' => count($providerNames) > 1,
+                'hint' => count($providerNames) <= 1
+                    ? 'Set OPENROUTER_API_KEY (preferred multi-model cover) and/or GEMINI_API_KEY / ANTHROPIC_API_KEY so Laravel AI can fail over before regex.'
+                    : 'All configured Laravel AI providers in the failover chain were exhausted.',
             ]);
 
             return null;

@@ -123,17 +123,31 @@ TXT,
     'outbound_preflight' => false,
 
     /*
-    | Agent model chain. First funded provider is used. On 429 / no credits / provider outage,
+    | Agent model chain (Laravel AI provider failover — used by Soci planner, copy, quality, etc.).
+    | Order matters: first funded provider runs; on 429 / overloaded / no credits / outage,
     | Laravel AI fails over to the next key that is actually set.
-    | OpenRouter is a different billing account — switching models on the same empty OpenAI key does nothing.
+    |
+    | OpenRouter is the multi-model cover slot (one key → Gemini, Claude, etc.). Prefer a
+    | NON-OpenAI OpenRouter model so OpenAI overload does not also fail the OpenRouter hop.
+    | Native gemini / anthropic / groq keys are extra cover when present.
+    | Regex / heuristic fallbacks only run after this entire chain is exhausted.
     */
     'model_failover' => [
         'openai' => env('SOCIFUSION_AI_OPENAI_MODEL'),
-        'openrouter' => env('SOCIFUSION_AI_OPENROUTER_MODEL', 'openai/gpt-4o-mini'),
+        'openrouter' => env('SOCIFUSION_AI_OPENROUTER_MODEL', 'google/gemini-2.5-flash'),
         'gemini' => env('SOCIFUSION_AI_GEMINI_MODEL', 'gemini-2.5-flash'),
-        'groq' => env('SOCIFUSION_AI_GROQ_MODEL', 'llama-3.3-70b-versatile'),
         'anthropic' => env('SOCIFUSION_AI_ANTHROPIC_MODEL', 'claude-sonnet-4-5'),
+        'groq' => env('SOCIFUSION_AI_GROQ_MODEL', 'llama-3.3-70b-versatile'),
     ],
+
+    /*
+    | When OpenAI is in the chain and OpenRouter is configured with an openai/* model,
+    | swap OpenRouter to this cover model so failover actually leaves the OpenAI fleet.
+    */
+    'openrouter_non_openai_cover' => env(
+        'SOCIFUSION_AI_OPENROUTER_COVER_MODEL',
+        'google/gemini-2.5-flash'
+    ),
 
     'link_code_ttl_minutes' => 15,
 

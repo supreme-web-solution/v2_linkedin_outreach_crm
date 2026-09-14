@@ -31,6 +31,7 @@ class AppServiceProvider extends ServiceProvider
         $this->configureHorizonForWindows();
         $this->configureHorizonSlackAlerts();
         $this->configureSeoDefaults();
+        $this->configureAiFailoverLogging();
     }
 
     /**
@@ -137,5 +138,27 @@ class AppServiceProvider extends ServiceProvider
             ->description(default: 'LinkedIn outreach, call scheduling, and lead management.')
             ->type('website')
             ->twitter();
+    }
+
+    /**
+     * Log Laravel AI provider hops (overload / rate limit / credits) before the next cover model.
+     */
+    protected function configureAiFailoverLogging(): void
+    {
+        if (! class_exists(\Laravel\Ai\Events\AgentFailedOver::class)) {
+            return;
+        }
+
+        \Illuminate\Support\Facades\Event::listen(
+            \Laravel\Ai\Events\AgentFailedOver::class,
+            function (\Laravel\Ai\Events\AgentFailedOver $event): void {
+                \Illuminate\Support\Facades\Log::info('[Soci] Laravel AI provider failover', [
+                    'from_provider' => $event->provider->name(),
+                    'from_model' => $event->model,
+                    'reason' => $event->exception->getMessage(),
+                    'agent' => $event->agent::class,
+                ]);
+            }
+        );
     }
 }
