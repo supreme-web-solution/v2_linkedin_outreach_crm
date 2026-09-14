@@ -185,8 +185,49 @@ class DiscoveryPlanExecutionTest extends TestCase
         $this->assertStringContainsString('found 10 of 20', (string) $message->content);
         $this->assertStringContainsString('short of target', (string) $message->content);
         $this->assertStringContainsString('linkedin', strtolower((string) $message->content));
-        $this->assertStringContainsString('Instagram discovery failed', (string) $message->content);
-        $this->assertStringNotContainsString('instagram + linkedin', strtolower((string) $message->content));
+        $this->assertStringContainsString('can take a few minutes', (string) $message->content);
+        $this->assertStringContainsString('Check back shortly', (string) $message->content);
+        $this->assertStringNotContainsString('Mindcase', (string) $message->content);
+        $this->assertStringNotContainsString('timed out', strtolower((string) $message->content));
+        $this->assertStringNotContainsString('Instagram discovery failed', (string) $message->content);
+    }
+
+    public function test_discovery_notifier_hides_channel_failures_when_target_met(): void
+    {
+        [$user, $org, $conversation] = $this->fixtures();
+
+        $run = AiWorkflowRun::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $org->id,
+            'conversation_id' => $conversation->id,
+            'status' => 'running',
+            'plan' => [
+                'required_outcome' => 'setup_only',
+                'constraints' => ['target_count' => 100],
+            ],
+            'result' => [],
+            'meta' => [
+                'cumulative_candidate_delta' => 100,
+                'platforms_searched' => ['linkedin'],
+                'platform_failures' => [
+                    'Instagram search did not finish in time — continuing on other channels where possible.',
+                ],
+            ],
+        ]);
+
+        app(WorkflowConversationNotifier::class)->notifyDiscoveryComplete($run);
+
+        $message = AiMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', 'assistant')
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($message);
+        $this->assertStringContainsString('found 100 of 100', (string) $message->content);
+        $this->assertStringNotContainsString('Instagram', (string) $message->content);
+        $this->assertStringNotContainsString('timed out', strtolower((string) $message->content));
+        $this->assertStringNotContainsString('Check back shortly', (string) $message->content);
     }
 
     /**

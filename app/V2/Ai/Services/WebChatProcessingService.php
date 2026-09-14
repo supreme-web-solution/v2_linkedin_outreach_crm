@@ -172,19 +172,17 @@ class WebChatProcessingService
     }
 
     /**
-     * Turn is complete when Soci has replied and no background workflow is still running.
+     * Turn is complete for the typing indicator once Soci has posted a real reply.
+     * Background workflows keep running, but must not hold the skeleton forever.
      */
     public function conversationTurnComplete(AiConversation $conversation, int $userMessageId): bool
     {
-        if (! $this->hasAssistantReplyAfter($conversation, $userMessageId)) {
-            return false;
-        }
-
-        return ! $this->hasRunningWorkflow($conversation);
+        return $this->hasAssistantReplyAfter($conversation, $userMessageId);
     }
 
     /**
-     * Resume polling after refresh when a workflow is still orchestrating in the background.
+     * Resume polling after refresh when a workflow is still orchestrating and Soci
+     * has not posted a progress reply yet.
      *
      * @return array{after_message_id:int, processing:array{active:bool, label:string}}|null
      */
@@ -207,6 +205,13 @@ class WebChatProcessingService
             ->first();
 
         if (! $lastUser) {
+            return null;
+        }
+
+        // Discovery/staging updates already landed in chat — don't keep the typing card spinning.
+        if ($this->hasAssistantReplyAfter($conversation, (int) $lastUser->id)) {
+            $this->clearAll($conversation);
+
             return null;
         }
 

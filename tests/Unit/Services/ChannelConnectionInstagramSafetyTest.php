@@ -15,7 +15,7 @@ class ChannelConnectionInstagramSafetyTest extends TestCase
     public function test_instagram_connect_starts_quiet_warmup(): void
     {
         Config::set('services.unipile_pacing.instagram_warmup_days', 7);
-        Config::set('services.unipile_pacing.instagram_quiet_hours_after_connect', 12);
+        Config::set('services.unipile_pacing.instagram_quiet_hours_after_connect', 1);
 
         $user = User::factory()->create();
         $account = app(ChannelConnectionService::class)->persistFromUnipilePayload($user->id, 'instagram', [
@@ -29,7 +29,8 @@ class ChannelConnectionInstagramSafetyTest extends TestCase
         $this->assertSame('active', $account->status);
         $this->assertNotEmpty($meta['quiet_until'] ?? null);
         $this->assertNotEmpty($meta['warmup_until'] ?? null);
-        $this->assertTrue(\Illuminate\Support\Carbon::parse($meta['quiet_until'])->isFuture());
+        $quiet = \Illuminate\Support\Carbon::parse($meta['quiet_until']);
+        $this->assertTrue($quiet->between(now()->addMinutes(50), now()->addHours(2)));
         $this->assertTrue(\Illuminate\Support\Carbon::parse($meta['warmup_until'])->greaterThan(now()->addDays(5)));
     }
 }

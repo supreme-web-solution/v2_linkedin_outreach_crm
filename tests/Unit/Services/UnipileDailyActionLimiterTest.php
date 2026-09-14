@@ -59,11 +59,37 @@ class UnipileDailyActionLimiterTest extends TestCase
         $this->assertTrue($this->limiter->hasQuota(2, UnipileDailyActionLimiter::ACTION_MESSAGES));
     }
 
-    public function test_resume_at_is_tomorrow(): void
+    public function test_resume_at_is_about_one_hour_not_midnight(): void
     {
+        Config::set('services.unipile_pacing.daily_resume_after_hours', 1);
+        Config::set('services.unipile_pacing.daily_resume_jitter_min_minutes', 5);
+        Config::set('services.unipile_pacing.daily_resume_jitter_max_minutes', 20);
+
         $resumeAt = $this->limiter->resumeAt();
 
-        $this->assertTrue($resumeAt->isTomorrow());
+        $this->assertTrue($resumeAt->between(
+            now()->addHour()->addMinutes(4),
+            now()->addHour()->addMinutes(25),
+        ));
+        $this->assertFalse($resumeAt->isTomorrow());
+    }
+
+    public function test_hold_expires_and_opens_a_fresh_window(): void
+    {
+        Config::set('services.unipile_pacing.daily_invites', 1);
+        Config::set('services.unipile_pacing.daily_resume_after_hours', 1);
+
+        $this->assertTrue($this->limiter->tryConsume(7, UnipileDailyActionLimiter::ACTION_INVITES));
+        $this->assertFalse($this->limiter->tryConsume(7, UnipileDailyActionLimiter::ACTION_INVITES));
+
+        // Simulate hold expiry (~1h later).
+        \Illuminate\Support\Facades\Cache::put(
+            'unipile_quota_hold:7:invites',
+            now()->subMinute()->getTimestamp(),
+            now()->addHour(),
+        );
+
+        $this->assertTrue($this->limiter->tryConsume(7, UnipileDailyActionLimiter::ACTION_INVITES));
     }
 
     public function test_instagram_limit_override_uses_warmup_cap(): void

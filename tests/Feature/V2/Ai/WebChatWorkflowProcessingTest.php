@@ -16,7 +16,7 @@ class WebChatWorkflowProcessingTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_turn_not_complete_while_workflow_still_running(): void
+    public function test_turn_completes_for_typing_even_while_workflow_still_running(): void
     {
         [$user, $org, $conversation] = $this->conversationWithUser();
 
@@ -30,8 +30,8 @@ class WebChatWorkflowProcessingTest extends TestCase
         AiMessage::query()->create([
             'conversation_id' => $conversation->id,
             'role' => 'assistant',
-            'content' => 'Discovery is in progress…',
-            'meta' => ['channel' => 'web'],
+            'content' => '✅ Workflow #10 — found 30 of 30 prospects.',
+            'meta' => ['channel' => 'web', 'source' => 'workflow_runtime'],
         ]);
 
         AiWorkflowRun::query()->create([
@@ -41,17 +41,18 @@ class WebChatWorkflowProcessingTest extends TestCase
             'status' => 'running',
             'required_outcome' => 'send_now',
             'plan' => ['required_outcome' => 'send_now'],
-            'meta' => [],
+            'meta' => ['discovery_notified' => true],
         ]);
 
         $processing = app(WebChatProcessingService::class);
         $processing->markPending($conversation, $userMessage->id);
+        $processing->update($conversation, 'workflow', 'Workflow #10 — working in the background…');
 
-        $this->assertFalse($processing->conversationTurnComplete($conversation, $userMessage->id));
+        $this->assertTrue($processing->conversationTurnComplete($conversation, $userMessage->id));
 
         $pending = $processing->pendingTurnSnapshot($conversation->fresh());
-        $this->assertNotNull($pending);
-        $this->assertSame($userMessage->id, $pending['after_message_id']);
+        $this->assertNull($pending);
+        $this->assertNull($processing->snapshot($conversation->fresh()));
     }
 
     public function test_turn_complete_when_workflow_waiting_for_launch(): void

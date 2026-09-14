@@ -6,11 +6,14 @@ use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * Per-user daily caps for Unipile actions (invites, new chats, messages).
+ * Per-user pacing caps for Unipile actions (invites, new chats, messages, IG DMs).
  *
  * Counters are atomic cache increments, so concurrent queue workers cannot
- * race past a cap. A cap of 0 or less means unlimited. When a cap is hit,
- * callers should defer the action to resumeAt() instead of failing it.
+ * race past a cap. A cap of 0 or less means unlimited.
+ *
+ * When a cap is hit, work pauses for daily_resume_after_hours (default ~1h),
+ * then the window resets so deferred steps can continue. LinkedIn/Instagram
+ * hard provider limits are still handled by UnipileTemporaryLimitGuard.
  */
 class UnipileDailyActionLimiter
 {
@@ -66,7 +69,7 @@ class UnipileDailyActionLimiter
 
     /**
      * Atomically reserve quota. Returns false (and leaves the counter
-     * untouched) when the daily cap would be exceeded.
+     * untouched) when the pacing cap would be exceeded.
      */
     public function tryConsume(int $userId, string $action, int $count = 1, ?int $limitOverride = null): bool
     {
@@ -75,12 +78,20 @@ class UnipileDailyActionLimiter
             return true;
         }
 
+        $this->releaseHoldIfExpired($userId, $action);
+
+        if ($this->isOnHold($userId, $action)) {
+            return false;
+        }
+
         $key = $this->key($userId, $action);
-        Cache::add($key, 0, now()->endOfDay()->addHours(2));
+        Cache::add($key, 0, now()->addHours($this->windowHours())->addHour());
         $new = (int) Cache::increment($key, $count);
 
         if ($new > $limit) {
             Cache::decrement($key, $count);
+            $resume = $this->resumeAt();
+            $this->putHold($userId, $action, $resume);
             app(OpsAlertService::class)->dailyLimitHit($userId, $action, $limit);
 
             return false;
@@ -91,6 +102,8 @@ class UnipileDailyActionLimiter
 
     public function used(int $userId, string $action): int
     {
+        $this->releaseHoldIfExpired($userId, $action);
+
         return max(0, (int) Cache::get($this->key($userId, $action), 0));
     }
 
@@ -120,6 +133,10 @@ class UnipileDailyActionLimiter
             return PHP_INT_MAX;
         }
 
+        if ($this->isOnHold($userId, $action)) {
+            return 0;
+        }
+
         return max(0, $limit - $this->used($userId, $action));
     }
 
@@ -129,12 +146,16 @@ class UnipileDailyActionLimiter
     }
 
     /**
-     * When deferred work should resume: shortly after midnight with random
-     * jitter, so a fleet of deferred jobs doesn't burst at 00:00 sharp.
+     * When deferred work should resume after a Soci pacing cap.
+     * Default ~1 hour (not calendar midnight) — same for LinkedIn + Instagram.
      */
     public function resumeAt(): CarbonInterface
     {
-        return now()->addDay()->startOfDay()->addMinutes(random_int(5, 50));
+        $hours = max(1, (int) config('services.unipile_pacing.daily_resume_after_hours', 1));
+        $jitterMin = max(0, (int) config('services.unipile_pacing.daily_resume_jitter_min_minutes', 5));
+        $jitterMax = max($jitterMin, (int) config('services.unipile_pacing.daily_resume_jitter_max_minutes', 20));
+
+        return now()->addHours($hours)->addMinutes(random_int($jitterMin, $jitterMax));
     }
 
     /**
@@ -151,8 +172,55 @@ class UnipileDailyActionLimiter
         ];
     }
 
+    private function windowHours(): int
+    {
+        return max(1, (int) config('services.unipile_pacing.daily_window_hours', 24));
+    }
+
     private function key(int $userId, string $action): string
     {
-        return 'unipile_quota:'.$userId.':'.$action.':'.now()->toDateString();
+        // Rolling window id — not calendar midnight — so resume timing matches the hold.
+        $bucket = (int) floor(now()->timestamp / max(3600, $this->windowHours() * 3600));
+
+        return 'unipile_quota:'.$userId.':'.$action.':w'.$bucket;
+    }
+
+    private function holdKey(int $userId, string $action): string
+    {
+        return 'unipile_quota_hold:'.$userId.':'.$action;
+    }
+
+    private function putHold(int $userId, string $action, CarbonInterface $resumeAt): void
+    {
+        Cache::put(
+            $this->holdKey($userId, $action),
+            $resumeAt->getTimestamp(),
+            $resumeAt->copy()->addHour(),
+        );
+    }
+
+    private function isOnHold(int $userId, string $action): bool
+    {
+        $until = Cache::get($this->holdKey($userId, $action));
+        if ($until === null) {
+            return false;
+        }
+
+        return now()->getTimestamp() < (int) $until;
+    }
+
+    private function releaseHoldIfExpired(int $userId, string $action): void
+    {
+        $until = Cache::get($this->holdKey($userId, $action));
+        if ($until === null) {
+            return;
+        }
+
+        if (now()->getTimestamp() < (int) $until) {
+            return;
+        }
+
+        Cache::forget($this->holdKey($userId, $action));
+        Cache::forget($this->key($userId, $action));
     }
 }

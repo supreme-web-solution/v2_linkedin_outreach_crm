@@ -57,8 +57,9 @@ class WorkflowConversationNotifier
         $discoveredThisRun = (int) ($result['discovered_this_run'] ?? $meta['cumulative_candidate_delta'] ?? $eligible);
         $requested = (int) ($result['requested'] ?? 0);
         $platforms = $this->formatPlatforms($meta);
-        $failures = $this->formatPlatformFailures($meta);
         $savedCount = $discoveredThisRun > 0 ? $discoveredThisRun : $eligible;
+        $targetMet = $requested > 0 && $savedCount >= $requested;
+        $failures = $this->formatPlatformFailures($meta, $targetMet);
 
         if ($outcome === 'find_only') {
             $savedLine = $requested > 0
@@ -111,10 +112,10 @@ class WorkflowConversationNotifier
         $requested = (int) ($plan['constraints']['target_count'] ?? $latestState['requested_quantity'] ?? 0);
         $discovered = max(0, (int) ($meta['cumulative_candidate_delta'] ?? 0));
         $platforms = $this->formatPlatforms($meta);
-        $failures = $this->formatPlatformFailures($meta);
         // Never flash "62 of 30" from duplicate list summing — cap the headline at the ask.
         $displayFound = $requested > 0 ? min($discovered, $requested) : $discovered;
         $short = $requested > 0 && $displayFound < $requested;
+        $failures = $this->formatPlatformFailures($meta, ! $short && $displayFound > 0);
 
         $this->notify($run, implode("\n", array_filter([
             $short
@@ -129,14 +130,11 @@ class WorkflowConversationNotifier
 
         $run->update(['meta' => array_merge($meta, ['discovery_notified' => true])]);
 
-        if ($run->conversation_id && $run->fresh()?->status === 'running') {
+        if ($run->conversation_id) {
             $conversation = \App\Models\AiConversation::query()->find($run->conversation_id);
             if ($conversation) {
-                app(WebChatProcessingService::class)->update(
-                    $conversation,
-                    'workflow',
-                    'Workflow #'.$run->id.' — staging outreach for Review & Launch…',
-                );
+                // Chat message is the update — clear the forever-spinning typing card.
+                app(WebChatProcessingService::class)->clearAll($conversation);
             }
         }
     }
@@ -306,7 +304,7 @@ class WorkflowConversationNotifier
     /**
      * @param  array<string, mixed>  $meta
      */
-    private function formatPlatformFailures(array $meta): ?string
+    private function formatPlatformFailures(array $meta, bool $targetMet = false): ?string
     {
         $failures = is_array($meta['platform_failures'] ?? null) ? $meta['platform_failures'] : [];
         $failures = array_values(array_filter(array_map(
@@ -318,7 +316,13 @@ class WorkflowConversationNotifier
             return null;
         }
 
-        return 'Note: '.implode(' ', $failures);
+        // Spillover already filled the ask — keep technical reasons in logs/meta, not chat.
+        if ($targetMet) {
+            return null;
+        }
+
+        // Never surface Mindcase job IDs / HTTP internals to the owner.
+        return 'LinkedIn and Instagram searches can take a few minutes. Check back shortly if more prospects are still coming in.';
     }
 
     public function notifyWaitingForApproval(AiWorkflowRun $run): void
@@ -330,7 +334,7 @@ class WorkflowConversationNotifier
         }
         $eligible = $this->prospectCountForDisplay($meta);
         $platforms = $this->formatPlatforms($meta);
-        $failures = $this->formatPlatformFailures($meta);
+        $failures = $this->formatPlatformFailures($meta, $eligible > 0);
 
         $launchLines = [];
         foreach ($approvalIds as $id) {
@@ -369,8 +373,8 @@ class WorkflowConversationNotifier
     {
         $approvalId = (int) ($result['approval_id'] ?? $meta['approval_id'] ?? 0);
         $platforms = $this->formatPlatforms($meta);
-        $failures = $this->formatPlatformFailures($meta);
         $eligible = $this->prospectCountForDisplay($meta);
+        $failures = $this->formatPlatformFailures($meta, $eligible > 0);
 
         $content = implode("\n", array_filter([
             "✅ Workflow #{$run->id} — campaign staged.",

@@ -131,6 +131,9 @@ class WorkspaceContextService
             ?? Arr::get($icp, 'geography')
             ?? ($profile['geography'] ?? '')
         ));
+        if (preg_match('/^(global|worldwide|anywhere|all|n\/?a)$/i', $geography)) {
+            $geography = '';
+        }
 
         $audience = $this->preferSearchAudience([
             $handoff,

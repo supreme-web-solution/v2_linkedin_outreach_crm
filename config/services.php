@@ -101,7 +101,8 @@ return [
     /*
     | Per-user daily action caps + pacing to stay within Unipile / LinkedIn
     | conventional-usage limits. Caps of 0 or less mean "unlimited".
-    | When a cap is reached, queued actions auto-defer to the next day.
+    | When a cap is reached, queued actions auto-defer ~1 hour (not midnight),
+    | then open a fresh pacing window. Provider hard-limits still cool down separately.
     */
     'unipile_pacing' => [
         'daily_invites' => (int) env('UNIPILE_DAILY_INVITE_CAP', 40),
@@ -119,8 +120,15 @@ return [
         'instagram_lead_stagger_jitter_seconds' => (int) env('UNIPILE_INSTAGRAM_LEAD_STAGGER_JITTER_SECONDS', 90),
         'instagram_handle_retry_min_minutes' => (int) env('UNIPILE_INSTAGRAM_HANDLE_RETRY_MIN_MINUTES', 20),
         'instagram_handle_retry_max_minutes' => (int) env('UNIPILE_INSTAGRAM_HANDLE_RETRY_MAX_MINUTES', 35),
+        // When a Soci pacing cap is reached, pause ~1h then open a fresh window
+        // (LinkedIn/Instagram provider hard-limits still use TemporaryLimitGuard).
+        'daily_resume_after_hours' => (int) env('UNIPILE_DAILY_RESUME_AFTER_HOURS', 1),
+        'daily_resume_jitter_min_minutes' => (int) env('UNIPILE_DAILY_RESUME_JITTER_MIN_MINUTES', 5),
+        'daily_resume_jitter_max_minutes' => (int) env('UNIPILE_DAILY_RESUME_JITTER_MAX_MINUTES', 20),
+        'daily_window_hours' => (int) env('UNIPILE_DAILY_WINDOW_HOURS', 24),
         'instagram_warmup_days' => (int) env('UNIPILE_INSTAGRAM_WARMUP_DAYS', 7),
-        'instagram_quiet_hours_after_connect' => (int) env('UNIPILE_INSTAGRAM_QUIET_HOURS_AFTER_CONNECT', 12),
+        // Quiet period after connecting Instagram — keep short so owners aren't blocked for half a day.
+        'instagram_quiet_hours_after_connect' => (int) env('UNIPILE_INSTAGRAM_QUIET_HOURS_AFTER_CONNECT', 1),
         // Bulk "start all chats": seconds between each queued chat + random jitter
         'chat_launch_stagger_seconds' => (int) env('UNIPILE_CHAT_LAUNCH_STAGGER_SECONDS', 8),
         'chat_launch_jitter_seconds' => (int) env('UNIPILE_CHAT_LAUNCH_JITTER_SECONDS', 7),
@@ -202,9 +210,13 @@ return [
     'mindcase' => [
         'api_key' => env('MINDCASE_API_KEY'),
         'base_url' => env('MINDCASE_BASE_URL', 'https://api.mindcase.co'),
-        'timeout' => (int) env('MINDCASE_TIMEOUT', 120),
+        // HTTP ?wait=true timeout; also floors scaled budgets (seconds).
+        'timeout' => (int) env('MINDCASE_TIMEOUT', 300),
         'poll_seconds' => (int) env('MINDCASE_POLL_SECONDS', 2),
-        'max_poll_attempts' => (int) env('MINDCASE_MAX_POLL_ATTEMPTS', 45),
+        // Floor for poll loops; actual attempts scale with maxResults (up to 100).
+        'max_poll_attempts' => (int) env('MINDCASE_MAX_POLL_ATTEMPTS', 90),
+        // Hard ceiling for one Instagram search (wait/poll). Keep < Horizon job timeout (~900s).
+        'poll_timeout_seconds' => (int) env('MINDCASE_POLL_TIMEOUT_SECONDS', 600),
     ],
 
 ];

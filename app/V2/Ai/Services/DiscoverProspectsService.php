@@ -837,7 +837,12 @@ class DiscoverProspectsService
             }
             if (! empty($result['search_failed'])) {
                 $reason = trim((string) ($result['failure_reason'] ?? 'no profiles'));
-                $notes[] = ucfirst((string) $channel).' discovery failed: '.$reason;
+                Log::warning('[Soci] Discovery channel failed (owner sees soft copy only)', [
+                    'channel' => $channel,
+                    'reason' => $reason,
+                ]);
+                $notes[] = ucfirst((string) $channel)
+                    .' search did not finish in time — continuing on other channels where possible.';
             }
         }
 

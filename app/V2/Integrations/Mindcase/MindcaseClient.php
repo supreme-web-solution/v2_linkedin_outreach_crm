@@ -27,6 +27,46 @@ class MindcaseClient
     }
 
     /**
+     * HTTP wait timeout for ?wait=true — sized for up to 100 profiles.
+     * Production: 50-profile pulls exceeded ~2–3 min; 100 needs more headroom.
+     */
+    public function httpTimeoutSeconds(int $maxResults): int
+    {
+        $maxResults = max(1, min($this->maxResultsCap(), $maxResults));
+        $configured = max(60, (int) config('services.mindcase.timeout', 300));
+        // 100 → 120 + 500 = 620, capped at poll budget below.
+        $scaled = 120 + ($maxResults * 5);
+
+        return max($configured, min($this->maxWaitBudgetSeconds(), $scaled));
+    }
+
+    /**
+     * Async poll attempt count — sized so 100-profile jobs can finish.
+     * Default sleep 2s × 300 attempts ≈ 10 minutes.
+     */
+    public function pollAttempts(int $maxResults): int
+    {
+        $maxResults = max(1, min($this->maxResultsCap(), $maxResults));
+        $base = max(1, (int) config('services.mindcase.max_poll_attempts', 90));
+        $sleep = max(1, (int) config('services.mindcase.poll_seconds', 2));
+        $budgetSeconds = $this->maxWaitBudgetSeconds();
+        $fromBudget = (int) ceil($budgetSeconds / $sleep);
+        // 100 → 100 * 3 = 300 attempts @ 2s = 600s
+        $scaled = (int) ceil($maxResults * 3);
+
+        return max($base, min($fromBudget, max($scaled, 90)));
+    }
+
+    /**
+     * Hard ceiling for a single Mindcase Instagram search (wait + poll).
+     * Keep under Horizon/workflow job timeouts (typically 900s).
+     */
+    public function maxWaitBudgetSeconds(): int
+    {
+        return max(300, min(720, (int) config('services.mindcase.poll_timeout_seconds', 600)));
+    }
+
+    /**
      * Search or look up Instagram profiles.
      *
      * @param  list<string>  $usernames
@@ -57,10 +97,7 @@ class MindcaseClient
         }
 
         $base = $this->url('/v1/data/instagram/profiles/run');
-        $timeout = max(
-            (int) config('services.mindcase.timeout', 120),
-            min(300, 60 + ($maxResults * 2)),
-        );
+        $timeout = $this->httpTimeoutSeconds($maxResults);
         $response = Http::withToken((string) config('services.mindcase.api_key'))
             ->connectTimeout(min(30, $timeout))
             ->timeout($timeout)
@@ -74,6 +111,8 @@ class MindcaseClient
             Log::warning('[Mindcase] Instagram profiles failed', [
                 'status' => $response->status(),
                 'body' => Str::limit($response->body(), 400),
+                'max_results' => $maxResults,
+                'http_timeout' => $timeout,
             ]);
             throw new RuntimeException(
                 'Mindcase Instagram lookup failed (HTTP '.$response->status().'): '
@@ -100,8 +139,15 @@ class MindcaseClient
     private function pollJobResults(string $jobId, int $maxResults = 25, ?callable $heartbeat = null): array
     {
         $sleep = max(1, (int) config('services.mindcase.poll_seconds', 2));
-        $baseAttempts = max(1, (int) config('services.mindcase.max_poll_attempts', 45));
-        $attempts = min(max($baseAttempts, (int) ceil($maxResults * 1.5)), 60);
+        $attempts = $this->pollAttempts($maxResults);
+
+        Log::info('[Mindcase] Polling Instagram job', [
+            'job_id' => $jobId,
+            'max_results' => $maxResults,
+            'attempts' => $attempts,
+            'poll_seconds' => $sleep,
+            'budget_seconds' => $attempts * $sleep,
+        ]);
 
         for ($i = 0; $i < $attempts; $i++) {
             if ($heartbeat !== null) {
