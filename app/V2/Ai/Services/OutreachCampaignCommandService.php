@@ -53,6 +53,21 @@ class OutreachCampaignCommandService
             ];
         }
 
+        $live = 0;
+        foreach ($campaign->outreachLists as $list) {
+            $live += app(ProspectAudienceResolverService::class)->liveLeadCount(
+                $user,
+                (string) $list->list_src,
+                (string) $list->list_hash,
+            );
+        }
+        if ($live < 1) {
+            return [
+                'ok' => false,
+                'message' => "Campaign #{$campaignId} has no people on its list yet. Find prospects first, then launch.",
+            ];
+        }
+
         $this->queueLeadSyncAndRun($campaign, $organizationId);
 
         return [

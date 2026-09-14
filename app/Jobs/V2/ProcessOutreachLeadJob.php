@@ -272,19 +272,20 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
         if ($status === 'deferred') {
             $reason = (string) ($result['payload']['reason'] ?? 'daily_limit');
+            $resolveChannel = (string) ($node['channel'] ?? 'instagram');
             $runAt = $result['next_run_at'] ?? (
                 str_contains($reason, 'handle_resolve')
-                    ? now()->addMinutes(2)
+                    ? app(\App\V2\Services\ChannelPacingService::class)->handleResolveRetryAt($resolveChannel)
                     : now()->addDay()->startOfDay()->addMinutes(10)
             );
 
             $channelState = is_array($progress->channel_state) ? $progress->channel_state : [];
             if (str_contains($reason, 'handle_resolve')) {
-                $resolveKey = (string) ($node['channel'] ?? 'instagram').'_resolve_attempts';
+                $resolveKey = $resolveChannel.'_resolve_attempts';
                 $attempts = (int) ($channelState[$resolveKey] ?? 0) + 1;
                 $channelState[$resolveKey] = $attempts;
 
-                if ($attempts <= 3) {
+                if ($attempts <= 3 && app(\App\V2\Services\ChannelPacingService::class)->shouldBulkResolveHandles($resolveChannel)) {
                     app(\App\V2\Outreach\OutreachContactEnrichmentService::class)
                         ->resolveHandlesForCampaign($campaign, 50);
                 }
@@ -318,6 +319,8 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
             $deferMessage = match (true) {
                 str_contains($reason, 'handle_resolve') => "Resolving {$platform} contact for {$lead->full_name} — \"{$nodeLabel}\" retries ".$runAt->diffForHumans().'.',
+                str_contains($reason, 'instagram_quiet') => "Instagram just connected — waiting before DMs so login does not look automated. \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                str_contains($reason, 'hourly_instagram') => "Instagram hourly pace — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
                 str_contains($reason, 'provider_outage') => "{$platform} provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
                 $isEscalated => "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).',
                 $isTemp => "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',

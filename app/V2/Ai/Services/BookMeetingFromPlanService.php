@@ -4,6 +4,7 @@ namespace App\V2\Ai\Services;
 
 use App\Models\AiActionApproval;
 use App\Models\User;
+use App\Models\V2Call;
 use App\Models\V2Conversation;
 use App\V2\Ai\Support\RecipientFacingCopyGuard;
 use App\V2\Services\UnifiedInboxReplyService;
@@ -46,6 +47,13 @@ class BookMeetingFromPlanService
             ->firstOrFail();
 
         $sent = app(UnifiedInboxReplyService::class)->sendApprovedReply($user, $conversation, $draft);
+
+        if ($callId > 0) {
+            $call = V2Call::query()->where('user_id', $user->id)->whereKey($callId)->first();
+            if ($call && ! in_array($call->status, ['booked', 'completed', 'lost', 'failed'], true)) {
+                $call->forceFill(['status' => 'scheduling'])->save();
+            }
+        }
 
         $approval->update([
             'result' => [

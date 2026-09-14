@@ -118,7 +118,7 @@ abstract class GatedTool implements Tool
                     'pause_outreach_campaign' => 'campaign_paused',
                     'send_inbox_reply' => 'inbox_reply_sent',
                     'book_meeting' => 'meeting_booked',
-                    'draft_campaign_plan', 'propose_strategy' => 'campaign_staged',
+                    'draft_campaign_plan', 'draft_cold_outbound', 'propose_strategy' => 'campaign_staged',
                     default => $actionClass.'_action',
                 };
                 $turnPlan = app(TurnPlanContext::class)->get();

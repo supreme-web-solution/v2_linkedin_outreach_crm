@@ -74,6 +74,7 @@ const props = defineProps<{
     recentActivity: Array<{ module: string; identifier: string; stat: number; created_at: string }>;
     organization: { id: number; name: string } | null;
     hasOrg: boolean;
+    canDiscover?: boolean;
     onboarding: {
         show: boolean;
         completed: boolean;
@@ -312,7 +313,7 @@ async function letAiExecute(): Promise<void> {
                         </h2>
                         <p class="truncate text-xs text-muted-foreground">
                             {{ funnelHighlight }}
-                            <span v-if="acquisitionFunnel.summary.qualified_per_100_targeted > 0">
+                            <span v-if="acquisitionFunnel.summary.targeted > 0">
                                 · {{ acquisitionFunnel.summary.qualified_per_100_targeted }}/100 qualified
                             </span>
                         </p>
@@ -338,11 +339,16 @@ async function letAiExecute(): Promise<void> {
 
             <div v-if="!funnelHasActivity" class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border/70 bg-muted/20 px-3 py-3">
                 <p class="text-xs text-muted-foreground">
-                    Target → contact → reply → qualify → demo → win. Tell Soci to find customers.
+                    <template v-if="canDiscover === false">
+                        You cannot find people until LinkedIn is connected. Open Integrations, then Launch your first experiment.
+                    </template>
+                    <template v-else>
+                        Target → contact → reply → qualify → demo → win. Your first experiment is in Command Center — Launch when ready.
+                    </template>
                 </p>
-                <Link href="/ai-employee?starter=Find%20my%20ideal%20customers%20and%20start%20outreach">
+                <Link :href="canDiscover === false ? '/integrations' : '/ai-employee'">
                     <Button size="sm" variant="outline" class="h-8 rounded-full px-3 text-xs">
-                        Start with Soci
+                        {{ canDiscover === false ? 'Connect LinkedIn' : 'Open Command Center' }}
                         <ArrowRight class="ml-1 size-3" />
                     </Button>
                 </Link>

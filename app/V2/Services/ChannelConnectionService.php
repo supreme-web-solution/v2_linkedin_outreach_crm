@@ -63,6 +63,8 @@ class ChannelConnectionService
                 'email' => $account?->meta['email'] ?? null,
                 'account_name' => $account?->meta['account_name'] ?? null,
                 'disconnect_reason' => $account?->meta['disconnect_reason'] ?? null,
+                'quiet_until' => $account?->meta['quiet_until'] ?? null,
+                'warmup_until' => $account?->meta['warmup_until'] ?? null,
                 'integration_account_id' => $account?->id,
                 'reconnect_url' => '/integrations',
             ];
@@ -117,6 +119,8 @@ class ChannelConnectionService
             ->first();
 
         $context = $this->appendHostedAuthReconnect($context, $existing, $channelKey);
+        $context = app(HostedAuthLocationService::class)
+            ->applyToContext($context, $user, $request, $hostedProvider);
 
         return $this->providerManager->account(
             $this->providerManager->defaultProvider()
@@ -182,6 +186,26 @@ class ChannelConnectionService
             ->first();
 
         $previousUnipileId = $existing?->getUnipileAccountId();
+        $existingMeta = is_array($existing?->meta) ? $existing->meta : [];
+        $meta = array_merge($existingMeta, [
+            'unipile_account_id' => $unipileId,
+            'unipile_type' => $providerType,
+            'connection_method' => 'hosted',
+            'connected_at' => now()->toIso8601String(),
+            'live_status' => 'connected',
+            'email' => $email,
+            'account_name' => $payload['name'] ?? null,
+            'channel_key' => $channelKey,
+        ]);
+
+        if ($channelKey === 'instagram') {
+            $warmupDays = max(1, (int) config('services.unipile_pacing.instagram_warmup_days', 7));
+            $quietHours = max(0, (int) config('services.unipile_pacing.instagram_quiet_hours_after_connect', 12));
+            $meta['warmup_until'] = now()->addDays($warmupDays)->toIso8601String();
+            $meta['quiet_until'] = $quietHours > 0
+                ? now()->addHours($quietHours)->toIso8601String()
+                : null;
+        }
 
         $account = V2IntegrationAccount::query()->updateOrCreate(
             [
@@ -191,16 +215,7 @@ class ChannelConnectionService
             [
                 'provider_account_id' => $unipileId !== '' ? $unipileId : 'pending',
                 'status' => 'active',
-                'meta' => [
-                    'unipile_account_id' => $unipileId,
-                    'unipile_type' => $providerType,
-                    'connection_method' => 'hosted',
-                    'connected_at' => now()->toIso8601String(),
-                    'live_status' => 'connected',
-                    'email' => $email,
-                    'account_name' => $payload['name'] ?? null,
-                    'channel_key' => $channelKey,
-                ],
+                'meta' => $meta,
                 'last_synced_at' => now(),
             ]
         );

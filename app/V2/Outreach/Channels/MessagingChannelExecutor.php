@@ -57,7 +57,8 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
                 return [
                     'status' => 'deferred',
                     'error_message' => "Resolving {$label} handle @{$handle} before send.",
-                    'next_run_at' => now()->addMinutes(2),
+                    'next_run_at' => app(\App\V2\Services\ChannelPacingService::class)
+                        ->handleResolveRetryAt($this->channelKey),
                     'payload' => [
                         'reason' => 'handle_resolve_pending',
                         'channel' => $this->channelKey,

@@ -132,7 +132,7 @@ class AttentionQueueService
                 'recommended_action' => $classification['recommended_action'],
                 'evidence' => $classification['evidence'],
                 'is_unread' => (bool) ($unreadMap[$conversation->id] ?? false),
-                'draft_hint' => 'Use classify_reply, draft_reply, book_meeting, or set_next_best_action with conversation_id '.$conversation->id,
+                'draft_hint' => $this->draftHintFor($classification, $conversation->id),
                 'inbox_url' => url('/inbox/'.$conversation->provider.'/'.$conversation->id),
                 'last_message_at' => $conversation->last_message_at?->toIso8601String(),
             ];
@@ -210,6 +210,22 @@ class AttentionQueueService
             'summary' => $summary,
             'inbox_brief' => $inboxBrief,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $classification
+     */
+    private function draftHintFor(array $classification, int $conversationId): string
+    {
+        $intent = (string) ($classification['intent'] ?? '');
+
+        return match ($intent) {
+            'meeting_request' => 'Use book_meeting with conversation_id '.$conversationId.' (last card).',
+            'wants_watch' => 'Use draft_reply with conversation_id '.$conversationId.' — include the webinar URL only.',
+            'wants_info' => 'Use draft_reply with conversation_id '.$conversationId.' — include the sales page URL only.',
+            'qualifying_answer' => 'Use draft_reply with conversation_id '.$conversationId.' — one qualifying question, no links.',
+            default => 'Use classify_reply, draft_reply, book_meeting, or set_next_best_action with conversation_id '.$conversationId,
+        };
     }
 
     /**

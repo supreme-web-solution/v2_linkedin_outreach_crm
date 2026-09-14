@@ -78,7 +78,10 @@ const tooltipText = computed(() => {
     }
 
     if (props.quota && !props.quota.unlimited && props.quota.limit > 0) {
-        return `SociFusion caps LinkedIn messages at ${props.quota.limit}/day (${props.quota.used} used, ${props.quota.remaining} left). Anyone past the cap stays queued for the next day — not lost. ${platformLabel.value} may also pause sending; we retry when it’s safe.`;
+        const pace = props.channel === 'instagram'
+            ? 'Instagram DMs stay slow on purpose (hours between people, a small daily cap) so Meta does not treat the account as automated.'
+            : `${platformLabel.value} may also pause sending; we retry when it’s safe.`;
+        return `SociFusion caps ${platformLabel.value} at ${props.quota.limit}/day (${props.quota.used} used, ${props.quota.remaining} left). Anyone past the cap stays queued — not lost. ${pace}`;
     }
 
     return `${platformLabel.value} limits how fast messages and actions can go out. When that happens we pause and retry later — that is ${platformLabel.value}’s rule.`;

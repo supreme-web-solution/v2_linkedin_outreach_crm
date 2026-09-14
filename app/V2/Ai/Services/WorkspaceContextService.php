@@ -37,6 +37,12 @@ class WorkspaceContextService
             || trim((string) ($assets['webinar_url'] ?? '')) !== '';
     }
 
+    public function hasLaunchConversionAsset(User $user, AiEmployeeSetting $settings): bool
+    {
+        return $this->conversionAssetsComplete($settings)
+            || $this->resolveMeetingLink($user, $settings) !== null;
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -97,26 +103,90 @@ class WorkspaceContextService
     }
 
     /**
-     * Merge saved ICP into a discovery query when the user prompt is generic.
+     * Audience search string from this turn's interpreter + onboarding ICP.
+     * Uses the user's words — no canned titles or industries.
+     *
+     * @param  array<string, mixed>  $plan
+     * @return array{query:string,title:?string,geography:?string,audience_name:string}
      */
-    public function enrichDiscoveryQuery(User $user, int $organizationId, string $query): string
+    public function discoverySearchHints(User $user, int $organizationId, array $plan = []): array
     {
-        $query = trim($query);
         $settings = $this->settingsService->for($user, $organizationId);
         $icp = $this->storedIcp($settings);
-        if ($icp === []) {
-            return $query;
+        $profile = $this->businessProfile($settings);
+        $semantic = is_array($plan['semantic'] ?? null) ? $plan['semantic'] : [];
+        $objective = is_array($plan['objective'] ?? null) ? $plan['objective'] : [];
+        $constraints = is_array($plan['constraints'] ?? null) ? $plan['constraints'] : [];
+
+        $handoff = trim((string) ($semantic['handoff_query'] ?? $plan['handoff_query'] ?? ''));
+        $segment = trim((string) ($objective['segment'] ?? $semantic['target_segment'] ?? ''));
+        $searchQuery = trim((string) Arr::get($icp, 'search_query', ''));
+        $searchTitles = is_array($icp['search_titles'] ?? null) ? $icp['search_titles'] : [];
+        $decisionMaker = trim((string) Arr::get($icp, 'decision_maker', ''));
+        $industry = trim((string) Arr::get($icp, 'industry', ''));
+        $summary = trim((string) Arr::get($icp, 'summary', Arr::get($icp, 'who_we_sell_to', '')));
+        $geography = trim((string) (
+            $semantic['geography']
+            ?? $constraints['geography']
+            ?? Arr::get($icp, 'geography')
+            ?? ($profile['geography'] ?? '')
+        ));
+
+        $audience = $handoff !== ''
+            ? $handoff
+            : ($segment !== '' ? $segment : ($searchQuery !== '' ? $searchQuery : trim(implode(' ', array_filter([$decisionMaker, $industry, $summary])))));
+
+        $titleFromIcp = trim((string) ($searchTitles[0] ?? ''));
+        $titleSource = $segment !== '' ? $segment : ($titleFromIcp !== '' ? $titleFromIcp : $decisionMaker);
+
+        return [
+            'query' => Str::limit($audience, 200, ''),
+            'title' => $this->firstAudiencePhrase($titleSource),
+            'geography' => $geography !== '' ? $geography : null,
+            'audience_name' => Str::limit(
+                $segment !== '' ? $segment : ($decisionMaker !== '' ? $decisionMaker : ($searchQuery !== '' ? $searchQuery : 'LinkedIn Search')),
+                80,
+                '',
+            ),
+        ];
+    }
+
+    /**
+     * First clause of whatever audience the user/LLM wrote — not a product title list.
+     */
+    private function firstAudiencePhrase(string $text): ?string
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return null;
         }
 
-        $parts = array_filter([
-            $query !== '' ? $query : null,
-            Arr::get($icp, 'summary'),
-            Arr::get($icp, 'decision_maker') ? 'Decision maker: '.Arr::get($icp, 'decision_maker') : null,
-            Arr::get($icp, 'industry') ? 'Industry: '.Arr::get($icp, 'industry') : null,
-            Arr::get($icp, 'likely_pain') ? 'Pain: '.Arr::get($icp, 'likely_pain') : null,
-        ], fn ($v) => is_string($v) && trim($v) !== '');
+        $parts = preg_split('/\s*(?:,|\/| and )\s*/i', $text, 2) ?: [];
+        $chunk = trim((string) ($parts[0] ?? ''));
+        $chunk = trim($chunk, " \t\n\r.-");
+        if ($chunk === '' || strlen($chunk) > 60) {
+            return null;
+        }
 
-        return Str::limit(implode('. ', $parts), 900);
+        return $chunk;
+    }
+
+    /**
+     * Prefer interpreter/onboarding audience words over a long strategy essay.
+     */
+    public function enrichDiscoveryQuery(User $user, int $organizationId, string $query, array $plan = []): string
+    {
+        $query = trim($query);
+        if (app(UserTurnIntentService::class)->isProceedWithTargetCount($query)) {
+            $query = '';
+        }
+
+        $hints = $this->discoverySearchHints($user, $organizationId, $plan);
+        if ($hints['query'] !== '') {
+            return $hints['query'];
+        }
+
+        return $query;
     }
 
     /**
@@ -157,13 +227,54 @@ class WorkspaceContextService
         }
 
         if ($icp !== []) {
+            if ($who = trim((string) Arr::get($icp, 'who_we_sell_to', Arr::get($icp, 'summary', '')))) {
+                $lines[] = 'ICP (who we sell to): '.$who;
+            }
             $icpLine = collect([
                 Arr::get($icp, 'industry'),
                 Arr::get($icp, 'decision_maker'),
                 Arr::get($icp, 'likely_pain'),
             ])->filter()->implode(' · ');
             if ($icpLine !== '') {
-                $lines[] = 'ICP: '.$icpLine;
+                $lines[] = 'ICP buyers / pain: '.$icpLine;
+            }
+            if ($search = trim((string) Arr::get($icp, 'search_query', ''))) {
+                $lines[] = 'ICP search: '.$search;
+            }
+            if ($angle = trim((string) Arr::get($icp, 'outreach_angle', ''))) {
+                $lines[] = 'ICP first-message angle: '.$angle;
+            }
+            if ($outcome = trim((string) Arr::get($icp, 'primary_outcome', ''))) {
+                $lines[] = 'ICP win: '.$outcome;
+            }
+        }
+
+        $copyPrefs = app(OutboundCopyPrefsService::class)->for($settings);
+        if ($tone = trim((string) ($copyPrefs['tone'] ?? ''))) {
+            $lines[] = 'Owner tone preference: '.$tone;
+        }
+        if ($angle = trim((string) ($copyPrefs['preferred_angle'] ?? ''))) {
+            $lines[] = 'Preferred offer angle: '.$angle;
+        }
+        if ($style = trim((string) ($copyPrefs['style_notes'] ?? ''))) {
+            $lines[] = 'Style notes: '.Str::limit($style, 400);
+        }
+        if (($copyPrefs['do_not_say'] ?? []) !== []) {
+            $lines[] = 'Do not say: '.implode('; ', array_slice($copyPrefs['do_not_say'], 0, 8));
+        }
+        foreach (array_slice($copyPrefs['proof_points'] ?? [], 0, 3) as $i => $proof) {
+            if (! is_array($proof)) {
+                continue;
+            }
+            $bits = array_filter([
+                $proof['title'] ?? null,
+                $proof['outcome'] ?? null,
+                $proof['industry'] ?? null,
+                $proof['integration'] ?? null,
+                $proof['summary'] ?? null,
+            ]);
+            if ($bits !== []) {
+                $lines[] = 'Proof '.($i + 1).': '.Str::limit(implode(' — ', $bits), 220);
             }
         }
 
@@ -176,9 +287,9 @@ class WorkspaceContextService
         }
 
         if ($meeting === 'app_booking') {
-            $lines[] = 'Meeting link: use book_meeting tool when prospect is qualified but page/webinar did not convert (last card).';
+            $lines[] = 'Meeting: use book_meeting when they ask to talk, or when the page/webinar did not convert (last card). App booking is available.';
         } elseif (is_string($meeting) && $meeting !== '') {
-            $lines[] = 'Meeting link (last card): '.$meeting;
+            $lines[] = 'Meeting (last card — book_meeting or include this URL): '.$meeting;
         }
 
         if ($lines === []) {
@@ -216,25 +327,32 @@ class WorkspaceContextService
         $meeting = $this->resolveMeetingLink($user, $settings);
 
         $lines = [
-            'Conversion ladder (only after genuine interest — never in the first reply):',
-            '1. Qualify with questions about their situation. No pitch, no links yet.',
+            'Conversion ladder (earned pitch — Gong/Braun style):',
+            '1. First reply / qualifying answer (referrals, outbound, inbound) → ONE question. No product dump, no links, no calendar.',
+            '2. Permission only after they want a more predictable pipeline, ask for details, or ask how it works.',
         ];
 
-        if ($sales !== '') {
-            $lines[] = '2. If they want to read or discover more → share sales page: '.$sales;
-        }
-
-        if ($webinar !== '') {
-            $lines[] = '3. If they want to watch or see how it works → share webinar: '.$webinar;
+        if ($sales !== '' && $webinar !== '') {
+            $lines[] = '3. Wants to read / tell-me-more / pricing → sales page: '.$sales;
+            $lines[] = '4. Wants to watch / webinar / demo → webinar: '.$webinar;
+        } elseif ($sales !== '') {
+            $lines[] = '3. Only sales page is configured — use it for both “tell me more” and “show me how”: '.$sales;
+        } elseif ($webinar !== '') {
+            $lines[] = '3. Only webinar is configured — use it for both “tell me more” and “show me how”: '.$webinar;
+        } else {
+            $lines[] = '3. No sales page or webinar configured — skip the asset step.';
         }
 
         if ($meeting !== null) {
-            $lines[] = '4. Last card — if still not convinced after page/webinar → offer a meeting'.($meeting === 'app_booking'
-                ? ' (use a booking link when appropriate)'
-                : ': '.$meeting);
+            $lines[] = 'Last card — they ask to meet, OR they go quiet / unsure / “I’ll think about it” after the page or webinar → book_meeting and put the link in the message'
+                .($meeting === 'app_booking'
+                    ? ' (app booking page or stored calendar).'
+                    : ': '.$meeting);
+        } else {
+            $lines[] = 'Last card — no meeting link configured. If they want to talk or cool off after an asset, propose two time windows.';
         }
 
-        $lines[] = 'Never send sales page, webinar, or meeting link in the opening message. Earn the reply first.';
+        $lines[] = 'If only one of sales page or webinar is filled, always use that one. Never send sales page, webinar, and meeting in the same message. Never put any of them in the opener.';
 
         return implode("\n", $lines);
     }
@@ -255,6 +373,9 @@ class WorkspaceContextService
         }
 
         if ($icp !== []) {
+            if ($who = trim((string) Arr::get($icp, 'who_we_sell_to', ''))) {
+                $lines[] = 'Who we sell to: '.$who;
+            }
             $icpParts = array_filter([
                 Arr::get($icp, 'industry') ? 'Industry: '.Arr::get($icp, 'industry') : null,
                 Arr::get($icp, 'decision_maker') ? 'Buyer: '.Arr::get($icp, 'decision_maker') : null,
@@ -262,6 +383,9 @@ class WorkspaceContextService
             ]);
             if ($icpParts !== []) {
                 $lines[] = implode(' · ', $icpParts);
+            }
+            if ($angle = trim((string) Arr::get($icp, 'outreach_angle', ''))) {
+                $lines[] = 'First-message angle: '.$angle;
             }
         }
 

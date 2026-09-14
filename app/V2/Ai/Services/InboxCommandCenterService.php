@@ -107,6 +107,9 @@ class InboxCommandCenterService
             'agent_notes' => $notes !== '' ? $notes : null,
             'inbox_url' => $draftData['inbox_url'],
             'status' => 'awaiting_review',
+            'conversion_action' => $draftData['conversion_action'] ?? null,
+            'conversion_asset_url' => $draftData['conversion_asset_url'] ?? null,
+            'inbox_intel' => is_array($draftData['inbox_intel'] ?? null) ? $draftData['inbox_intel'] : null,
         ];
 
         $autonomy = AiAutonomyLevel::tryFrom((int) $settings->autonomy_level) ?? AiAutonomyLevel::Assisted;
@@ -205,7 +208,11 @@ class InboxCommandCenterService
     public function updateDraftText(AiActionApproval $approval, string $draftText): AiActionApproval
     {
         $payload = $approval->payload ?? [];
+        $original = trim((string) ($payload['draft_text'] ?? $payload['message'] ?? ''));
         $payload['draft_text'] = trim($draftText);
+        if ($original !== '' && $original !== trim($draftText)) {
+            $payload['draft_edited_by_owner'] = true;
+        }
         $approval->update(['payload' => $payload]);
 
         return $approval->refresh();

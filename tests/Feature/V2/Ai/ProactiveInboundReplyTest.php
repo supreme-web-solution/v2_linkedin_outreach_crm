@@ -3,7 +3,9 @@
 namespace Tests\Feature\V2\Ai;
 
 use App\Jobs\V2\ProactiveInboundReplyJob;
+use App\Models\AiActionApproval;
 use App\Models\AiConversation;
+use App\Models\AiEmployeeSetting;
 use App\Models\AiMessage;
 use App\Models\User;
 use App\Models\V2Conversation;
@@ -104,6 +106,56 @@ class ProactiveInboundReplyTest extends TestCase
                 ->where('content', 'like', '%reply%')
                 ->exists()
         );
+    }
+
+    public function test_proactive_meeting_request_stages_book_meeting_with_stored_link(): void
+    {
+        [$user, $conversation] = $this->conversationFixtures();
+
+        $settings = AiEmployeeSetting::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $user->current_organization_id)
+            ->first();
+        $this->assertNotNull($settings);
+        $settings->forceFill([
+            'meta' => [
+                'conversion_assets' => [
+                    'sales_page_url' => 'https://socifusion.com/sales',
+                    'webinar_url' => 'https://socifusion.com/webinar',
+                    'meeting_link' => 'https://calendly.com/socifusion/demo',
+                ],
+            ],
+        ])->save();
+
+        $inbound = V2Message::query()->create([
+            'conversation_id' => $conversation->id,
+            'direction' => 'inbound',
+            'body' => 'Can we schedule a call next week?',
+            'received_at' => now(),
+        ]);
+
+        AiConversation::query()->create([
+            'organization_id' => $user->current_organization_id,
+            'user_id' => $user->id,
+            'channel' => 'command_center',
+            'status' => 'open',
+            'title' => 'Command Center',
+        ]);
+
+        app(ProactiveInboundReplyService::class)->handle(
+            $conversation->id,
+            $user->id,
+            $inbound->id,
+        );
+
+        $approval = AiActionApproval::query()
+            ->where('user_id', $user->id)
+            ->where('tool', 'book_meeting')
+            ->first();
+
+        $this->assertNotNull($approval);
+        $this->assertSame('https://calendly.com/socifusion/demo', $approval->payload['booking_url'] ?? null);
+        $this->assertStringContainsString('https://calendly.com/socifusion/demo', (string) ($approval->payload['draft_text'] ?? ''));
     }
 
     /**

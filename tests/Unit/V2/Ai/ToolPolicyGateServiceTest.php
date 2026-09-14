@@ -43,6 +43,30 @@ class ToolPolicyGateServiceTest extends TestCase
         $this->assertTrue($result['allowed']);
     }
 
+    public function test_allows_draft_cold_outbound_when_cold_one_shot_even_on_find_only(): void
+    {
+        $gate = app(ToolPolicyGateService::class);
+        $plan = [
+            'required_outcome' => 'find_only',
+            'side_effect_budget' => 'mutate_allowed',
+            'constraints' => ['cold_one_shot' => true],
+        ];
+
+        $this->assertTrue($gate->check('draft_cold_outbound', $plan)['allowed']);
+    }
+
+    public function test_blocks_draft_cold_outbound_on_plain_find_only(): void
+    {
+        $gate = app(ToolPolicyGateService::class);
+        $plan = [
+            'required_outcome' => 'find_only',
+            'side_effect_budget' => 'mutate_allowed',
+            'constraints' => [],
+        ];
+
+        $this->assertFalse($gate->check('draft_cold_outbound', $plan)['allowed']);
+    }
+
     public function test_allows_delete_campaign_when_destructive_budget_is_set(): void
     {
         $gate = app(ToolPolicyGateService::class);

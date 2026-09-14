@@ -53,7 +53,7 @@ class AcquisitionExperimentService
         $meta['acquisition_experiment'] = [
             'active' => true,
             'niche' => trim($niche),
-            'target_prospects' => max(50, min(2000, $targetProspects)),
+            'target_prospects' => max(30, min(2000, $targetProspects)),
             'message_angle' => $messageAngle ? trim($messageAngle) : null,
             'started_at' => Carbon::now()->toIso8601String(),
             'period' => 'all',

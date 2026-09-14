@@ -10,6 +10,7 @@ use App\V2\Outreach\Channels\ChannelExecutorInterface;
 use App\V2\Outreach\Channels\EmailChannelExecutor;
 use App\V2\Outreach\Channels\LinkedInChannelExecutor;
 use App\V2\Outreach\Channels\MessagingChannelExecutor;
+use App\V2\Services\ChannelPacingService;
 use App\V2\Services\LinkedInConnectionService;
 use App\V2\Services\UnifiedInboxService;
 use App\V2\Services\UnipileDailyActionLimiter;
@@ -115,15 +116,11 @@ class OutreachStepExecutor
             return $deferred;
         }
 
-        $quotaAction = $channel === 'linkedin'
-            ? match ($action) {
-                'send_invite' => UnipileDailyActionLimiter::inviteActionForMessage(
-                    $this->resolver->messageText($node, null),
-                ),
-                'send_message' => UnipileDailyActionLimiter::ACTION_MESSAGES,
-                default => null,
-            }
-            : null;
+        $quotaAction = app(ChannelPacingService::class)->quotaAction(
+            $channel,
+            $action,
+            $this->resolver->messageText($node, null),
+        );
 
         $tempLimit = app(UnipileTemporaryLimitGuard::class);
         $pacesChannel = UnipileTemporaryLimitGuard::supportsChannel($channel);
@@ -198,15 +195,29 @@ class OutreachStepExecutor
     }
 
     /**
-     * Reserve daily quota for LinkedIn send actions only.
-     * Other platforms use per-channel temporary cool-downs instead.
-     * Noted invites (message attached) use the tighter 5/day cap.
+     * Reserve daily (and Instagram hourly) quota before a send.
+     * Noted LinkedIn invites use the tighter 5/day cap.
      *
      * @param  array<string, mixed>  $node
      * @return array<string, mixed>|null
      */
     private function deferIfOverDailyCap(int $userId, string $channel, string $action, array $node = []): ?array
     {
+        if ($channel === 'instagram' && $action === 'send_message') {
+            $deferred = app(ChannelPacingService::class)->deferInstagramSend($userId);
+            if ($deferred !== null) {
+                Log::info('[Outreach] Instagram pacing deferred a send', [
+                    'user_id' => $userId,
+                    'reason' => $deferred['payload']['reason'] ?? null,
+                    'resume_at' => isset($deferred['next_run_at'])
+                        ? $deferred['next_run_at']->toIso8601String()
+                        : null,
+                ]);
+            }
+
+            return $deferred;
+        }
+
         if ($channel !== 'linkedin') {
             return null;
         }

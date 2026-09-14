@@ -58,8 +58,34 @@ class ToolPolicyGateService
             return ['allowed' => false, 'reason' => "Tool {$tool} is blocked: user asked to find/save only."];
         }
 
+        if ($outcome === 'find_only'
+            && $tool === 'draft_cold_outbound'
+            && ! ($constraints['cold_one_shot'] ?? false)
+            && ! ($constraints['recipient_correction'] ?? false)
+            && ! ($constraints['message_correction'] ?? false)
+        ) {
+            return ['allowed' => false, 'reason' => "Tool {$tool} is blocked: user asked to find/save only."];
+        }
+
+        if ($outcome === 'find_only'
+            && $tool === 'draft_reply'
+            && ! ($constraints['inbox_reply'] ?? false)
+        ) {
+            return ['allowed' => false, 'reason' => "Tool {$tool} is blocked: user asked to find/save only."];
+        }
+
         if ($outcome === 'setup_only' && in_array($tool, ['activate_outreach_campaign', 'send_inbox_reply', 'book_meeting'], true)) {
             return ['allowed' => false, 'reason' => "Tool {$tool} is blocked: user asked for setup only, no sending yet."];
+        }
+
+        // Single-recipient cold outbound (any channel): never fan into list discovery / multi-channel harvest.
+        if (\App\V2\Ai\Support\SingleRecipientTurnGuard::matches($plan)
+            && in_array($tool, \App\V2\Ai\Support\SingleRecipientTurnGuard::blockedListTools(), true)
+        ) {
+            return [
+                'allowed' => false,
+                'reason' => "Tool {$tool} is blocked: this turn is a single-recipient cold outbound — use draft_cold_outbound (or draft_reply for an existing inbox thread), not list discovery.",
+            ];
         }
 
         if (($constraints['exclude_contacted'] ?? false) === true

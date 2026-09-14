@@ -23,6 +23,9 @@ class UnipileDailyActionLimiter
 
     public const ACTION_MESSAGES = 'messages';
 
+    /** Instagram DMs — much tighter than LinkedIn. */
+    public const ACTION_INSTAGRAM_DMS = 'instagram_dms';
+
     /** Account-wide LinkedIn cool-down label (no separate daily cap). */
     public const ACTION_LINKEDIN = 'linkedin';
 
@@ -43,6 +46,7 @@ class UnipileDailyActionLimiter
             self::ACTION_NOTED_INVITES => config('services.unipile_pacing.daily_noted_invites', 5),
             self::ACTION_NEW_CHATS => config('services.unipile_pacing.daily_new_chats', 60),
             self::ACTION_MESSAGES => config('services.unipile_pacing.daily_messages', 200),
+            self::ACTION_INSTAGRAM_DMS => config('services.unipile_pacing.instagram_daily_dms', 15),
             default => 0,
         };
     }
@@ -54,6 +58,7 @@ class UnipileDailyActionLimiter
             self::ACTION_NOTED_INVITES => 'noted connection invites',
             self::ACTION_NEW_CHATS => 'new chats',
             self::ACTION_MESSAGES => 'messages',
+            self::ACTION_INSTAGRAM_DMS => 'Instagram DMs',
             self::ACTION_LINKEDIN => 'LinkedIn actions',
             default => 'actions',
         };
@@ -63,9 +68,9 @@ class UnipileDailyActionLimiter
      * Atomically reserve quota. Returns false (and leaves the counter
      * untouched) when the daily cap would be exceeded.
      */
-    public function tryConsume(int $userId, string $action, int $count = 1): bool
+    public function tryConsume(int $userId, string $action, int $count = 1, ?int $limitOverride = null): bool
     {
-        $limit = $this->limitFor($action);
+        $limit = $limitOverride ?? $this->limitFor($action);
         if ($limit <= 0) {
             return true;
         }
@@ -108,9 +113,9 @@ class UnipileDailyActionLimiter
         Cache::decrement($key, min($count, $used));
     }
 
-    public function remaining(int $userId, string $action): int
+    public function remaining(int $userId, string $action, ?int $limitOverride = null): int
     {
-        $limit = $this->limitFor($action);
+        $limit = $limitOverride ?? $this->limitFor($action);
         if ($limit <= 0) {
             return PHP_INT_MAX;
         }
@@ -118,9 +123,9 @@ class UnipileDailyActionLimiter
         return max(0, $limit - $this->used($userId, $action));
     }
 
-    public function hasQuota(int $userId, string $action, int $count = 1): bool
+    public function hasQuota(int $userId, string $action, int $count = 1, ?int $limitOverride = null): bool
     {
-        return $this->remaining($userId, $action) >= $count;
+        return $this->remaining($userId, $action, $limitOverride) >= $count;
     }
 
     /**
@@ -135,14 +140,14 @@ class UnipileDailyActionLimiter
     /**
      * @return array{limit: int, used: int, remaining: int}
      */
-    public function snapshot(int $userId, string $action): array
+    public function snapshot(int $userId, string $action, ?int $limitOverride = null): array
     {
-        $limit = $this->limitFor($action);
+        $limit = $limitOverride ?? $this->limitFor($action);
 
         return [
             'limit' => $limit,
             'used' => $this->used($userId, $action),
-            'remaining' => $limit <= 0 ? -1 : $this->remaining($userId, $action),
+            'remaining' => $limit <= 0 ? -1 : $this->remaining($userId, $action, $limit),
         ];
     }
 

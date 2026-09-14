@@ -109,6 +109,18 @@ return [
         'daily_noted_invites' => (int) env('UNIPILE_DAILY_NOTED_INVITE_CAP', 5),
         'daily_new_chats' => (int) env('UNIPILE_DAILY_NEW_CHAT_CAP', 60),
         'daily_messages' => (int) env('UNIPILE_DAILY_MESSAGE_CAP', 200),
+        // Instagram/Meta is much stricter than LinkedIn — keep DMs human-paced.
+        'instagram_daily_dms' => (int) env('UNIPILE_INSTAGRAM_DAILY_DM_CAP', 15),
+        'instagram_daily_dms_warmup' => (int) env('UNIPILE_INSTAGRAM_DAILY_DM_WARMUP_CAP', 5),
+        'instagram_hourly_dms' => (int) env('UNIPILE_INSTAGRAM_HOURLY_DM_CAP', 3),
+        'instagram_hourly_dms_warmup' => (int) env('UNIPILE_INSTAGRAM_HOURLY_DM_WARMUP_CAP', 2),
+        'instagram_lead_stagger_seconds' => (int) env('UNIPILE_INSTAGRAM_LEAD_STAGGER_SECONDS', 300),
+        'instagram_lead_stagger_warmup_seconds' => (int) env('UNIPILE_INSTAGRAM_LEAD_STAGGER_WARMUP_SECONDS', 480),
+        'instagram_lead_stagger_jitter_seconds' => (int) env('UNIPILE_INSTAGRAM_LEAD_STAGGER_JITTER_SECONDS', 90),
+        'instagram_handle_retry_min_minutes' => (int) env('UNIPILE_INSTAGRAM_HANDLE_RETRY_MIN_MINUTES', 20),
+        'instagram_handle_retry_max_minutes' => (int) env('UNIPILE_INSTAGRAM_HANDLE_RETRY_MAX_MINUTES', 35),
+        'instagram_warmup_days' => (int) env('UNIPILE_INSTAGRAM_WARMUP_DAYS', 7),
+        'instagram_quiet_hours_after_connect' => (int) env('UNIPILE_INSTAGRAM_QUIET_HOURS_AFTER_CONNECT', 12),
         // Bulk "start all chats": seconds between each queued chat + random jitter
         'chat_launch_stagger_seconds' => (int) env('UNIPILE_CHAT_LAUNCH_STAGGER_SECONDS', 8),
         'chat_launch_jitter_seconds' => (int) env('UNIPILE_CHAT_LAUNCH_JITTER_SECONDS', 7),
@@ -149,7 +161,7 @@ return [
 
     'unipile' => [
         'base_url' => env('UNIPILE_BASE_URL', 'https://api1.unipile.com:13111/api/v1'),
-        // ISO 3166-1 alpha-2 — Unipile proxy country for cookie/credential connects (defaults to US).
+        // Last-resort ISO country if we cannot infer from the user's timezone or request.
         'default_country' => env('UNIPILE_DEFAULT_COUNTRY', 'US'),
         'api_key' => env('UNIPILE_API_KEY'),
         'webhook_secret' => env('UNIPILE_WEBHOOK_SECRET'),

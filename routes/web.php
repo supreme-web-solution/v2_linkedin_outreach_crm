@@ -153,6 +153,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     Route::post('outreach/import-lists', [OutreachImportListWebController::class, 'store'])->name('outreach.import-lists.store');
     Route::get('outreach/import-lists', [OutreachImportListWebController::class, 'index'])->name('outreach.import-lists.index');
     Route::get('outreach', [OutreachWebController::class, 'index'])->name('outreach');
+    Route::post('outreach/bulk', [OutreachWebController::class, 'bulkAction'])->name('outreach.bulk');
     Route::get('outreach/create', [OutreachWebController::class, 'create'])->name('outreach.create');
     Route::post('outreach', [OutreachWebController::class, 'store'])->name('outreach.store');
     Route::get('outreach/{id}', [OutreachWebController::class, 'show'])->whereNumber('id')->name('outreach.show');
@@ -175,6 +176,7 @@ Route::middleware(['auth', 'verified', 'entitlement:FE'])->group(function () use
     Route::get('inbox/{platform}/{id}/poll', [UnifiedInboxWebController::class, 'poll'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.poll');
     Route::get('inbox/{platform}/{id}/messages', [UnifiedInboxWebController::class, 'olderMessages'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.messages');
     Route::post('inbox/{platform}/{id}/send', [UnifiedInboxWebController::class, 'send'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.send');
+    Route::post('inbox/{platform}/{id}/outcome', [UnifiedInboxWebController::class, 'markOutcome'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.outcome');
     Route::delete('inbox/{platform}/{id}', [UnifiedInboxWebController::class, 'destroy'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.destroy');
     Route::delete('inbox/{platform}/{id}/messages/{messageId}', [UnifiedInboxWebController::class, 'destroyMessage'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->whereNumber('messageId')->name('inbox.message.destroy');
     Route::get('inbox/{platform}/{id}/messages/{messageId}/attachments/{attachmentId}', [UnifiedInboxWebController::class, 'attachment'])->where('platform', $enabledInboxPlatforms)->whereNumber('id')->name('inbox.attachment');

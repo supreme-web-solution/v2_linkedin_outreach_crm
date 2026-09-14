@@ -46,7 +46,12 @@ class DraftReplyTool extends GatedTool
                 prospectName: $request['prospect_name'] ?? null,
             );
             if (! $resolved) {
-                throw new \RuntimeException('No inbox conversation found for that email or name. Try get_attention_queue or pass conversation_id.');
+                return [
+                    'ok' => false,
+                    'no_thread' => true,
+                    'error' => 'No inbox conversation found for that email or name.',
+                    'suggest' => 'If this is a cold send (no existing thread), call draft_cold_outbound instead. Otherwise call get_attention_queue and pass conversation_id.',
+                ];
             }
             $conversationId = (int) $resolved->id;
         }

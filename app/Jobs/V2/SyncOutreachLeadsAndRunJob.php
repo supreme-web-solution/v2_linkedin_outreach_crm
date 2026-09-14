@@ -67,6 +67,26 @@ class SyncOutreachLeadsAndRunJob implements ShouldQueue
                 return;
             }
 
+            $totalOnCampaign = \App\Models\V2OutreachLead::query()
+                ->where('outreach_campaign_id', $campaign->id)
+                ->count();
+            if ($totalOnCampaign < 1) {
+                $sync->markSyncFailed(
+                    $campaign->fresh() ?? $campaign,
+                    'No people were copied onto this campaign. Find prospects first, then launch.',
+                );
+                $logger->log(
+                    $campaign->id,
+                    null,
+                    null,
+                    null,
+                    'failed',
+                    'Lead sync finished with 0 people — campaign stayed paused.',
+                );
+
+                return;
+            }
+
             $sync->markSyncComplete($campaign, $added);
 
             $logger->log(

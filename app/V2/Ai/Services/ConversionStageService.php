@@ -79,18 +79,116 @@ class ConversionStageService
 
         if ($meeting !== null && $this->bodyContainsMeetingLink($body, $meeting)) {
             $next = self::STAGE_OFFERED_MEETING;
-        } elseif (
-            ($sales !== '' && str_contains($body, Str::lower($sales)))
-            || ($webinar !== '' && str_contains($body, Str::lower($webinar)))
-        ) {
+            $this->memory->rememberOfferedAsset($lead, 'meeting', $meeting === 'app_booking' ? 'app_booking' : $meeting);
+        } elseif ($sales !== '' && str_contains($body, Str::lower($sales))) {
             $next = self::STAGE_OFFERED_ASSET;
+            $this->memory->rememberOfferedAsset($lead, 'sales_page', $sales);
+        } elseif ($webinar !== '' && str_contains($body, Str::lower($webinar))) {
+            $next = self::STAGE_OFFERED_ASSET;
+            $this->memory->rememberOfferedAsset($lead, 'webinar', $webinar);
         }
 
         if ($next !== $current) {
             $this->memory->setConversionStage($lead, $next);
         }
 
+        $this->syncQualificationFromStage($lead, $next);
+
         return $next;
+    }
+
+    /**
+     * Keep CRM qualification in lockstep so the dashboard funnel is not optional homework.
+     */
+    public function syncQualificationFromStage(V2OutreachLead $lead, string $stage): void
+    {
+        $target = match ($stage) {
+            self::STAGE_OFFERED_ASSET => 'sql',
+            self::STAGE_OFFERED_MEETING => 'meeting_booked',
+            self::STAGE_WON => 'customer',
+            default => null,
+        };
+        if ($target === null) {
+            return;
+        }
+
+        $meta = is_array($lead->meta) ? $lead->meta : [];
+        $current = trim((string) Arr::get($meta, 'qualification.stage', ''));
+        $rank = [
+            '' => 0,
+            'mql' => 1,
+            'nurture' => 1,
+            'sql' => 2,
+            'qualified' => 2,
+            'meeting_booked' => 3,
+            'customer' => 4,
+            'disqualified' => 5,
+        ];
+        if (($rank[$current] ?? 0) >= ($rank[$target] ?? 0)) {
+            return;
+        }
+
+        $meta['qualification'] = array_merge(
+            is_array($meta['qualification'] ?? null) ? $meta['qualification'] : [],
+            [
+                'stage' => $target,
+                'source' => 'conversion_ladder',
+                'qualified_at' => now()->toIso8601String(),
+            ],
+        );
+        if ($target === 'customer') {
+            $meta['conversion'] = [
+                'stage' => 'customer',
+                'converted_at' => now()->toIso8601String(),
+                'source' => 'conversion_ladder',
+            ];
+        }
+
+        $lead->forceFill(['meta' => $meta])->save();
+    }
+
+    /**
+     * Owner marks a hot thread so the dashboard funnel is not optional homework.
+     *
+     * @return array{stage: string, label: string}
+     */
+    public function markOwnerOutcome(V2OutreachLead $lead, string $outcome): array
+    {
+        $stage = match ($outcome) {
+            'qualified' => 'sql',
+            'not_qualified' => 'disqualified',
+            'booked' => 'meeting_booked',
+            default => throw new \InvalidArgumentException('Outcome must be qualified, not_qualified, or booked.'),
+        };
+
+        $meta = is_array($lead->meta) ? $lead->meta : [];
+        $meta['qualification'] = array_merge(
+            is_array($meta['qualification'] ?? null) ? $meta['qualification'] : [],
+            [
+                'stage' => $stage,
+                'source' => 'inbox_owner',
+                'qualified_at' => now()->toIso8601String(),
+            ],
+        );
+
+        $updates = ['meta' => $meta];
+        if ($stage === 'disqualified') {
+            $updates['status'] = 'skipped';
+        }
+
+        $lead->forceFill($updates)->save();
+        if ($stage === 'meeting_booked') {
+            $this->memory->setConversionStage($lead->fresh() ?? $lead, self::STAGE_OFFERED_MEETING);
+        }
+
+        $label = match ($stage) {
+            'sql' => 'qualified',
+            'disqualified' => 'not qualified',
+            'meeting_booked' => 'booked',
+            default => $stage,
+        };
+
+        return ['stage' => $stage, 'label' => $label];
     }
 
     public function replyGuide(V2OutreachLead $lead, User $user, int $organizationId): string
@@ -100,7 +198,7 @@ class ConversionStageService
         return match ($stage) {
             self::STAGE_OPENING => 'Stage: opening — if this is their first reply, ask ONE qualifying question about their situation. No pitch, no links.',
             self::STAGE_QUALIFYING => 'Stage: qualifying — dig into pain, current approach, and goals. Only move to an asset when they show genuine interest.',
-            self::STAGE_OFFERED_ASSET => 'Stage: offered asset — they saw a sales page or webinar link. Check if it resonated; do not re-send the same link unless they ask.',
+            self::STAGE_OFFERED_ASSET => 'Stage: offered asset — they saw a sales page or webinar link. Check if it resonated; if they are still unsure, the next step is a meeting (last card), not another pitch.',
             self::STAGE_OFFERED_MEETING => 'Stage: offered meeting — meeting link was shared. Confirm timing or answer objections; do not pitch again.',
             self::STAGE_WON => 'Stage: won — treat as customer/nurture appropriately; no hard selling.',
             default => '',

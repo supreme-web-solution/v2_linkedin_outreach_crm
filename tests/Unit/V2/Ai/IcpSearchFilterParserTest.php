@@ -103,6 +103,20 @@ class IcpSearchFilterParserTest extends TestCase
         );
     }
 
+    public function test_explicit_onboarding_audience_is_used_as_written(): void
+    {
+        $variants = IcpSearchFilterParser::searchVariants(
+            'clinic administrators at private hospitals',
+            'Kenya',
+            20,
+            ['title' => 'Clinic Administrator', 'audience_name' => 'Clinic administrators'],
+        );
+
+        $this->assertSame('Clinic Administrator', $variants[0]['title']);
+        $this->assertSame('Kenya', $variants[0]['location']);
+        $this->assertStringContainsString('clinic', strtolower((string) $variants[0]['keywords']));
+    }
+
     public function test_icp_volume_search_still_has_industry_fallbacks(): void
     {
         $variants = IcpSearchFilterParser::searchVariants(

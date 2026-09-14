@@ -23,6 +23,22 @@ class DiscoveryPlatformResolverTest extends TestCase
         $this->assertSame('instagram', $resolver->resolve($plan));
     }
 
+    public function test_workspace_linkedin_and_instagram_stays_auto(): void
+    {
+        $resolver = app(DiscoveryPlatformResolver::class);
+
+        $plan = [
+            'required_outcome' => 'find_only',
+            'constraints' => [
+                'preferred_channel' => 'linkedin',
+                'preferred_channels' => ['instagram', 'linkedin', 'email', 'whatsapp'],
+            ],
+            'objective' => ['criteria' => 'map a strategy for my target audience'],
+        ];
+
+        $this->assertSame('auto', $resolver->resolve($plan));
+    }
+
     public function test_find_only_vague_request_uses_auto_not_a_default_channel(): void
     {
         $resolver = app(DiscoveryPlatformResolver::class);

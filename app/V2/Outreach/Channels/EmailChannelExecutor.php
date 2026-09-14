@@ -105,10 +105,13 @@ class EmailChannelExecutor implements ChannelExecutorInterface
             $concrete = $this->providerManager->get($providerKey, UnipileProvider::class);
             $subject = $content['subject'] ?: 'Hello';
             $body = $content['body'] ?: 'Hi there,';
+            $subject = \App\V2\Ai\Support\EmailOutboundFormat::normalizeSubject($subject);
+            $plainBody = \App\V2\Ai\Support\EmailOutboundFormat::formatPlainBody($body);
+            $htmlBody = \App\V2\Ai\Support\EmailOutboundFormat::toHtmlBody($plainBody);
             $response = $concrete->sendEmail([
                 'to' => [['identifier' => $email]],
                 'subject' => $subject,
-                'body' => $body,
+                'body' => $htmlBody !== '' ? $htmlBody : $plainBody,
             ], $context);
 
             $responseArray = is_array($response) ? $response : [];
@@ -121,7 +124,7 @@ class EmailChannelExecutor implements ChannelExecutorInterface
                 $email,
                 $responseArray,
                 $subject,
-                $body,
+                $plainBody,
             );
 
             if ($conversation === null) {

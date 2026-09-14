@@ -45,4 +45,35 @@ class WorkflowRunServiceTest extends TestCase
         $this->assertSame('planned', $run->status);
         $this->assertNotEmpty($run->scope_hash);
     }
+
+    public function test_truncates_goal_to_column_limit(): void
+    {
+        $user = User::factory()->create();
+        $org = V2Organization::query()->create([
+            'name' => 'Long Goal Org',
+            'slug' => 'long-goal-'.uniqid(),
+        ]);
+        V2OrganizationUser::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'role' => 'owner',
+        ]);
+        $conversation = AiConversation::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'channel' => 'web',
+            'status' => 'active',
+        ]);
+
+        $long = str_repeat('Need custom software, automation, and digital transformation. ', 8);
+        $run = app(WorkflowRunService::class)->createPlannedRun(
+            $user,
+            $org->id,
+            $conversation,
+            ['goal' => $long],
+        );
+
+        $this->assertLessThanOrEqual(120, strlen((string) $run->goal));
+        $this->assertSame($long, $run->plan['goal']);
+    }
 }

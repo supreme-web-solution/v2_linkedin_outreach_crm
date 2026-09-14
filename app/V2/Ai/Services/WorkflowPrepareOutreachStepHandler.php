@@ -35,13 +35,28 @@ class WorkflowPrepareOutreachStepHandler
         int $workflowRunId,
         ?int $conversationId = null,
     ): array {
+        if (\App\V2\Ai\Support\SingleRecipientTurnGuard::matches($plan)) {
+            return [
+                'step_type' => 'prepare_outreach',
+                'prepared' => false,
+                'blocked' => true,
+                'message' => 'Single-recipient cold outbound must use draft_cold_outbound — list discovery outreach was blocked.',
+                'approval_ids' => [],
+                'eligible_count' => 0,
+                'multi_channel' => false,
+            ];
+        }
+
         $stateEval = is_array($plan['state_evaluation'] ?? null) ? $plan['state_evaluation'] : [];
         $segment = trim((string) ($plan['objective']['segment'] ?? $plan['constraints']['target_segment'] ?? 'prospects'));
         $eligible = max(1, (int) ($arguments['eligible_count'] ?? $stateEval['intersection_eligible_count'] ?? 1));
         $setupOnly = (bool) ($arguments['setup_only'] ?? false)
             || (string) ($plan['required_outcome'] ?? '') === 'setup_only';
 
-        $discoveryLists = is_array($arguments['discovery_lists'] ?? null) ? $arguments['discovery_lists'] : [];
+        $discoveryLists = $this->usableDiscoveryLists(
+            $user,
+            is_array($arguments['discovery_lists'] ?? null) ? $arguments['discovery_lists'] : [],
+        );
         $conversation = $conversationId ? AiConversation::query()->find($conversationId) : null;
         $goal = $this->goalFromPlan($plan, $segment);
 
@@ -52,6 +67,7 @@ class WorkflowPrepareOutreachStepHandler
                 $goal,
                 $discoveryLists,
                 $conversation,
+                $setupOnly,
             );
 
             if ($staged === []) {
@@ -82,7 +98,9 @@ class WorkflowPrepareOutreachStepHandler
         }
 
         $listHash = trim((string) ($arguments['list_hash'] ?? ''));
-        if ($listHash !== '') {
+        if (count($discoveryLists) === 1) {
+            $list = $discoveryLists[0];
+        } elseif ($listHash !== '') {
             $list = [
                 'list_hash' => $listHash,
                 'list_src' => (string) ($arguments['list_src'] ?? 'sn'),
@@ -97,26 +115,18 @@ class WorkflowPrepareOutreachStepHandler
         }
 
         $channel = $this->resolveOutreachChannel($plan, $list, $discoveryLists);
-
-        $label = ucfirst($channel === 'instagram' ? 'Instagram' : ($channel === 'whatsapp' ? 'WhatsApp' : 'LinkedIn'));
+        $channelIntent = app(PlanChannelIntentService::class);
+        $src = trim((string) ($list['list_src'] ?? $channelIntent->defaultListSrc($channel)));
+        $hash = trim((string) ($list['list_hash'] ?? ''));
+        if ($hash === '' || $this->audienceResolver->liveLeadCount($user, $src, $hash) < 1) {
+            throw new \RuntimeException('No people on that list yet. Find prospects first, then create the campaign.');
+        }
+        $list['list_src'] = $src;
+        $label = \App\V2\Outreach\OutreachChannelRegistry::channelLabel($channel);
         $theme = Str::limit(trim(preg_replace('/\s+/', ' ', $segment) ?: 'Conversation-first'), 36, '');
         $campaignName = $theme.' · '.$label.' ('.$eligible.')';
 
-        $sequence = $channel === 'instagram'
-            ? [
-                'Instagram DM — personalized after research, no pitch',
-                'Wait 4 days',
-                'Light follow-up if no reply',
-                'Pause on reply — handle in inbox',
-            ]
-            : [
-                'Send Invite (empty note)',
-                'After acceptance',
-                'First message — earn a reply, do not pitch SociFusion yet',
-                'Wait 4 days',
-                'Light follow-up if no reply',
-                'Pause on reply — handle in inbox',
-            ];
+        $sequence = $channelIntent->conversationSequence($channel);
 
         $campaignPlan = [
             'type' => 'campaign',
@@ -218,8 +228,34 @@ class WorkflowPrepareOutreachStepHandler
     }
 
     /**
-     * @param  array<string, mixed>  $plan
+     * @param  list<array<string, mixed>>  $lists
+     * @return list<array<string, mixed>>
      */
+    private function usableDiscoveryLists(User $user, array $lists): array
+    {
+        $usable = [];
+        foreach ($lists as $list) {
+            if (! is_array($list)) {
+                continue;
+            }
+            $hash = trim((string) ($list['list_hash'] ?? ''));
+            if ($hash === '') {
+                continue;
+            }
+            $channel = strtolower(trim((string) ($list['primary_channel'] ?? $list['platform'] ?? '')));
+            $src = trim((string) ($list['list_src'] ?? app(PlanChannelIntentService::class)->defaultListSrc($channel)));
+            $live = $this->audienceResolver->liveLeadCount($user, $src, $hash);
+            if ($live < 1) {
+                continue;
+            }
+            $list['list_src'] = $src;
+            $list['total_leads'] = $live;
+            $usable[] = $list;
+        }
+
+        return $usable;
+    }
+
     private function goalFromPlan(array $plan, string $segment): string
     {
         $measurable = is_array($plan['measurable_expectations'] ?? null) ? $plan['measurable_expectations'] : [];

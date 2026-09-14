@@ -67,6 +67,9 @@ class OutreachRunDispatcher
             ->whereIn('status', ['pending', 'running'])
             ->get();
 
+        $pacing = app(\App\V2\Services\ChannelPacingService::class);
+        $primaryChannel = $pacing->primaryChannelFromNodes(is_array($campaign->node_model) ? $campaign->node_model : []);
+
         $queued = 0;
         foreach ($leads as $index => $lead) {
             V2OutreachLeadProgress::query()->firstOrCreate(
@@ -75,7 +78,7 @@ class OutreachRunDispatcher
             );
 
             ProcessOutreachLeadJob::dispatch($campaign->id, $lead->id, $run->id)
-                ->delay(now()->addSeconds($index * max(5, (int) config('services.unipile_pacing.outreach_lead_stagger_seconds', 60))));
+                ->delay(now()->addSeconds($pacing->dispatchDelaySeconds((int) $campaign->user_id, $primaryChannel, $index)));
 
             $queued++;
         }

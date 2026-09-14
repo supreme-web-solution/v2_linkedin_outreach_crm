@@ -8,6 +8,7 @@ use App\Ai\Tools\ProposeStrategyTool;
 use App\Models\AiConversation;
 use App\Models\AiMessage;
 use App\Models\User;
+use App\Models\V2IntegrationAccount;
 use App\Models\V2Organization;
 use App\Models\V2OrganizationUser;
 use App\V2\Ai\AgentContext;
@@ -198,6 +199,13 @@ class LiveFindProspectDetailsRegressionTest extends TestCase
             'conversation_id' => $conversation->id,
             'role' => 'user',
             'content' => $userMessage,
+        ]);
+
+        V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'linkedin',
+            'provider_account_id' => 'li_acc_'.uniqid(),
+            'status' => 'active',
         ]);
 
         $settings = app(\App\V2\Ai\Services\AiEmployeeSettingsService::class)->for($user, $org->id);

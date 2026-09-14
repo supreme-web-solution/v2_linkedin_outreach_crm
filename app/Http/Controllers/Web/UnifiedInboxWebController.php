@@ -14,6 +14,7 @@ use App\V2\Outreach\InboxAttachmentSupport;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Ai\Services\InboxClassificationService;
 use App\V2\Ai\Services\AttentionQueueService;
+use App\V2\Ai\Services\ConversionStageService;
 use App\V2\Ai\Services\LeadNurtureCommandCenterService;
 use App\V2\Ai\Services\NurtureQueueService;
 use App\V2\Ai\Services\ProspectMemoryService;
@@ -346,6 +347,45 @@ class UnifiedInboxWebController extends Controller
         return back()->with('success', 'Message sent.');
     }
 
+    public function markOutcome(Request $request, string $platform, int $id): JsonResponse
+    {
+        $this->channelSettings->assertInboxChannel($platform);
+
+        /** @var User $user */
+        $user = auth()->user();
+
+        $conversation = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->forInboxPlatform($platform)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $data = $request->validate([
+            'outcome' => ['required', 'in:qualified,not_qualified,booked'],
+        ]);
+
+        $leadId = (int) Arr::get($conversation->meta ?? [], 'outreach_lead_id', 0);
+        $lead = $leadId > 0
+            ? V2OutreachLead::query()
+                ->whereKey($leadId)
+                ->whereHas('campaign', fn ($q) => $q->where('user_id', $user->id))
+                ->first()
+            : null;
+
+        if (! $lead) {
+            return response()->json(['message' => 'This thread is not linked to an outreach lead.'], 422);
+        }
+
+        $marked = app(ConversionStageService::class)->markOwnerOutcome($lead, $data['outcome']);
+
+        return response()->json([
+            'ok' => true,
+            'qualification_stage' => $marked['stage'],
+            'qualification_label' => $marked['label'],
+            'outreachContext' => $this->buildOutreachContext($conversation->fresh(), $user),
+        ]);
+    }
+
     public function destroy(string $platform, int $id): RedirectResponse
     {
         $this->channelSettings->assertInboxChannel($platform);
@@ -466,20 +506,35 @@ class UnifiedInboxWebController extends Controller
         $leadId = (int) (Arr::get($meta, 'outreach_lead_id') ?? 0);
         $provider = (string) $conversation->provider;
 
+        $lead = $leadId > 0
+            ? V2OutreachLead::query()
+                ->whereKey($leadId)
+                ->whereHas('campaign', fn ($q) => $q->where('user_id', $user->id))
+                ->first()
+            : null;
+
+        if ($campaignId <= 0 && $lead) {
+            $campaignId = (int) $lead->outreach_campaign_id;
+        }
+
         if ($campaignId <= 0) {
             return null;
         }
 
-        $campaign = V2OutreachCampaign::query()
-            ->where('id', $campaignId)
-            ->where('user_id', $user->id)
-            ->first();
+        $campaign = $campaignId > 0
+            ? V2OutreachCampaign::query()
+                ->where('id', $campaignId)
+                ->where('user_id', $user->id)
+                ->first()
+            : null;
+
+        if (! $campaign && $lead) {
+            $campaign = $lead->campaign()->where('user_id', $user->id)->first();
+        }
 
         if (! $campaign) {
             return null;
         }
-
-        $lead = $leadId > 0 ? V2OutreachLead::query()->find($leadId) : null;
         $progress = $lead
             ? V2OutreachLeadProgress::query()
                 ->where('outreach_campaign_id', $campaign->id)
@@ -510,6 +565,7 @@ class UnifiedInboxWebController extends Controller
                 'status' => $lead->status,
                 'phone' => $lead->phone,
                 'email' => $lead->email,
+                'qualification_stage' => trim((string) Arr::get($lead->meta ?? [], 'qualification.stage', '')) ?: null,
                 'email_quality' => $provider === 'email'
                     ? $this->emailQuality->assess($lead->email)
                     : null,

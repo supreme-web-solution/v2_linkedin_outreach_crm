@@ -36,7 +36,7 @@ type ConversationItem = {
 
 type OutreachContext = {
     campaign: { id: number; name: string; status: string; href: string };
-    lead: { id: number; full_name: string | null; status: string; phone: string | null; email: string | null; email_quality?: { level: string; label: string; hint: string | null } | null } | null;
+    lead: { id: number; full_name: string | null; status: string; phone: string | null; email: string | null; qualification_stage?: string | null; email_quality?: { level: string; label: string; hint: string | null } | null } | null;
     progress: { paused_reason: string | null; paused_channel: string | null; channel_replied: boolean } | null;
     campaign_outbound_count: number;
     channel_settings: { ai_context: string; auto_reply_enabled: boolean; pause_on_reply: boolean };
@@ -204,6 +204,7 @@ watch(
 );
 
 const sendForm = useForm<{ body: string; attachment: File | null }>({ body: '', attachment: null });
+const markingOutcome = ref(false);
 const attachmentInputRef = ref<HTMLInputElement | null>(null);
 const selectedAttachmentName = ref<string | null>(null);
 const settingsForm = useForm({
@@ -660,6 +661,51 @@ function saveChannelSettings() {
             settingsForm.defaults();
         },
     });
+}
+
+function outcomeLabel(stage: string | null | undefined): string | null {
+    if (!stage) return null;
+    if (stage === 'sql' || stage === 'qualified') return 'Qualified';
+    if (stage === 'disqualified') return 'Not qualified';
+    if (stage === 'meeting_booked') return 'Booked';
+    if (stage === 'customer') return 'Customer';
+    return stage.replace(/_/g, ' ');
+}
+
+function xsrfToken(): string {
+    return decodeURIComponent(
+        document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN='))?.split('=')[1] ?? '',
+    );
+}
+
+async function markThreadOutcome(outcome: 'qualified' | 'not_qualified' | 'booked') {
+    if (!props.selected || markingOutcome.value) {
+        return;
+    }
+
+    markingOutcome.value = true;
+    try {
+        const response = await fetch(`/inbox/${props.platform}/${props.selected.id}/outcome`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-XSRF-TOKEN': xsrfToken(),
+            },
+            body: JSON.stringify({ outcome }),
+        });
+        if (!response.ok) {
+            return;
+        }
+        const data = await response.json() as { outreachContext?: OutreachContext | null };
+        if (data.outreachContext) {
+            localOutreachContext.value = data.outreachContext;
+        }
+    } finally {
+        markingOutcome.value = false;
+    }
 }
 
 function onComposerKeydown(e: KeyboardEvent) {
@@ -1226,6 +1272,43 @@ function onComposerKeydown(e: KeyboardEvent) {
                                 · {{ localOutreachContext.ai_insights.classification.priority.replace(/_/g, ' ') }}
                             </div>
                             <p class="mt-1">{{ localOutreachContext.ai_insights.classification.recommended_action }}</p>
+                        </div>
+                        <div
+                            v-if="localOutreachContext.lead"
+                            class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/80 px-2.5 py-2 text-xs text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100"
+                        >
+                            <div class="font-medium">Did this thread convert?</div>
+                            <p class="mt-1 opacity-80">
+                                {{ outcomeLabel(localOutreachContext.lead.qualification_stage)
+                                    ? `Marked ${outcomeLabel(localOutreachContext.lead.qualification_stage)}.`
+                                    : 'Qualified / not / booked — so the dashboard counts this conversation.' }}
+                            </p>
+                            <div class="mt-2 flex flex-wrap gap-1.5">
+                                <button
+                                    type="button"
+                                    class="rounded-full border border-emerald-300 bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950 dark:hover:bg-emerald-900"
+                                    :disabled="markingOutcome"
+                                    @click="markThreadOutcome('qualified')"
+                                >
+                                    Qualified
+                                </button>
+                                <button
+                                    type="button"
+                                    class="rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-50 dark:bg-zinc-900"
+                                    :disabled="markingOutcome"
+                                    @click="markThreadOutcome('not_qualified')"
+                                >
+                                    Not
+                                </button>
+                                <button
+                                    type="button"
+                                    class="rounded-full border border-violet-300 bg-white px-2.5 py-1 text-[11px] font-medium hover:bg-violet-50 disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950 dark:hover:bg-violet-900"
+                                    :disabled="markingOutcome"
+                                    @click="markThreadOutcome('booked')"
+                                >
+                                    Booked
+                                </button>
+                            </div>
                         </div>
                         <div
                             v-if="localOutreachContext.ai_insights?.personalized_draft?.text"

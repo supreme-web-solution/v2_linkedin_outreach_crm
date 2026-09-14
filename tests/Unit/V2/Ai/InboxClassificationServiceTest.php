@@ -11,7 +11,7 @@ class InboxClassificationServiceTest extends TestCase
     {
         $service = new InboxClassificationService;
 
-        $result = $service->classify('Yes, interested — can we schedule a demo next week?');
+        $result = $service->classifyWithKeywords('Yes, interested — can we schedule a demo next week?');
 
         $this->assertSame('hot', $result['priority']);
         $this->assertSame('meeting_request', $result['intent']);
@@ -22,20 +22,52 @@ class InboxClassificationServiceTest extends TestCase
     {
         $service = new InboxClassificationService;
 
-        $result = $service->classify('Please unsubscribe me');
+        $result = $service->classifyWithKeywords('Please unsubscribe me');
 
         $this->assertSame('low_priority', $result['priority']);
         $this->assertSame('opt_out', $result['intent']);
         $this->assertSame('closed_lost', $result['stage']);
     }
 
-    public function test_classifies_question_as_needs_judgment(): void
+    public function test_classifies_tell_me_more_as_wants_info(): void
     {
         $service = new InboxClassificationService;
 
-        $result = $service->classify('Can you tell me more about how onboarding works?');
+        $result = $service->classifyWithKeywords('Can you tell me more about how onboarding works?');
 
         $this->assertSame('needs_judgment', $result['priority']);
-        $this->assertSame('question', $result['intent']);
+        $this->assertSame('wants_info', $result['intent']);
+        $this->assertSame('hard', $result['buying_signal']);
+        $this->assertSame('read', $result['asset_preference']);
+    }
+
+    public function test_classifies_outbound_answer_as_qualifying_not_a_pitch(): void
+    {
+        $service = new InboxClassificationService;
+
+        $result = $service->classifyWithKeywords('Yes, we do outbound — mostly LinkedIn.');
+
+        $this->assertSame('qualifying_answer', $result['intent']);
+        $this->assertSame('soft', $result['buying_signal']);
+    }
+
+    public function test_classifies_ill_take_a_look_as_will_review(): void
+    {
+        $service = new InboxClassificationService;
+
+        $result = $service->classifyWithKeywords("Thanks, I'll take a look.");
+
+        $this->assertSame('will_review', $result['intent']);
+        $this->assertSame('soft', $result['buying_signal']);
+    }
+
+    public function test_classifies_webinar_ask_as_wants_watch(): void
+    {
+        $service = new InboxClassificationService;
+
+        $result = $service->classifyWithKeywords('Can I watch a walkthrough of how it works?');
+
+        $this->assertSame('wants_watch', $result['intent']);
+        $this->assertSame('watch', $result['asset_preference']);
     }
 }

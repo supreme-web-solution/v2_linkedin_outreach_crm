@@ -65,4 +65,13 @@ class UnipileDailyActionLimiterTest extends TestCase
 
         $this->assertTrue($resumeAt->isTomorrow());
     }
+
+    public function test_instagram_limit_override_uses_warmup_cap(): void
+    {
+        Config::set('services.unipile_pacing.instagram_daily_dms', 15);
+
+        $this->assertTrue($this->limiter->tryConsume(9, UnipileDailyActionLimiter::ACTION_INSTAGRAM_DMS, 1, 1));
+        $this->assertFalse($this->limiter->tryConsume(9, UnipileDailyActionLimiter::ACTION_INSTAGRAM_DMS, 1, 1));
+        $this->assertSame(1, $this->limiter->used(9, UnipileDailyActionLimiter::ACTION_INSTAGRAM_DMS));
+    }
 }

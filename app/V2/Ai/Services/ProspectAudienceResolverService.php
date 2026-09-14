@@ -2,6 +2,9 @@
 
 namespace App\V2\Ai\Services;
 
+use App\Models\Audience;
+use App\Models\AudienceList;
+use App\Models\SnLead;
 use App\Models\User;
 use App\Models\V2OutreachImportLead;
 use App\Models\V2OutreachImportList;
@@ -60,7 +63,7 @@ class ProspectAudienceResolverService
                         (string) $importList->list_hash,
                         'csv',
                         (string) ($plan['list_name'] ?? $importList->name),
-                        max(1, (int) $importList->lead_count),
+                        $this->liveLeadCount($user, 'csv', $hash),
                     );
                 }
             }
@@ -80,6 +83,41 @@ class ProspectAudienceResolverService
         }
 
         return $this->findBestMatch($user, $plan, $strict);
+    }
+
+    /**
+     * People actually sitting on the list the campaign will sync from.
+     * Source-row counts (V2LeadSource) can lie after a campaign delete.
+     */
+    public function liveLeadCount(User $user, string $src, string $hash): int
+    {
+        $hash = trim($hash);
+        $src = strtolower(trim($src));
+        if ($hash === '' || ! in_array($src, ['aud', 'sn', 'csv'], true)) {
+            return 0;
+        }
+
+        return match ($src) {
+            'sn' => (int) SnLead::query()->where('sn_list_id', $hash)->count(),
+            'csv' => (int) V2OutreachImportLead::query()
+                ->whereIn(
+                    'import_list_id',
+                    V2OutreachImportList::query()
+                        ->where('user_id', $user->id)
+                        ->where('list_hash', $hash)
+                        ->select('id')
+                )
+                ->count(),
+            'aud' => (int) AudienceList::query()
+                ->whereIn(
+                    'audience_id',
+                    Audience::query()
+                        ->where('user_id', $user->id)
+                        ->where('audience_id', $hash)
+                        ->select('audience_id')
+                )
+                ->count(),
+        };
     }
 
     /**
@@ -440,6 +478,17 @@ class ProspectAudienceResolverService
             $plan['contact_phone'] = preg_replace('/\s+/', '', $phone[0]) ?? $phone[0];
         }
 
+        if (preg_match('#(?:twitter\.com|x\.com)/([a-z0-9_]{1,30})#i', $blob, $tw)) {
+            $plan['twitter_handle'] = Str::lower($tw[1]);
+        } elseif (preg_match('/(?:^|\s)@([a-z0-9_]{1,30})(?:\s|$)/i', $blob, $at)
+            && $this->planTargetsChannel($plan, 'twitter')) {
+            $plan['twitter_handle'] = Str::lower($at[1]);
+        }
+
+        if (preg_match('#(?:t\.me|telegram\.me)/([a-z0-9_]{5,32})#i', $blob, $tg)) {
+            $plan['telegram_handle'] = Str::lower($tg[1]);
+        }
+
         return $plan;
     }
 
@@ -557,6 +606,26 @@ class ProspectAudienceResolverService
             );
         }
 
+        $twitterHandle = $this->extractTwitterHandle($plan);
+        if ($twitterHandle !== '' && $this->planTargetsChannel($plan, 'twitter')) {
+            $existing = $this->findImportListByTwitterHandle($user, $twitterHandle);
+            if ($existing !== null) {
+                $existing['note'] = '1 X/Twitter contact from saved list';
+
+                return $existing;
+            }
+
+            return $this->createImportListFromContacts(
+                $user,
+                'X: @'.$twitterHandle,
+                [[
+                    'full_name' => $this->contactDisplayName($plan, '@'.$twitterHandle),
+                    'twitter' => $twitterHandle,
+                ]],
+                '1 X/Twitter handle saved for outreach',
+            );
+        }
+
         return null;
     }
 
@@ -602,7 +671,8 @@ class ProspectAudienceResolverService
         return $this->extractInstagramHandle($plan) !== ''
             || $this->extractEmail($plan) !== ''
             || $this->extractPhone($plan) !== ''
-            || $this->extractTelegramHandle($plan) !== '';
+            || $this->extractTelegramHandle($plan) !== ''
+            || $this->extractTwitterHandle($plan) !== '';
     }
 
     /**
@@ -619,6 +689,11 @@ class ProspectAudienceResolverService
             (string) ($plan['instagram_url'] ?? ''),
             (string) ($plan['instagram_handle'] ?? ''),
             (string) ($plan['telegram_handle'] ?? ''),
+            (string) ($plan['twitter_handle'] ?? ''),
+            (string) ($plan['contact_email'] ?? ''),
+            (string) ($plan['contact_phone'] ?? ''),
+            (string) ($plan['linkedin_url'] ?? ''),
+            (string) ($plan['profile_url'] ?? ''),
         ]));
     }
 
@@ -627,9 +702,18 @@ class ProspectAudienceResolverService
      */
     private function planTargetsChannel(array $plan, string $channel): bool
     {
+        $primary = Str::lower(trim((string) ($plan['primary_channel'] ?? '')));
+        if ($primary === $channel) {
+            return true;
+        }
+
         $channels = Str::lower((string) ($plan['preferred_channels'] ?? $plan['channels'] ?? ''));
         if ($channels === '') {
             return $channel === 'linkedin';
+        }
+
+        if ($channel === 'twitter') {
+            return str_contains($channels, 'twitter') || preg_match('/\bx\b/', $channels) === 1;
         }
 
         return str_contains($channels, $channel);
@@ -730,6 +814,28 @@ class ProspectAudienceResolverService
         return '';
     }
 
+    /**
+     * @param  array<string, mixed>  $plan
+     */
+    private function extractTwitterHandle(array $plan): string
+    {
+        $handle = trim((string) ($plan['twitter_handle'] ?? ''));
+        if ($handle !== '') {
+            return Str::lower(ltrim($handle, '@'));
+        }
+
+        $blob = $this->planTextBlob($plan);
+        if (preg_match('#(?:twitter\.com|x\.com)/([a-z0-9_]{1,30})#i', $blob, $m)) {
+            return Str::lower($m[1]);
+        }
+        if ($this->planTargetsChannel($plan, 'twitter')
+            && preg_match('/(?:^|\s)@([a-z0-9_]{1,30})(?:\s|$)/i', $blob, $m)) {
+            return Str::lower($m[1]);
+        }
+
+        return '';
+    }
+
     private function normalizeInstagramHandle(string $value): string
     {
         $value = trim($value);
@@ -800,6 +906,24 @@ class ProspectAudienceResolverService
             ->whereHas('importList', fn ($q) => $q->where('user_id', $user->id))
             ->whereNotNull('phone')
             ->whereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE ?", ['%'.$digits.'%'])
+            ->latest('id')
+            ->first();
+
+        return $lead ? $this->importListRefFromLead($lead) : null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function findImportListByTwitterHandle(User $user, string $handle): ?array
+    {
+        $handle = Str::lower(ltrim($handle, '@'));
+        $lead = V2OutreachImportLead::query()
+            ->whereHas('importList', fn ($q) => $q->where('user_id', $user->id))
+            ->whereNotNull('twitter_handle')
+            ->where(function ($q) use ($handle) {
+                $q->whereRaw('LOWER(REPLACE(twitter_handle, "@", "")) = ?', [$handle]);
+            })
             ->latest('id')
             ->first();
 
@@ -913,6 +1037,11 @@ class ProspectAudienceResolverService
      */
     private function searchNeedle(array $plan): string
     {
+        $audienceRef = Str::lower(trim((string) ($plan['audience_ref'] ?? $plan['constraints']['audience_ref'] ?? '')));
+        if ($audienceRef !== '') {
+            return $audienceRef;
+        }
+
         $listName = Str::lower(trim((string) ($plan['list_name'] ?? '')));
         if ($listName !== '') {
             return $listName;

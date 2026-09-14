@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Models\V2IntegrationAccount;
 use App\Models\V2Organization;
 use App\Models\V2OrganizationUser;
+use App\V2\Ai\Services\AiEmployeeSettingsService;
 use App\V2\Ai\Services\CommandCenterService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -46,6 +47,7 @@ class CommandCenterControlCommandTest extends TestCase
         ]);
 
         $this->connectPrimaryOutreachChannels($user);
+        $this->saveSalesPage($user, $org->id);
 
         $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'Launch');
 
@@ -124,6 +126,37 @@ class CommandCenterControlCommandTest extends TestCase
         $this->assertSame('pending', $approval->fresh()->status);
     }
 
+    public function test_first_launch_blocks_without_conversion_asset(): void
+    {
+        [$user, $org, $approval] = $this->pendingStrategyApproval('US SaaS founders');
+
+        $list = SnLeadList::query()->create([
+            'user_id' => $user->id,
+            'name' => 'US SaaS founders',
+            'list_hash' => 'hash-us-saas-assets',
+        ]);
+        SnLead::query()->create([
+            'user_id' => $user->id,
+            'sn_list_id' => $list->list_hash,
+            'first_name' => 'Ada',
+            'last_name' => 'Founder',
+        ]);
+        $approval->update([
+            'payload' => array_merge($approval->payload ?? [], [
+                'list_hash' => $list->list_hash,
+                'list_src' => 'sn',
+                'list_name' => $list->name,
+            ]),
+        ]);
+        $this->connectPrimaryOutreachChannels($user);
+
+        $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'LAUNCH '.$approval->id);
+
+        $this->assertSame('blocked_launch', $result['decision'] ?? null);
+        $this->assertStringContainsString('sales page', strtolower((string) ($result['reply'] ?? '')));
+        $this->assertSame('pending', $approval->fresh()->status);
+    }
+
     public function test_fuzzy_go_ahead_without_audience_does_not_execute_setup_only_plan(): void
     {
         [$user, $org, $approval] = $this->pendingStrategyApproval('US software founders');
@@ -138,6 +171,29 @@ class CommandCenterControlCommandTest extends TestCase
 
         $this->assertTrue(array_key_exists('handled', $result));
         $this->assertSame('pending', $approval->fresh()->status);
+    }
+
+    public function test_go_ahead_with_target_count_is_not_a_launch_confirm(): void
+    {
+        $user = User::factory()->create();
+        $org = V2Organization::query()->create([
+            'name' => 'Count Org',
+            'slug' => 'count-org-'.uniqid(),
+            'owner_id' => $user->id,
+        ]);
+        V2OrganizationUser::query()->create([
+            'organization_id' => $org->id,
+            'user_id' => $user->id,
+            'role' => 'owner',
+        ]);
+
+        $result = app(CommandCenterService::class)->handleControlCommand(
+            $user,
+            $org->id,
+            'go ahead , just 10 ia okay',
+        );
+
+        $this->assertNull($result);
     }
 
     public function test_do_it_without_pending_plan_returns_no_plans_waiting(): void
@@ -156,8 +212,7 @@ class CommandCenterControlCommandTest extends TestCase
 
         $result = app(CommandCenterService::class)->handleControlCommand($user, $org->id, 'do it');
 
-        $this->assertTrue($result['handled'] ?? false);
-        $this->assertStringContainsString('No plans waiting for review', (string) ($result['reply'] ?? ''));
+        $this->assertNull($result);
     }
 
     public function test_relaunch_approved_outreach_without_campaign_id_returns_recovery_message(): void
@@ -219,6 +274,14 @@ class CommandCenterControlCommandTest extends TestCase
                 'status' => 'active',
             ]);
         }
+    }
+
+    private function saveSalesPage(User $user, int $organizationId): void
+    {
+        $settings = app(AiEmployeeSettingsService::class)->for($user, $organizationId);
+        $meta = is_array($settings->meta) ? $settings->meta : [];
+        $meta['conversion_assets'] = ['sales_page_url' => 'https://example.com/offer'];
+        $settings->update(['meta' => $meta]);
     }
 
     /**

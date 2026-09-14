@@ -71,6 +71,19 @@ class DiscoverProspectsTool extends GatedTool
             return $workflowBlock;
         }
 
+        $searchable = app(\App\V2\Ai\Services\PlatformAllocationService::class)
+            ->searchableChannels($this->context->user);
+        if ($searchable === []) {
+            return [
+                'blocked' => true,
+                'launch_blocked' => true,
+                'reason' => 'no_searchable_channel',
+                'message' => 'You cannot find people until LinkedIn (or Instagram Search) is connected.',
+                'integrations_url' => url('/integrations'),
+                'instruction' => 'Do not pretend a search ran. Tell the owner to connect LinkedIn on Integrations, then try again.',
+            ];
+        }
+
         $ledger = app(TurnExecutionLedger::class);
         if ($ledger->hasDiscoveryAttempt()) {
             return [
@@ -183,6 +196,7 @@ class DiscoverProspectsTool extends GatedTool
                 $intentSource !== '' ? $intentSource : $query,
                 $result['lists'],
                 $this->context->conversation,
+                $setupOnly,
             );
 
             if ($staged !== []) {
@@ -237,6 +251,7 @@ class DiscoverProspectsTool extends GatedTool
                 $intentSource !== '' ? $intentSource : $query,
                 $lists,
                 $this->context->conversation,
+                $setupOnly,
             );
 
             if ($staged !== []) {

@@ -186,7 +186,56 @@ PROMPT;
         return (string) config('services.openai.key', '');
     }
 
-    private function chatCompletion(string $prompt, int $maxTokens = 700, float $temperature = 0.8): string
+    /**
+     * @param  array<string, mixed>  $keywordHint
+     * @return array<string, mixed>|null
+     */
+    public function classifyInboxReply(string $body, array $keywordHint = []): ?array
+    {
+        $body = trim($body);
+        if ($body === '' || ! $this->isConfigured()) {
+            return null;
+        }
+
+        $hint = json_encode([
+            'keyword_intent' => $keywordHint['intent'] ?? null,
+            'keyword_buying_signal' => $keywordHint['buying_signal'] ?? null,
+        ]);
+
+        $prompt = <<<PROMPT
+Classify this inbound sales-outreach reply.
+Return ONLY compact JSON with keys:
+intent (one of: meeting_request, wants_watch, wants_info, interested, will_review, not_convinced, qualifying_answer, question, timing, objection, opt_out, neutral),
+buying_signal (none|soft|hard),
+asset_preference (read|watch|meet|null).
+
+Keyword hint (may be wrong): {$hint}
+
+Reply:
+{$body}
+PROMPT;
+
+        try {
+            $raw = $this->chatCompletion(
+                $prompt,
+                120,
+                0.0,
+                'You classify inbound sales replies. Output JSON only. No prose.',
+            );
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $raw = trim($raw);
+        if (preg_match('/\{.*\}/s', $raw, $m)) {
+            $raw = $m[0];
+        }
+        $decoded = json_decode($raw, true);
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    private function chatCompletion(string $prompt, int $maxTokens = 700, float $temperature = 0.8, ?string $system = null): string
     {
         $lastError = 'AI is not configured.';
 
@@ -197,7 +246,7 @@ PROMPT;
                 ->post($endpoint['url'], [
                     'model' => $endpoint['model'],
                     'messages' => [
-                        ['role' => 'system', 'content' => 'You are an expert outreach copywriter. Write only the message the recipient should read.'],
+                        ['role' => 'system', 'content' => $system ?? 'You are an expert outreach copywriter. Write only the message the recipient should read.'],
                         ['role' => 'user', 'content' => $prompt],
                     ],
                     'max_tokens' => $maxTokens,
@@ -364,14 +413,23 @@ PROMPT;
 
         $actionGuide = match ($action) {
             'send_invite' => 'LinkedIn connection invite note (under 300 characters).',
-            'send_email' => 'Cold or follow-up email.',
+            'send_email' => 'Cold or follow-up email (detailed paragraphs, not a chat DM).',
             default => 'Direct message.',
+        };
+
+        $channelKey = strtolower(trim($channel));
+        $styleGuide = match ($channelKey) {
+            'email' => 'EMAIL: real email substance grounded in research; soft value pitch OK; reply-earning question. Not a chat DM.',
+            'linkedin' => 'LINKEDIN DM: short, conversational, one question, no hard pitch.',
+            'instagram', 'whatsapp', 'telegram', 'twitter' => 'CHAT DM: short, casual, one question, no hard pitch.',
+            default => 'Match the channel’s natural length and tone.',
         };
 
         $prompt = <<<PROMPT
 Write outreach copy for a {$channelLabel} campaign step.
 Step type: {$actionGuide}
 Output: {$fieldGuide}
+{$styleGuide}
 {$placeholders}
 Never write operator instructions like "Reply with…", "Thank them…", or "Ask them…".
 
@@ -390,7 +448,11 @@ PROMPT;
 
         $prompt .= "\nReturn only the final {$field} text, no labels or quotes.";
 
-        $maxTokens = $field === 'subject' ? 80 : 350;
+        $maxTokens = match (true) {
+            $field === 'subject' => 80,
+            $channelKey === 'email' => 700,
+            default => 350,
+        };
 
         return $this->chatCompletion($prompt, $maxTokens, 0.72);
     }
@@ -499,8 +561,21 @@ PROMPT;
         $systemLines[] = '- Use the summary for background, then focus on the last few messages below.';
         $systemLines[] = '- Respond to what the lead actually said and what was already discussed.';
         $systemLines[] = '- Do not repeat the same pitch or question if it was already sent unless the lead asks again.';
-        $systemLines[] = '- Match the channel tone (WhatsApp, Instagram, Telegram, X = casual; LinkedIn and email = slightly formal).';
-        $systemLines[] = '- Write ONE natural reply (1-4 sentences for chat; short email paragraphs when email) with a sensible next step when appropriate.';
+        $systemLines[] = '- Match the channel tone (WhatsApp, Instagram, Telegram, X = casual; LinkedIn = concise professional; Email = fuller professional paragraphs).';
+        $isEmail = strtolower(trim($channel)) === 'email';
+        $outboundCount = 0;
+        foreach ($thread as $message) {
+            if (($message['role'] ?? '') === 'assistant') {
+                $outboundCount++;
+            }
+        }
+        if ($isEmail) {
+            $systemLines[] = $outboundCount <= 1
+                ? '- EMAIL (early/first reply): 2-4 short paragraphs. Reference specifics from the thread/research. Soft value is OK. Ask one clear next question. Not a 1-2 sentence chat DM.'
+                : '- EMAIL reply: 2-3 short paragraphs, respond to what they said, keep substance — not a chat bubble.';
+        } else {
+            $systemLines[] = '- Write ONE natural reply (1-4 sentences for chat) with a sensible next step when appropriate.';
+        }
         $systemLines[] = '- Never mention that you are AI. Return only the reply text.';
 
         if ($researchRequired) {
@@ -511,6 +586,18 @@ PROMPT;
             $systemLines[] = '- Tie your offer to THAT context (e.g. construction trust platform → stakeholder outreach, qualified conversations).';
             $systemLines[] = '- Do NOT send a vague reply like "I reviewed your site" without naming what they do, or "what challenges are you facing" as the main content.';
             $systemLines[] = '- One clarifying question at the end is fine only after showing you understood their business.';
+        }
+
+        if ((bool) ($options['forbid_links'] ?? false)) {
+            $systemLines[] = '';
+            $systemLines[] = 'Link policy for THIS reply: do not include any URL, sales page, webinar, calendar, or booking link.';
+        }
+
+        $mustIncludeUrl = trim((string) ($options['must_include_url'] ?? ''));
+        if ($mustIncludeUrl !== '') {
+            $systemLines[] = '';
+            $systemLines[] = 'Link policy for THIS reply: you MUST include this exact URL (own line is fine): '.$mustIncludeUrl;
+            $systemLines[] = 'Share only that one link. Do not add a second CTA, webinar, or meeting link in the same message.';
         }
 
         $chatMessages = [
@@ -549,7 +636,7 @@ PROMPT;
             ->post('https://api.openai.com/v1/chat/completions', [
                 'model' => 'gpt-4o-mini',
                 'messages' => $chatMessages,
-                'max_tokens' => 320,
+                'max_tokens' => strtolower(trim($channel)) === 'email' ? 650 : 320,
                 'temperature' => 0.55,
             ]);
 

@@ -386,6 +386,9 @@ class CommandCenterService
             }
             $lines[] = '• Next after Launch: say "find prospects" to search LinkedIn from this ICP';
         }
+        if (! empty($plan['conversion_action'])) {
+            $lines[] = '• Conversion step: '.str_replace('_', ' ', (string) $plan['conversion_action']);
+        }
         if (! empty($plan['booking_url'])) {
             $lines[] = '• Booking link: '.$plan['booking_url'];
         }
@@ -466,12 +469,79 @@ class CommandCenterService
                 $lines[] = '• Delta: '.$plan['delta_days'].' day(s)';
             }
         }
-        if (! empty($plan['evidence']) && is_array($plan['evidence'])) {
+        if (! empty($plan['evidence']) && is_array($plan['evidence'])
+            && ! (($plan['source'] ?? '') === 'cold_outbound' || ! empty($plan['one_shot']))) {
             $lines[] = '• Evidence: '.implode(', ', array_map(
                 fn ($k, $v) => is_int($k) ? (string) $v : "{$k}: {$v}",
                 array_keys($plan['evidence']),
                 array_values($plan['evidence']),
             ));
+        }
+        if (($plan['source'] ?? '') === 'cold_outbound' || ! empty($plan['one_shot'])) {
+            $lines[] = '';
+            $lines[] = 'Cold outbound — Review & Launch';
+            $recipient = $plan['audience'] ?? $plan['contact_email'] ?? $plan['prospect_name'] ?? null;
+            if ($recipient) {
+                $lines[] = '• Recipient: '.$recipient;
+            }
+            if (! empty($plan['primary_channel'] ?? $plan['preferred_channels'] ?? null)) {
+                $lines[] = '• Channel: '.($plan['primary_channel'] ?? $plan['preferred_channels']);
+            }
+            if (! empty($plan['research_url'])) {
+                $lines[] = '• Research URL: '.$plan['research_url'];
+            }
+            $facts = is_array($plan['research_facts'] ?? null)
+                ? $plan['research_facts']
+                : (is_array($plan['evidence'] ?? null) ? $plan['evidence'] : []);
+            if ($facts !== []) {
+                $lines[] = '• Research notes:';
+                foreach (array_slice(array_values($facts), 0, 3) as $fact) {
+                    if (is_string($fact) && trim($fact) !== '') {
+                        $lines[] = '  – '.Str::limit(trim($fact), 140, '…');
+                    }
+                }
+            }
+            if (! empty($plan['subject'])) {
+                $lines[] = '• Subject: '.$plan['subject'];
+            }
+            if (! empty($plan['message'])) {
+                $lines[] = '• Draft:';
+                $lines[] = '"'.Str::limit((string) $plan['message'], 420, '…').'"';
+            }
+            $quality = is_array($plan['quality'] ?? null) ? $plan['quality'] : [];
+            if ($quality !== []) {
+                $score = isset($quality['score']) ? round(((float) $quality['score']) * 100).'%' : null;
+                $bits = array_filter([
+                    isset($quality['pass']) ? ((bool) $quality['pass'] ? 'pass' : 'fail') : null,
+                    $score !== null ? 'score '.$score : null,
+                    isset($quality['research_ok']) ? ((bool) $quality['research_ok'] ? 'research ok' : 'research thin') : null,
+                    isset($quality['grounded']) ? ((bool) $quality['grounded'] ? 'grounded' : 'not grounded') : null,
+                    isset($quality['not_generic']) ? ((bool) $quality['not_generic'] ? 'specific' : 'generic') : null,
+                    isset($quality['has_clear_cta']) ? ((bool) $quality['has_clear_cta'] ? 'clear CTA' : 'weak CTA') : null,
+                    ! empty($quality['summary']) ? (string) $quality['summary'] : null,
+                ]);
+                if ($bits !== []) {
+                    $lines[] = '• Draft quality: '.implode(' · ', $bits);
+                }
+            }
+            $lines[] = '• Status: researched → drafted → awaiting approval (not sent)';
+        }
+        if (($plan['type'] ?? '') === 'draft_reply') {
+            $intel = is_array($plan['inbox_intel'] ?? null) ? $plan['inbox_intel'] : [];
+            if ($intel !== []) {
+                $lines[] = '';
+                $lines[] = 'Inbox reply — Review & Launch';
+                if (! empty($intel['intent'])) {
+                    $lines[] = '• Intent: '.$intel['intent'];
+                }
+                if (! empty($intel['next_step'])) {
+                    $lines[] = '• Next step: '.$intel['next_step'];
+                }
+                if (! empty($intel['dossier_fact'])) {
+                    $lines[] = '• Dossier: '.Str::limit((string) $intel['dossier_fact'], 160, '…');
+                }
+                $lines[] = '• Status: drafted → awaiting approval (not sent)';
+            }
         }
         if (($plan['type'] ?? '') === 'campaign_inbox_ai') {
             $lines[] = '• Campaign: '.($plan['campaign_name'] ?? '#'.($plan['campaign_id'] ?? ''));
@@ -552,10 +622,11 @@ class CommandCenterService
         $trimmed = trim($text);
 
         if (app(UserTurnIntentService::class)->isInformational($trimmed)) {
+            // Do not short-circuit the employee — rewrite so Soci uses get_sales_brief / get_attention_queue tools.
             return [
-                'handled' => true,
-                'reply' => app(SalesBriefService::class)->todaySummary($user, $organizationId),
-                'decision' => 'status_brief',
+                'handled' => false,
+                'rewrite' => 'Give me today\'s Command Center status brief. Call get_sales_brief (and get_attention_queue if replies matter). Summarize hot inbox, pending LAUNCH items, and active campaigns from tools — do not invent counts.',
+                'decision' => 'status_brief_rewrite',
             ];
         }
 
@@ -686,6 +757,17 @@ class CommandCenterService
                     ),
                 ]);
                 $approval = $approval->fresh();
+            }
+
+            if ($verb === 'LAUNCH') {
+                $assetBlock = $this->blockedLaunchMissingConversionAssets($approval, $user, $organizationId);
+                if ($assetBlock !== null) {
+                    return [
+                        'handled' => true,
+                        'reply' => $assetBlock,
+                        'decision' => 'blocked_launch',
+                    ];
+                }
             }
 
             if ($verb === 'REJECT') {
@@ -826,10 +908,7 @@ class CommandCenterService
                 return $this->handleControlCommand($user, $organizationId, 'LAUNCH '.$newest->id);
             }
 
-            return [
-                'handled' => true,
-                'reply' => 'No plans waiting for review. Describe a goal and I\'ll stage one.',
-            ];
+            return null;
         }
 
         return null;
@@ -910,13 +989,17 @@ class CommandCenterService
 
     private function isFuzzyLaunchConfirmation(string $text): bool
     {
-        $lower = Str::lower(trim($text));
+        $normalized = Str::lower(trim($text));
+        $normalized = trim((string) preg_replace('/[^\p{L}\p{N}\s\']+/u', ' ', $normalized));
+        $normalized = trim((string) preg_replace('/\s+/', ' ', $normalized));
 
-        if (preg_match('/\b(go ahead|proceed|let\'?s go|start it|run it|do it now|sounds good|yes please|make it happen|ship it|confirm delete)\b/', $lower)) {
-            return true;
-        }
-
-        return in_array($lower, ['yes', 'yep', 'yeah', 'ok', 'okay', 'sure', 'do it'], true);
+        return in_array($normalized, [
+            'yes', 'yep', 'yeah', 'ok', 'okay', 'sure', 'do it',
+            'go ahead', 'proceed', "let's go", 'lets go',
+            'start it', 'run it', 'do it now', 'sounds good',
+            'yes please', 'make it happen', 'ship it',
+            'confirm delete', 'go ahead and launch', 'go ahead launch',
+        ], true);
     }
 
     public function launchAcknowledged(AiActionApproval $approval, User $user): string
@@ -1127,6 +1210,13 @@ class CommandCenterService
 
             return "Approved #{$approval->id}, but the reply couldn't send: ".$e->getMessage();
         }
+
+        $payload = is_array($approval->payload) ? $approval->payload : [];
+        app(OutboundCopyPrefsService::class)->learnFromLaunchedPlan(
+            $user,
+            (int) $approval->organization_id,
+            $payload,
+        );
 
         return implode("\n", [
             "Launched plan #{$approval->id}.",
@@ -1339,6 +1429,35 @@ class CommandCenterService
 
     private function launchCampaignPlan(AiActionApproval $approval, User $user): string
     {
+        $payload = is_array($approval->payload) ? $approval->payload : [];
+        if (app(PlanChannelIntentService::class)->wantsParallelDiscovery($payload)) {
+            try {
+                $launched = app(MultiChannelPlanLaunchService::class)->launch(
+                    $approval->fresh() ?? $approval,
+                    $user,
+                );
+            } catch (MissingProspectAudienceException $e) {
+                return implode("\n", array_merge(
+                    ["Can't launch plan #{$approval->id} without prospect lists on the channels in the plan."],
+                    $e->nextSteps,
+                ));
+            }
+
+            $campaign = \App\Models\V2OutreachCampaign::query()->find($launched['campaign_ids'][0] ?? 0);
+            if ($campaign && (int) ($approval->fresh()?->workflow_run_id ?? $approval->workflow_run_id ?? 0) > 0) {
+                app(WorkflowRuntimeService::class)->resumeAfterLaunch(
+                    (int) ($approval->fresh()?->workflow_run_id ?? $approval->workflow_run_id),
+                    (int) $approval->id,
+                    [
+                        'outreach_campaign_ids' => $launched['campaign_ids'],
+                        'campaign_status' => $campaign->status,
+                    ],
+                );
+            }
+
+            return implode("\n", $launched['lines']);
+        }
+
         try {
             $created = $this->campaignDrafts->createFromApproval($approval->fresh() ?? $approval, $user);
         } catch (MissingProspectAudienceException $e) {
@@ -1381,6 +1500,12 @@ class CommandCenterService
         $audienceName = data_get($approval->payload, 'list_name')
             ?? data_get($approval->payload, 'audience_note')
             ?? 'attached list';
+
+        app(OutboundCopyPrefsService::class)->learnFromLaunchedPlan(
+            $user,
+            (int) $approval->organization_id,
+            is_array($approval->payload) ? $approval->payload : [],
+        );
 
         $lines = [
             "Launched plan #{$approval->id}: {$goal}",
@@ -1640,6 +1765,45 @@ class CommandCenterService
         }
 
         return 'Describe your next goal, or say *help* for commands.';
+    }
+
+    private function blockedLaunchMissingConversionAssets(AiActionApproval $approval, User $user, int $organizationId = 0): ?string
+    {
+        if (! $this->isOutreachPlanTool($approval) && ! $this->isFirstExperimentPlan($approval)) {
+            return null;
+        }
+
+        $orgId = $organizationId > 0
+            ? $organizationId
+            : (int) ($approval->organization_id ?: ($user->current_organization_id ?? 0));
+        if ($orgId <= 0) {
+            return null;
+        }
+
+        $hasLaunched = \App\Models\V2OutreachCampaign::query()
+            ->where('user_id', $user->id)
+            ->where('status', '!=', 'draft')
+            ->exists();
+        if ($hasLaunched) {
+            return null;
+        }
+
+        $settings = app(AiEmployeeSettingsService::class)->for($user, $orgId);
+        if (app(WorkspaceContextService::class)->hasLaunchConversionAsset($user, $settings)) {
+            return null;
+        }
+
+        return implode("\n", [
+            "I can't launch your first campaign yet — add at least one conversion step: a **sales page**, **webinar**, or **meeting link**.",
+            '',
+            'Without that, Soci can start conversations but has nothing to hand off when someone is interested.',
+            url('/ai-employee'),
+        ]);
+    }
+
+    private function isFirstExperimentPlan(AiActionApproval $approval): bool
+    {
+        return ($approval->payload['first_experiment'] ?? false) === true;
     }
 
     private function blockedLaunchMissingIntegrations(AiActionApproval $approval, User $user): ?string

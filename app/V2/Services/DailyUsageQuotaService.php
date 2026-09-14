@@ -58,6 +58,13 @@ class DailyUsageQuotaService
                     'LinkedIn messages',
                     'Follow-up messages sent in existing chats via outreach and Call Manager.',
                 ),
+                $this->unipileQuota(
+                    $user->id,
+                    UnipileDailyActionLimiter::ACTION_INSTAGRAM_DMS,
+                    'Instagram DMs',
+                    'Slow Instagram messaging — extras wait until later today or tomorrow so Meta does not flag the account.',
+                    app(ChannelPacingService::class)->instagramDailyLimit($user->id),
+                ),
                 $this->emailEnrichmentQuota($user),
             ],
             'resets_at' => $this->resetsAt()->toIso8601String(),
@@ -70,7 +77,8 @@ class DailyUsageQuotaService
      * @return array{
      *     invites: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool},
      *     noted_invites: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool},
-     *     messages: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool}
+     *     messages: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool},
+     *     instagram_dms: array{limit: int, used: int, remaining: int, unlimited: bool, at_limit: bool}
      * }
      */
     public function linkedInActionQuotas(User $user): array
@@ -94,6 +102,7 @@ class DailyUsageQuotaService
             'invites' => $pick(UnipileDailyActionLimiter::ACTION_INVITES),
             'noted_invites' => $pick(UnipileDailyActionLimiter::ACTION_NOTED_INVITES),
             'messages' => $pick(UnipileDailyActionLimiter::ACTION_MESSAGES),
+            'instagram_dms' => $pick(UnipileDailyActionLimiter::ACTION_INSTAGRAM_DMS),
         ];
     }
 
@@ -110,9 +119,9 @@ class DailyUsageQuotaService
      *     at_limit: bool
      * }
      */
-    private function unipileQuota(int $userId, string $action, string $label, string $description): array
+    private function unipileQuota(int $userId, string $action, string $label, string $description, ?int $limitOverride = null): array
     {
-        $snapshot = $this->limiter->snapshot($userId, $action);
+        $snapshot = $this->limiter->snapshot($userId, $action, $limitOverride);
         $limit = (int) $snapshot['limit'];
         $used = (int) $snapshot['used'];
         $unlimited = $limit <= 0;

@@ -341,11 +341,19 @@ class IntegrationAccountController extends Controller
         $publicBaseUrl = rtrim($request->getSchemeAndHttpHost(), '/');
         $redirectUrl = !empty($data['redirect_url']) ? (string) $data['redirect_url'] : null;
 
-        return array_merge($data, [
+        $provider = strtoupper((string) ($data['provider'] ?? 'LINKEDIN'));
+        $context = array_merge($data, [
             'organization_id' => $organizationId,
             'success_redirect_url' => $redirectUrl ?: ($publicBaseUrl.'/integrations?connected=1'),
             'failure_redirect_url' => $redirectUrl ?: ($publicBaseUrl.'/integrations?error=1'),
             'notify_url' => $publicBaseUrl.(string) config('services.unipile.webhook_callback_path', '/unipile/callback'),
         ]);
+
+        return app(\App\V2\Services\HostedAuthLocationService::class)->applyToContext(
+            $context,
+            $request->user(),
+            $request,
+            $provider,
+        );
     }
 }

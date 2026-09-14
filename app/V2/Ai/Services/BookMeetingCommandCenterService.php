@@ -27,6 +27,7 @@ class BookMeetingCommandCenterService
         private readonly CallOrchestrationService $calls,
         private readonly InboxClassificationService $classifier,
         private readonly OpenAIContentService $openai,
+        private readonly OutboundMessageComposerService $composer,
     ) {}
 
     /**
@@ -54,10 +55,17 @@ class BookMeetingCommandCenterService
             ->whereKey($inboxConversationId)
             ->firstOrFail();
 
-        if (! $this->calendar->isAvailable($user->id)) {
+        $workspace = app(WorkspaceContextService::class);
+        $meeting = $workspace->resolveMeetingLink($user, $settings);
+        $calendarAvailable = $this->calendar->isAvailable($user->id);
+        $manualUrl = (is_string($meeting) && $meeting !== '' && $meeting !== 'app_booking')
+            ? $meeting
+            : '';
+
+        if (! $calendarAvailable && $manualUrl === '') {
             return [
                 'blocked' => true,
-                'message' => 'Connect Google or Outlook calendar on Integrations before Soci can send booking links.',
+                'message' => 'Add a meeting link in AI Employee settings, or connect Google/Outlook calendar on Integrations, before Soci can send booking links.',
             ];
         }
 
@@ -69,18 +77,25 @@ class BookMeetingCommandCenterService
         $existingCall = V2Call::query()
             ->where('user_id', $user->id)
             ->where('conversation_id', $inbox->id)
-            ->whereIn('status', ['engaged', 'booked', 'scheduled'])
+            ->whereIn('status', ['engaged', 'scheduling', 'sent', 'in_progress', 'booked', 'scheduled'])
             ->latest('id')
             ->first();
 
+        $batch = $this->inboxBookingBatch($user, $existingCall);
         $call = $existingCall ?? $this->calls->createCall($user, $organizationId, [
             'conversation_id' => $inbox->id,
             'prospect_name' => $prospectName,
-            'meta' => ['source' => 'socifusion_ai'],
+            'meta' => [
+                'source' => 'socifusion_ai',
+                'batch_id' => $batch['id'],
+                'batch_name' => $batch['name'],
+            ],
         ]);
 
         $token = $this->calendar->ensureBookingToken($call);
-        $bookingUrl = $this->calendar->publicBookingUrl($token);
+        $bookingUrl = $manualUrl !== ''
+            ? $manualUrl
+            : $this->calendar->publicBookingUrl($token);
         $senderName = SenderIdentity::displayName($user, $organizationId);
         $draft = $this->buildRecipientFacingDraft(
             $inbox,
@@ -102,6 +117,7 @@ class BookMeetingCommandCenterService
             'inbound_preview' => Str::limit($latestInbound, 200, '…'),
             'intent' => $classification['intent'],
             'booking_url' => $bookingUrl,
+            'meeting_link_source' => $manualUrl !== '' ? 'manual' : 'app_booking',
             'agent_notes' => trim((string) $notes) !== '' ? trim((string) $notes) : null,
             'draft_text' => $draft,
             'inbox_url' => url('/inbox/'.$inbox->provider.'/'.$inbox->id),
@@ -174,17 +190,18 @@ class BookMeetingCommandCenterService
                     : "Do not use [Your Name] — omit a personal name if unknown.\n")
                 .'Output ONLY the email/DM the prospect will read.';
 
-            $draft = trim($this->openai->generateInboxReply(
-                channel: (string) $inbox->provider,
-                aiContext: $aiContext,
-                thread: [],
-                inboundBody: $latestInbound !== '' ? $latestInbound : 'Thanks — interested, please share details.',
-                leadName: $prospectName,
-                options: [
+            $draft = trim($this->composer->composeInboxReply(
+                (string) $inbox->provider,
+                $aiContext,
+                [],
+                $latestInbound !== '' ? $latestInbound : 'Thanks — interested, please share details.',
+                $prospectName,
+                [
                     'sender_name' => $senderName,
                     'agent_notes' => $guidance,
+                    'must_include_url' => $bookingUrl,
                 ],
-            ));
+            )['body'] ?? '');
 
             if ($draft !== '' && RecipientFacingCopyGuard::problems($draft) === []) {
                 if (! str_contains($draft, $bookingUrl)) {
@@ -202,5 +219,22 @@ class BookMeetingCommandCenterService
             : 'Hi,';
 
         return "{$hello}\n\nThanks for your interest — pick a time that works for you here:\n{$bookingUrl}\n\nLooking forward to connecting.\n\n{$signOff}";
+    }
+
+    /**
+     * @return array{id: string, name: string}
+     */
+    private function inboxBookingBatch(User $user, ?V2Call $existing): array
+    {
+        $name = 'Inbox bookings';
+        $meta = is_array($existing?->meta) ? $existing->meta : [];
+        $id = trim((string) ($meta['batch_id'] ?? ''));
+
+        return [
+            'id' => $id !== '' ? $id : 'inbox-bookings-'.$user->id,
+            'name' => trim((string) ($meta['batch_name'] ?? '')) !== ''
+                ? (string) $meta['batch_name']
+                : $name,
+        ];
     }
 }

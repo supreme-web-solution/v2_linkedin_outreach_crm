@@ -132,6 +132,7 @@ class DiscoverProspectsService
             'audience' => $query,
             'target_count' => $profileUrl ? 1 : ($targetCount ?? $this->inferCountFromQuery($query) ?? $limit),
             'prefer_fresh_audience' => $forceFresh,
+            'force_new_search' => app(UserTurnIntentService::class)->wantsFreshProspectPull($query),
             'geography' => $geography,
             'network_degree' => $networkDegree,
             'title' => $title,
@@ -139,6 +140,7 @@ class DiscoverProspectsService
             'open_link' => $openLink,
             'profile_url' => $profileUrl,
             'linkedin_url' => $profileUrl,
+            'audience_name' => $title !== null && trim($title) !== '' ? Str::limit(trim($title), 80, '') : null,
         ], fn ($v) => $v !== null && $v !== '');
 
         // Only attach a saved list before search when it is a strong name match AND user did not ask for fresh N.
@@ -322,7 +324,7 @@ class DiscoverProspectsService
         ?string $geography = null,
         bool $forceFresh = false,
     ): array {
-        $query = $this->instagramQueryWithLocation($query, $geography);
+        $query = $this->instagramQueryWithLocation($this->instagramSearchQuery($user, $query), $geography);
 
         // Keyword is primary. Only force username lookup for @handle or profile URL.
         $usernames = [];
@@ -367,8 +369,15 @@ class DiscoverProspectsService
         $next = [
             'Fetched Instagram audience: '.$built['list_name'].' ('.$built['total_leads'].').',
             'list_hash='.$built['list_hash'].' list_src=csv',
-            'draft_campaign_plan with channels=Instagram + this list_hash (one_shot for a greeting).',
         ];
+        if (! empty($built['quality_warning'])) {
+            $next[] = 'Quality note: '.$built['quality_warning'];
+        }
+        if (! empty($built['weak_fit'])) {
+            $next[] = 'Do not start outreach until the owner reviews samples — weak ICP fit.';
+        } else {
+            $next[] = 'List saved only — wait for owner to ask before draft_campaign_plan / outreach.';
+        }
         if (is_array($samples) && $samples !== []) {
             $next[] = 'Sample profiles:';
             foreach (array_slice($samples, 0, 5) as $i => $p) {
@@ -387,10 +396,12 @@ class DiscoverProspectsService
             'lists' => [array_merge($built, ['primary_channel' => 'instagram'])],
             'best_match' => array_merge($built, ['primary_channel' => 'instagram']),
             'total_leads_in_matches' => $built['total_leads'],
-            'ready_for_campaign' => true,
+            'ready_for_campaign' => empty($built['weak_fit']),
             'auto_sourced' => true,
             'fresh_fetch' => true,
             'sample_profiles' => $samples,
+            'quality_warning' => $built['quality_warning'] ?? $this->instagramAudience->lastQualityWarning(),
+            'weak_fit' => ! empty($built['weak_fit']),
             'campaign_hint' => 'Instagram list: single-channel Instagram outreach only — do not mix LinkedIn/email in the same sequence.',
             'next_steps' => $next,
         ];
@@ -598,7 +609,7 @@ class DiscoverProspectsService
         $platform = Str::lower(trim($platform));
 
         if (in_array($platform, ['all', 'parallel', 'multi', 'multichannel'], true)) {
-            return true;
+            return count($this->parallelDiscoveryChannels($user)) >= 2;
         }
 
         if (app(UserTurnIntentService::class)->wantsMultichannelDiscovery($query)) {
@@ -608,6 +619,11 @@ class DiscoverProspectsService
         // Explicit single-channel requests must never fan out to Instagram/LinkedIn together.
         if (in_array($platform, ['linkedin', 'li', 'instagram', 'ig'], true)) {
             return false;
+        }
+
+        // auto = every connected discovery channel (LinkedIn and Instagram). Neither is preferred.
+        if (in_array($platform, ['auto', 'default', ''], true)) {
+            return count($this->parallelDiscoveryChannels($user)) >= 2;
         }
 
         return false;
@@ -653,6 +669,37 @@ class DiscoverProspectsService
         $next = $pending[0];
 
         return "Searching {$next} profiles now — this can take a few minutes.";
+    }
+
+    private function instagramSearchQuery(User $user, string $query): string
+    {
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        $icp = [];
+        if ($orgId > 0) {
+            $settings = app(AiEmployeeSettingsService::class)->for($user, $orgId);
+            $icp = $this->workspaceContext->storedIcp($settings);
+        }
+
+        $intent = app(PlanChannelIntentService::class);
+        $keyword = trim($intent->instagramKeyword([
+            'audience' => $query,
+            'goal' => $query,
+            'icp_notes' => $query,
+        ], $icp));
+
+        if ($keyword === '' || $keyword === $query) {
+            return $query;
+        }
+
+        if ($intent->looksLikeJobTitleList($query)) {
+            Log::info('[Soci] Instagram search using offer keywords, not job titles', [
+                'user_id' => $user->id,
+                'original' => Str::limit($query, 160),
+                'keyword' => $keyword,
+            ]);
+        }
+
+        return $keyword;
     }
 
     private function instagramQueryWithLocation(string $query, ?string $geography): string

@@ -10,8 +10,11 @@ use App\Models\V2OutreachLead;
 use App\Models\V2OutreachLeadProgress;
 use App\Jobs\V2\ProactiveInboundReplyJob;
 use App\V2\Ai\Support\InboundMessagePresenter;
+use App\V2\Ai\Services\AiProviderChain;
+use App\V2\Ai\Services\ConversionNextActionService;
 use App\V2\Ai\Services\ConversionStageService;
 use App\V2\Ai\Services\InboxSociHandlingService;
+use App\V2\Ai\Services\OutboundMessageComposerService;
 use App\V2\Ai\Services\ProspectIntelligenceService;
 use App\V2\Ai\Services\ProspectMemoryService;
 use App\V2\Ai\Services\WorkspaceContextService;
@@ -42,11 +45,14 @@ class UnifiedInboxReplyService
         private readonly OutreachChannelInboxSettingsService $channelSettings,
         private readonly AutoResponseService $autoResponses,
         private readonly OpenAIContentService $openai,
+        private readonly OutboundMessageComposerService $composer,
+        private readonly AiProviderChain $providers,
         private readonly OutreachActivityLogger $logger,
         private readonly ProspectIntelligenceService $prospectIntelligence,
         private readonly ProspectMemoryService $prospectMemory,
         private readonly ConversionStageService $conversionStages,
         private readonly WorkspaceContextService $workspaceContext,
+        private readonly ConversionNextActionService $conversionNextAction,
     ) {}
 
     /**
@@ -59,7 +65,9 @@ class UnifiedInboxReplyService
      *     channel_label: string,
      *     inbound_preview: string,
      *     inbox_url: string,
-     *     conversation_id: int
+     *     conversation_id: int,
+     *     conversion_action?: string,
+     *     conversion_asset_url?: string|null
      * }
      */
     public function draftReplyForConversation(User $user, V2Conversation $conversation): array
@@ -93,8 +101,8 @@ class UnifiedInboxReplyService
             $aiContext = trim((string) ($campaign->name ?? '')).' outreach follow-up.';
         }
 
-        if (! $this->openai->isConfigured()) {
-            throw new \RuntimeException('OpenAI is not configured for inbox reply drafting.');
+        if ($this->providers->forAgent() === [] && ! $this->openai->isConfigured()) {
+            throw new \RuntimeException('No AI provider is configured for inbox reply drafting.');
         }
 
         if ($lead) {
@@ -106,7 +114,8 @@ class UnifiedInboxReplyService
             }
         }
 
-        $draft = $this->generateAiReply($conversation, $inboundBody, $aiContext, $user, $lead, $campaign);
+        $generated = $this->generateAiReply($conversation, $inboundBody, $aiContext, $user, $lead, $campaign);
+        $draft = $generated['draft'];
         if ($draft === '') {
             throw new \RuntimeException('Could not generate a reply draft. Check campaign AI context in outreach settings.');
         }
@@ -115,6 +124,16 @@ class UnifiedInboxReplyService
             ? ($this->prospectMemory->preferredGreetingName($lead)
                 ?? trim((string) ($lead->full_name ?? Arr::get($meta, 'prospect_name', 'Prospect'))))
             : trim((string) Arr::get($meta, 'prospect_name', 'Prospect'));
+
+        $inboxIntel = $lead
+            ? $this->prospectMemory->cardIntel($lead, $generated['conversion_action'] ?? null)
+            : [
+                'intent' => null,
+                'next_step' => isset($generated['conversion_action'])
+                    ? str_replace('_', ' ', (string) $generated['conversion_action'])
+                    : null,
+                'dossier_fact' => null,
+            ];
 
         return [
             'draft' => $draft,
@@ -125,6 +144,9 @@ class UnifiedInboxReplyService
             'inbound_urls' => InboundMessagePresenter::extractUrls($inboundBody),
             'inbox_url' => url('/inbox/'.$conversation->provider.'/'.$conversation->id),
             'conversation_id' => $conversation->id,
+            'conversion_action' => $generated['conversion_action'],
+            'conversion_asset_url' => $generated['conversion_asset_url'],
+            'inbox_intel' => $inboxIntel,
         ];
     }
 
@@ -215,7 +237,8 @@ class UnifiedInboxReplyService
         if ($this->channelSettings->autoReplyEnabled($campaign, (string) $conversation->provider)) {
             $aiContext = $this->channelSettings->aiContextFor($campaign, (string) $conversation->provider);
             if ($aiContext !== '' && $this->openai->isConfigured()) {
-                $reply = $this->generateAiReply($conversation, $inboundBody, $aiContext, $user, $lead, $campaign);
+                $generated = $this->generateAiReply($conversation, $inboundBody, $aiContext, $user, $lead, $campaign);
+                $reply = $generated['draft'];
                 if ($reply !== '') {
                     try {
                         $this->inbox->sendMessage($user, $conversation, $reply);
@@ -369,6 +392,9 @@ class UnifiedInboxReplyService
         );
     }
 
+    /**
+     * @return array{draft: string, conversion_action: string, conversion_asset_url: string|null}
+     */
     private function generateAiReply(
         V2Conversation $conversation,
         string $inboundBody,
@@ -376,7 +402,13 @@ class UnifiedInboxReplyService
         User $user,
         ?V2OutreachLead $lead,
         ?V2OutreachCampaign $campaign,
-    ): string {
+    ): array {
+        $empty = [
+            'draft' => '',
+            'conversion_action' => ConversionNextActionService::ACTION_QUALIFY,
+            'conversion_asset_url' => null,
+        ];
+
         $leadName = $lead
             ? ($this->prospectMemory->preferredGreetingName($lead)
                 ?? trim((string) ($lead->full_name ?? Arr::get($conversation->meta ?? [], 'prospect_name', ''))))
@@ -390,6 +422,18 @@ class UnifiedInboxReplyService
         try {
             $orgId = (int) ($user->current_organization_id ?? 0);
             $agentNotes = [];
+            $next = [
+                'action' => ConversionNextActionService::ACTION_QUALIFY,
+                'asset_url' => null,
+                'must_include_url' => false,
+                'forbid_links' => true,
+                'guide' => '',
+            ];
+            $assetBag = [
+                'sales_page_url' => '',
+                'webinar_url' => '',
+                'meeting_link' => null,
+            ];
 
             if ($orgId > 0) {
                 $businessBrief = $this->workspaceContext->inboxBusinessBrief($user, $orgId);
@@ -400,6 +444,19 @@ class UnifiedInboxReplyService
                 $conversionGuide = $this->workspaceContext->inboxConversionGuide($user, $orgId);
                 if ($conversionGuide !== '') {
                     $agentNotes[] = $conversionGuide;
+                }
+
+                $settings = app(\App\V2\Ai\Services\AiEmployeeSettingsService::class)->for($user, $orgId);
+                $stored = $this->workspaceContext->conversionAssets($settings);
+                $assetBag = [
+                    'sales_page_url' => trim((string) ($stored['sales_page_url'] ?? '')),
+                    'webinar_url' => trim((string) ($stored['webinar_url'] ?? '')),
+                    'meeting_link' => $this->workspaceContext->resolveMeetingLink($user, $settings),
+                ];
+
+                $next = $this->conversionNextAction->decide($user, $orgId, $inboundBody, $lead);
+                if (($next['guide'] ?? '') !== '') {
+                    $agentNotes[] = 'Required next action: '.$next['action']."\n".$next['guide'];
                 }
             }
 
@@ -418,8 +475,14 @@ class UnifiedInboxReplyService
             }
 
             $researchRequired = $lead && $this->prospectMemory->hasResearchEvidence($lead);
+            $mustUrl = ($next['must_include_url'] ?? false)
+                ? trim((string) ($next['asset_url'] ?? ''))
+                : '';
+            if ($mustUrl === 'app_booking') {
+                $mustUrl = '';
+            }
 
-            return $this->openai->generateInboxReply(
+            $draft = trim($this->composer->composeInboxReply(
                 (string) $conversation->provider,
                 $aiContext,
                 $context['recent'],
@@ -435,11 +498,58 @@ class UnifiedInboxReplyService
                     ),
                     'agent_notes' => trim(implode("\n\n", array_filter($agentNotes))),
                     'research_required' => $researchRequired,
+                    'forbid_links' => (bool) ($next['forbid_links'] ?? false),
+                    'must_include_url' => $mustUrl,
                 ],
-            );
+            )['body'] ?? '');
+
+            $draft = $this->enforceConversionCopy($draft, $next, $assetBag);
+
+            return [
+                'draft' => $draft,
+                'conversion_action' => (string) ($next['action'] ?? ConversionNextActionService::ACTION_QUALIFY),
+                'conversion_asset_url' => $mustUrl !== '' ? $mustUrl : (is_string($next['asset_url'] ?? null) ? $next['asset_url'] : null),
+            ];
         } catch (\Throwable) {
-            return '';
+            return $empty;
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $next
+     * @param  array{sales_page_url?: string, webinar_url?: string, meeting_link?: string|null}  $assets
+     */
+    private function enforceConversionCopy(string $draft, array $next, array $assets): string
+    {
+        $draft = trim($draft);
+        if ($draft === '') {
+            return $draft;
+        }
+
+        $url = trim((string) ($next['asset_url'] ?? ''));
+        if (($next['must_include_url'] ?? false) && $url !== '' && $url !== 'app_booking') {
+            if (! str_contains(Str::lower($draft), Str::lower($url))) {
+                $draft = rtrim($draft)."\n\n".$url;
+            }
+
+            return $draft;
+        }
+
+        if ($next['forbid_links'] ?? false) {
+            foreach (['sales_page_url', 'webinar_url'] as $key) {
+                $asset = trim((string) ($assets[$key] ?? ''));
+                if ($asset !== '') {
+                    $draft = str_ireplace($asset, '', $draft);
+                }
+            }
+            $meeting = $assets['meeting_link'] ?? null;
+            if (is_string($meeting) && $meeting !== '' && $meeting !== 'app_booking') {
+                $draft = str_ireplace($meeting, '', $draft);
+            }
+            $draft = trim((string) preg_replace('/\n{3,}/', "\n\n", $draft));
+        }
+
+        return $draft;
     }
 
     /**

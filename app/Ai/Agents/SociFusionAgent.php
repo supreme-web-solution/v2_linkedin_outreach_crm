@@ -13,6 +13,7 @@ use App\Ai\Tools\DiscoverProspectsTool;
 use App\Ai\Tools\DeleteCampaignTool;
 use App\Ai\Tools\DeleteResourceTool;
 use App\Ai\Tools\DraftCampaignPlanTool;
+use App\Ai\Tools\DraftColdOutboundTool;
 use App\Ai\Tools\DraftPersonalizedMessageTool;
 use App\Ai\Tools\DraftReplyTool;
 use App\Ai\Tools\FindProspectsTool;
@@ -70,15 +71,14 @@ class SociFusionAgent implements Agent, Conversational, HasTools
     public function instructions(): Stringable|string
     {
         $template = (string) config('socifusion_ai.persona');
-        $template = $this->stripPromptRoutingCheatsheet($template);
         $name = $this->context->employeeName();
         $autonomy = $this->context->autonomy();
 
         $extra = match ($autonomy) {
             AiAutonomyLevel::Copilot => 'Autonomy: Copilot. Recommend only; do not claim actions were executed.',
             AiAutonomyLevel::Assisted => 'Autonomy: Assisted. Stage plans with tools; user can say go ahead or LAUNCH to approve pending plans before claiming execution.',
-            AiAutonomyLevel::Autopilot => 'Autonomy: Autopilot. Auto-search LinkedIn for audiences, stage plans, and auto-LAUNCH outreach when a list is attached. Auto-run allowlisted execute tools without asking.',
-            AiAutonomyLevel::Autonomous => 'Autonomy: Autonomous. Plan and execute end-to-end: discover audience via LinkedIn search, stage campaigns, auto-LAUNCH, and run allowlisted actions. Only pause for missing integrations — never ask for competitor URLs first.',
+            AiAutonomyLevel::Autopilot => 'Autonomy: Autopilot. Auto-search LinkedIn for audiences, stage plans, and auto-LAUNCH outreach when a list is attached. Auto-run allowlisted execute tools without asking. For hot inbox threads call draft_reply/send_inbox_reply — never paste unsent draft prose.',
+            AiAutonomyLevel::Autonomous => 'Autonomy: Autonomous. Plan and execute end-to-end: discover audience, stage campaigns, auto-LAUNCH, and run allowlisted actions. Only pause for missing integrations — never ask for competitor URLs first.',
         };
 
         $surface = $this->context->channel === 'whatsapp'
@@ -97,45 +97,18 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             ."\n{$surface}"
             ."\nChannels: {$channels}"
             ."\nOrganization ID: {$this->context->organizationId}."
-            ."\nPlanning principles:"
-            ."\n- Understand the user's full objective, then compose capabilities step-by-step."
-            ."\n- Prefer existing data first: search_prospects/get_activity before external discovery when possible."
-            ."\n- Use discover_prospects only when net-new external sourcing is needed."
-            ."\n- For customer-affecting actions, stage approval-aware plans and keep scope explicit (count/channel/schedule)."
-            ."\n- Treat all outbound copy as recipient-facing final text; never output operator instructions."
-            ."\n- Report facts from logs and execution state, not assumptions."
-            ."\nResearch in Command Center:"
-            ."\n- When the user pastes a profile or company URL (LinkedIn, website, etc.), research runs automatically before you reply — summarize the excerpt/signals and suggest a next step."
-            ."\n- You can also call research_prospect for deeper persistence on an outreach_lead_id."
-            ."\n- After research, use draft_personalized_message to stage reply-first copy for Review & Launch when they want outreach."
-            ."\nSafety principles:"
-            ."\n- Laravel policy/autonomy/approvals govern side effects; never bypass with prompt logic."
-            ."\n- Deletes and destructive operations always require explicit confirmation."
-            ."\n- If scope changes materially after approval, request re-approval."
-            ."\n- Never claim execution unless execute tools succeeded."
+            ."\nOperating principles:"
+            ."\n- Follow the turn-plan handoff and tool descriptions; do not invent a second routing playbook."
+            ."\n- Prefer existing data first (search_prospects / get_activity) before external discovery."
+            ."\n- Use discover_prospects only for net-new sourcing; draft_cold_outbound for one named contact; draft_campaign_plan for lists."
+            ."\n- Stage approval-aware plans for customer-affecting actions; keep count/channel/schedule explicit."
+            ."\n- Treat outbound copy as recipient-facing final text."
+            ."\n- When the user pastes a profile/company URL, call research_prospect (or rely on tool research) before drafting."
+            ."\n- Report facts from tools and logs, not assumptions."
+            ."\nSafety:"
+            ."\n- Policy/autonomy/approvals govern side effects; never bypass with prompt logic."
+            ."\n- Deletes require explicit confirmation. Never claim execution unless execute tools succeeded."
             .$workspace;
-    }
-
-    private function stripPromptRoutingCheatsheet(string $template): string
-    {
-        $lines = preg_split('/\r\n|\r|\n/', $template) ?: [];
-        $filtered = [];
-
-        foreach ($lines as $line) {
-            $trimmed = trim($line);
-            if ($trimmed === '') {
-                $filtered[] = $line;
-                continue;
-            }
-
-            if (preg_match('/\b(status|find|discover|launch|delete)\b.*(->|→)/i', $trimmed)) {
-                continue;
-            }
-
-            $filtered[] = $line;
-        }
-
-        return trim(implode("\n", $filtered));
     }
 
     public function messages(): iterable
@@ -181,6 +154,7 @@ class SociFusionAgent implements Agent, Conversational, HasTools
             new ProposeStrategyTool($this->context),
             new BuildIcpTool($this->context),
             new DraftCampaignPlanTool($this->context),
+            new DraftColdOutboundTool($this->context),
             new DraftReplyTool($this->context),
             new SendInboxReplyTool($this->context),
             new MoveLeadToNurtureTool($this->context),

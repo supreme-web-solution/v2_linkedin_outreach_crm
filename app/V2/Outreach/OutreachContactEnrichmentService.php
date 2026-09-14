@@ -438,6 +438,20 @@ class OutreachContactEnrichmentService
                         'error' => $e->getMessage(),
                     ]);
 
+                    if ($e instanceof \App\V2\Integrations\Unipile\UnipileException && $e->isDisconnectedAccount()) {
+                        Log::warning('[Outreach] Handle resolve stopped — account disconnected', [
+                            'campaign_id' => $campaign->id,
+                            'channel' => $channel,
+                        ]);
+
+                        return [
+                            'resolved' => $resolved,
+                            'failed' => $failed,
+                            'skipped' => $skipped,
+                            'remaining' => max(0, $leads->count() - $resolved - $failed),
+                        ];
+                    }
+
                     continue;
                 }
 

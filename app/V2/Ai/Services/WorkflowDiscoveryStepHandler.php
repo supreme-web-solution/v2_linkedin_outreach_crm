@@ -24,9 +24,16 @@ class WorkflowDiscoveryStepHandler
         $targetCount = max(1, min(100, (int) ($arguments['target_count'] ?? 1)));
         $segment = trim((string) ($arguments['segment'] ?? $plan['objective']['segment'] ?? 'prospects'));
         $criteria = trim((string) ($plan['objective']['criteria'] ?? ''));
+        if (app(UserTurnIntentService::class)->isProceedWithTargetCount($criteria)) {
+            $criteria = '';
+        }
         $orgId = (int) ($user->current_organization_id ?? 0);
-        $rawQuery = $criteria !== '' ? $criteria : ($segment !== '' ? $segment : 'prospects');
-        $query = app(WorkspaceContextService::class)->enrichDiscoveryQuery($user, $orgId, $rawQuery);
+        $workspace = app(WorkspaceContextService::class);
+        $hints = $workspace->discoverySearchHints($user, $orgId, $plan);
+        $rawQuery = $hints['query'] !== ''
+            ? $hints['query']
+            : ($criteria !== '' ? $criteria : ($segment !== '' ? $segment : 'prospects'));
+        $query = $workspace->enrichDiscoveryQuery($user, $orgId, $rawQuery, $plan);
         $query = $this->normalizeDiscoveryQuery($user, $orgId, $query);
 
         $preferFresh = (bool) ($arguments['new_only'] ?? $plan['constraints']['new_only'] ?? false);
@@ -38,6 +45,8 @@ class WorkflowDiscoveryStepHandler
             limit: min(20, $targetCount),
             targetCount: $targetCount,
             preferFresh: $preferFresh,
+            geography: $hints['geography'],
+            title: $hints['title'],
             platform: $platform,
         );
 

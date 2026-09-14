@@ -373,30 +373,27 @@ class PlanSequenceNodeBuilder
                     $channel = 'email';
                     $action = 'send_email';
                     $label = 'Follow-up Email';
-                    $config = [
-                        'subject' => 'Following up',
-                        'body' => 'Hi {{firstName}}, just checking in.',
-                    ];
+                    $config = $this->personalizedFollowUpEmailConfig();
                 } elseif ($this->isSingleChannel($payload, 'whatsapp')) {
                     $channel = 'whatsapp';
                     $action = 'send_message';
                     $label = 'WhatsApp Follow-up';
-                    $config = ['message' => 'Hi {{firstName}}, just bumping this.'];
+                    $config = $this->personalizedFollowUpConfig();
                 } elseif ($this->isSingleChannel($payload, 'instagram')) {
                     $channel = 'instagram';
                     $action = 'send_message';
                     $label = 'Instagram Follow-up';
-                    $config = ['message' => 'Just floating this back up — still curious how this is going on your side.'];
+                    $config = $this->personalizedFollowUpConfig();
                 } elseif ($this->isSingleChannel($payload, 'telegram')) {
                     $channel = 'telegram';
                     $action = 'send_message';
                     $label = 'Telegram Follow-up';
-                    $config = ['message' => 'Hi {{firstName}}, just bumping this.'];
+                    $config = $this->personalizedFollowUpConfig();
                 } elseif ($this->isSingleChannel($payload, 'twitter')) {
                     $channel = 'twitter';
                     $action = 'send_message';
                     $label = 'Twitter Follow-up';
-                    $config = ['message' => 'Hi {{firstName}}, just bumping this.'];
+                    $config = $this->personalizedFollowUpConfig();
                 } else {
                     $isFirstTouch = ! preg_match('/follow.?up|value follow|professional close/i', $text);
                     $channel = $defaultChannel;
@@ -406,22 +403,19 @@ class PlanSequenceNodeBuilder
                         $label = $isFirstTouch ? 'First email (after research)' : 'Follow-up Email';
                         $config = $isFirstTouch
                             ? [
-                                'subject' => 'Quick intro',
+                                'subject' => '',
                                 'body' => '',
                                 'personalize_before_send' => true,
                                 'placeholder' => 'Written for this person after profile and company research. Not a shared template.',
                             ]
-                            : [
-                                'subject' => 'Following up',
-                                'body' => 'Just floating this back up — still curious how this is going on your side.',
-                            ];
+                            : $this->personalizedFollowUpEmailConfig();
                     } else {
                         $label = $isFirstTouch
                             ? (strtolower($channel) === 'linkedin' ? 'First message (after research)' : Str::headline($channel).' first message (after research)')
                             : (strtolower($channel) === 'linkedin' ? 'Follow-up' : Str::headline($channel).' Follow-up');
                         $config = $isFirstTouch
                             ? $this->personalizedFirstTouchConfig()
-                            : ['message' => 'Just floating this back up — still curious how this is going on your side.'];
+                            : $this->personalizedFollowUpConfig();
                     }
                 }
             } else {
@@ -1020,6 +1014,31 @@ class PlanSequenceNodeBuilder
             'message' => '',
             'personalize_before_send' => true,
             'placeholder' => 'Written for this person after profile and company research. Not a shared template.',
+        ];
+    }
+
+    /**
+     * @return array{message:string, personalize_before_send:bool, placeholder:string}
+     */
+    private function personalizedFollowUpConfig(): array
+    {
+        return [
+            'message' => '',
+            'personalize_before_send' => true,
+            'placeholder' => 'Personalized follow-up from prior outreach + prospect context. Not a shared check-in template.',
+        ];
+    }
+
+    /**
+     * @return array{subject:string, body:string, personalize_before_send:bool, placeholder:string}
+     */
+    private function personalizedFollowUpEmailConfig(): array
+    {
+        return [
+            'subject' => '',
+            'body' => '',
+            'personalize_before_send' => true,
+            'placeholder' => 'Personalized follow-up email from prior outreach + prospect context. Not a shared check-in template.',
         ];
     }
 }

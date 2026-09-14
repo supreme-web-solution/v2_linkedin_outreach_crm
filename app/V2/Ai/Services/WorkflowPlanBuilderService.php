@@ -28,6 +28,11 @@ class WorkflowPlanBuilderService
             return null;
         }
 
+        if (\App\V2\Ai\Support\SingleRecipientTurnGuard::matches($plan)) {
+            // Never discover or prepare list outreach for a single-recipient cold turn.
+            return null;
+        }
+
         $requested = (int) ($stateEval['requested_quantity'] ?? 0);
         $remaining = $this->effectiveRemainingDiscovery($stateEval, $runMeta);
         $discoveryAttempts = (int) ($runMeta['discovery_attempts'] ?? 0);

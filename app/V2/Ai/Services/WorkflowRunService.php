@@ -6,6 +6,7 @@ use App\Models\AiConversation;
 use App\Models\AiWorkflowRun;
 use App\Models\AiWorkflowStep;
 use App\Models\User;
+use Illuminate\Support\Str;
 
 class WorkflowRunService
 {
@@ -26,7 +27,7 @@ class WorkflowRunService
             'organization_id' => $organizationId,
             'user_id' => $user->id,
             'conversation_id' => $conversation?->id,
-            'goal' => (string) ($plan['goal'] ?? ''),
+            'goal' => Str::limit((string) ($plan['goal'] ?? ''), 120, ''),
             'status' => 'planned',
             'plan' => $plan,
             'approval_status' => 'pending',

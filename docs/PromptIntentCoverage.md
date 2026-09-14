@@ -7,6 +7,8 @@ For each prompt:
 - Approval = what should happen in Copilot / Assisted / Autopilot+
 - Forbidden = behavior that must never happen
 
+Prompts are **domain-agnostic user mimics** (any industry). Do not hardcode a niche; identity comes from the utterance, ICP/copy from the workspace profile.
+
 ## 1) Status and reporting (1-12)
 
 | # | Prompt example | Path | Approval | Forbidden |
@@ -77,20 +79,49 @@ For each prompt:
 
 ## 5) One-shot recipient asks (49-60)
 
+Cold outbound — **no prior inbox thread required**. Resolve identity from the utterance → attach 1-person list → stage one-shot. Works for every workspace.
+
 | # | Prompt example | Path | Approval | Forbidden |
 |---:|---|---|---|---|
-| 49 | dm https://www.instagram.com/epaphrasio | one-shot IG attach | mode-based | require LinkedIn search |
-| 50 | send one email to john@acme.com | one-shot Email attach | mode-based | multi-step sequence |
-| 51 | whatsapp +234... one intro | one-shot WA attach | mode-based | add follow-ups |
+| 49 | dm https://www.instagram.com/brandfounder | one-shot IG attach | mode-based | require LinkedIn search / inbox thread |
+| 50 | send one email to john@acme.com | one-shot Email attach | mode-based | multi-step sequence / inbox-only fail |
+| 51 | whatsapp +234... one intro | one-shot WA attach | mode-based | add follow-ups / LinkedIn fallback |
 | 52 | message @brandfounder once | one-shot IG by handle | mode-based | broad IG discovery |
-| 53 | single linkedin dm to profile url | one-shot LinkedIn | mode-based | multi-lead list |
+| 53 | single linkedin dm to https://www.linkedin.com/in/jane-doe | one-shot LinkedIn | mode-based | multi-lead list / require inbox |
 | 54 | just one greeting no follow-up | one-shot sequence | mode-based | Wait N days |
-| 55 | telegram one message to @user | one-shot TG attach | mode-based | LinkedIn-first flow |
+| 55 | telegram one message to @saleslead | one-shot TG attach | mode-based | LinkedIn-first flow |
 | 56 | quick dm no campaign drip | one-shot true | mode-based | drip sequence |
-| 57 | one-time invite email only | one-shot Email | mode-based | LinkedIn discovery |
-| 58 | send this single IG intro | one-shot IG | mode-based | campaign with 500 target |
-| 59 | write and send one message | one-shot + launch rules | mode-based | silent no-op |
+| 57 | one-time invite email only to ops@example.org | one-shot Email | mode-based | LinkedIn discovery |
+| 58 | send this single IG intro to https://instagram.com/opslead | one-shot IG | mode-based | campaign with 500 target |
+| 59 | check https://example.com/about then email hello@example.com | cold outbound + research URL | mode-based | inbox thread required |
 | 60 | create one-shot but don't send | one-shot + setup_only | pending only | auto-send |
+
+## 5b) Cold outbound phrasing variants (same intent, different user style)
+
+Same behavior as section 5 — typos, shorthand, formal, and “check this site then message”. Must **not** answer “could not find an inbox thread”.
+
+| Style | Example | Channel |
+|---|---|---|
+| Casual | email this to sam@northwind.io | email |
+| Typo | get a planed reply for sam@northwind.io and email him | email |
+| Research + send | check https://northwind.io/ and email sam@northwind.io | email |
+| LinkedIn paste | dm this linkedin https://www.linkedin.com/in/sam-lee | linkedin |
+| IG URL | send ig dm https://www.instagram.com/sam.lee | instagram |
+| WA | whatsapp +15551234567 a short hello | whatsapp |
+| Telegram | telegram message https://t.me/samlee | telegram |
+| X | dm them on x https://x.com/samlee | twitter |
+| Setup only | draft a message to sam@northwind.io but dont send yet | email + setup_only |
+| Recipient correction | actually that was the wrong address — sam.lee@northwind.io is the one | email — LLM `recipient_correction`; reuse research/draft |
+| Inbox contrast | reply to that email we received from Sam in the inbox | inbox reply (not cold) |
+
+Intent for cold one-shot / recipient correction / message correction / inbox reply comes from the **semantic turn planner** (`cold_one_shot`, `recipient_correction`, `message_correction`, `inbox_reply`, `preferred_channels`, `channel_scope`, `audience_intent`, `audience_ref`). Keyword helpers are fallback only when the planner is unavailable. Identity (email/URL/handle) stays structural extraction.
+
+| Style | Example | Semantic |
+|---|---|---|
+| Multichannel | find 40 and run multichannel outreach | `channel_scope=multi`, `preferred_channels=[…]` |
+| Inbox reply | reply to that email we received from Sam | `inbox_reply=true` |
+| Offer rewrite | wrong pitch — we sell custom software not escrow | `message_correction=true`, `offer_override=…` |
+| Named list | DM everyone on my latest Instagram list | `audience_intent=reuse_named`, `audience_ref=…` |
 
 ## 6) List-referenced asks (61-72)
 
@@ -164,5 +195,6 @@ For each prompt:
 
 - Includes link-based prompts (`linkedin.com/in/...`, `instagram.com/...`), @handle prompts, and company/entity mentions.
 - Includes setup-only, find-only, find+outreach, and launch-control flows.
-- Includes cross-channel one-shot flows (LinkedIn, Instagram, Email, WhatsApp, Telegram).
+- Includes cross-channel one-shot / cold outbound (LinkedIn, Instagram, Email, WhatsApp, Telegram, X) without requiring an inbox thread.
 - Includes failure and recovery behavior (missing integrations, missing audience, retries, stale approvals).
+- Phrasing variants mimic real chat users (typos, shorthand, formal) — not a single brand or niche.

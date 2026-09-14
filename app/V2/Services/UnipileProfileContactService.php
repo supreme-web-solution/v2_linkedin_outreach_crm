@@ -133,6 +133,10 @@ class UnipileProfileContactService
 
             return $provider->extractProviderId($profile);
         } catch (\Throwable $e) {
+            if ($e instanceof UnipileException && $e->isDisconnectedAccount()) {
+                throw $e;
+            }
+
             // Telegram public IDs are often the phone digits — usable even when profile lookup 404s.
             if (
                 $channel === 'telegram'

@@ -154,6 +154,8 @@ class WebChatTurnProgressService
         'get_weekly_sales_brief' => 'Pulling your weekly brief…',
         'propose_strategy' => 'Building your plan…',
         'draft_campaign_plan' => 'Drafting your campaign…',
+        'draft_cold_outbound' => 'Drafting cold outbound…',
+        'draft_reply' => 'Drafting inbox reply…',
         'prepare_competitor_harvest' => 'Harvesting competitor engagers…',
         'prepare_enrichment' => 'Preparing enrichment…',
         'save_contacts' => 'Saving contacts…',

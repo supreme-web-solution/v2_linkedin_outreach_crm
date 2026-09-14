@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckCircle2, Loader2, Paperclip, Rocket, Send, X } from '@lucide/vue';
+import { CheckCircle2, Loader2, Paperclip, Rocket, Send, Smartphone, X } from '@lucide/vue';
 import AlexAvatar from '@/components/crm/AlexAvatar.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import OutreachChannelIcon from '@/components/outreach/OutreachChannelIcon.vue';
@@ -15,7 +15,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { formatChatMarkdown } from '@/lib/chatMarkdown';
 
-type ChatLine = { role: 'assistant' | 'user'; content: string };
+type ChatLine = { role: 'assistant' | 'user'; content: string; action?: 'link_whatsapp' };
 type GoalOption = { key: string; label: string };
 type Connection = {
     key: string;
@@ -125,6 +125,29 @@ const canSendComposer = computed(() => {
 const canOpenCommandCenter = computed(
     () => Boolean(status.value.can_open_command_center ?? status.value.ready),
 );
+const canCloseInsteadOfSkip = computed(
+    () => connectionsGateComplete.value || canOpenCommandCenter.value,
+);
+const whatsappPhoneLinked = computed(() => Boolean(status.value.whatsapp_command?.linked));
+
+function assistantLine(content: string, offerWhatsapp = false): ChatLine {
+    const offer = offerWhatsapp
+        && !whatsappPhoneLinked.value
+        && !status.value.skip_whatsapp_command;
+    return offer
+        ? { role: 'assistant', content, action: 'link_whatsapp' }
+        : { role: 'assistant', content };
+}
+
+function connectWhatsappFromChat(): void {
+    void connectChannel({
+        key: 'whatsapp_command',
+        label: 'WhatsApp — control Soci from your phone',
+        connected: false,
+        required: false,
+        kind: 'whatsapp_command',
+    });
+}
 const showSkipWhatsapp = computed(
     () =>
         Boolean(
@@ -233,7 +256,8 @@ async function sendChat(message = draft.value): Promise<void> {
         });
         const data = await res.json();
         if (data.reply?.content) {
-            chat.value.push({ role: 'assistant', content: data.reply.content });
+            const ready = Boolean(data.status?.ready ?? status.value.ready);
+            chat.value.push(assistantLine(data.reply.content, ready));
         }
         if (data.status) {
             const prevMode = status.value.composer_mode;
@@ -520,7 +544,7 @@ async function submitConversionAssetsFromForm(): Promise<void> {
         if (data.status) {
             applyStatus(data.status, { announce: false, prevMode: status.value.composer_mode });
         }
-        chat.value.push({ role: 'assistant', content: data.message ?? 'Conversion assets saved.' });
+        chat.value.push(assistantLine(data.message ?? 'Conversion assets saved.', true));
         startPolling();
     } finally {
         busy.value = false;
@@ -591,10 +615,10 @@ function startPolling(): void {
         const prevReady = status.value.ready;
         await refreshStatus();
         if (status.value.ready && !prevReady) {
-            chat.value.push({
-                role: 'assistant',
-                content: "You're all set — open Command Center and I'll continue from your goal.",
-            });
+            chat.value.push(assistantLine(
+                "You're all set. Open **Command Center** and I'll keep going from your goal.\n\nWant me on your phone too? Tap **Link WhatsApp** below — I'll open the QR so you can connect in one scan.",
+                true,
+            ));
             stopPolling();
             await scrollChat();
         }
@@ -617,10 +641,7 @@ async function finish(): Promise<void> {
             credentials: 'same-origin',
         });
         open.value = false;
-        const prompt = status.value.starter_prompt ?? '';
-        window.location.href = prompt
-            ? `/ai-employee?starter=${encodeURIComponent(prompt)}`
-            : '/ai-employee';
+        window.location.href = '/ai-employee';
     } finally {
         busy.value = false;
     }
@@ -644,6 +665,24 @@ async function dismiss(): Promise<void> {
         headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf() },
         credentials: 'same-origin',
     });
+}
+
+async function closeOrDismiss(): Promise<void> {
+    if (!canCloseInsteadOfSkip.value) {
+        await dismiss();
+        return;
+    }
+
+    open.value = false;
+    stopPolling();
+
+    if (canOpenCommandCenter.value) {
+        await fetch('/onboarding/complete', {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'X-XSRF-TOKEN': xsrf() },
+            credentials: 'same-origin',
+        });
+    }
 }
 
 onMounted(async () => {
@@ -793,14 +832,43 @@ watch(open, (v) => {
                         You
                     </div>
                     <div
-                        class="max-w-[78%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm"
-                        :class="
-                            line.role === 'user'
-                                ? 'rounded-tr-md bg-blue-600 text-white'
-                                : 'rounded-tl-md border border-blue-100/80 bg-white text-foreground dark:border-zinc-800 dark:bg-zinc-900'
-                        "
+                        class="max-w-[78%] space-y-3"
                     >
-                        <span v-html="formatChatMarkdown(line.content)" />
+                        <div
+                            class="rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-sm"
+                            :class="
+                                line.role === 'user'
+                                    ? 'rounded-tr-md bg-blue-600 text-white'
+                                    : 'rounded-tl-md border border-blue-100/80 bg-white text-foreground dark:border-zinc-800 dark:bg-zinc-900'
+                            "
+                        >
+                            <span v-html="formatChatMarkdown(line.content)" />
+                        </div>
+                        <button
+                            v-if="line.action === 'link_whatsapp' && !whatsappPhoneLinked"
+                            type="button"
+                            class="flex w-full items-center justify-between gap-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-3 text-left text-white shadow-md ring-2 ring-emerald-300/70 transition hover:from-emerald-600 hover:to-green-700 hover:shadow-lg disabled:opacity-60"
+                            :disabled="busy"
+                            @click="connectWhatsappFromChat"
+                        >
+                            <span class="flex min-w-0 items-center gap-3">
+                                <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/20">
+                                    <Smartphone class="size-5" />
+                                </span>
+                                <span class="min-w-0">
+                                    <span class="block text-sm font-semibold">Link WhatsApp — take action</span>
+                                    <span class="block text-xs text-emerald-50">Opens the QR so you can connect from your phone</span>
+                                </span>
+                            </span>
+                            <span class="shrink-0 rounded-full bg-white px-3 py-1 text-xs font-bold text-emerald-700">
+                                Open
+                            </span>
+                        </button>
+                        <WhatsAppCommandLinkPanel
+                            v-if="line.action === 'link_whatsapp' && waLink"
+                            :link="waLink"
+                            class="w-full"
+                        />
                     </div>
                 </div>
 
@@ -1044,9 +1112,9 @@ watch(open, (v) => {
                         variant="ghost"
                         class="h-9 rounded-full text-xs text-muted-foreground"
                         :disabled="busy"
-                        @click="dismiss"
+                        @click="closeOrDismiss"
                     >
-                        Skip setup
+                        {{ canCloseInsteadOfSkip ? 'Close' : 'Skip setup' }}
                     </Button>
                 </div>
             </div>

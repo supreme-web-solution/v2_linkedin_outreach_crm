@@ -12,7 +12,8 @@ class UserTurnIntentInboxReplyTest extends TestCase
         $intent = app(UserTurnIntentService::class);
 
         $this->assertTrue($intent->isInboxReplyRequest('generate the email response for vickenconcept'));
-        $this->assertTrue($intent->isInboxReplyRequest('draft a reply for vickenconcept@gmail.com'));
+        $this->assertFalse($intent->isInboxReplyRequest('draft a reply for vickenconcept@gmail.com'));
+        $this->assertTrue($intent->isColdOutboundRequest('draft a reply for vickenconcept@gmail.com and email him'));
         $this->assertFalse($intent->isInboxReplyRequest('find 30 linkedin prospects'));
     }
 

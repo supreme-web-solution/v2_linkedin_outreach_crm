@@ -67,9 +67,9 @@ class V2OutreachCampaign extends Model
                     ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
                     ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [
-                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Send Message', 'config' => ['message' => 'Thanks for connecting, {{firstName}}!']],
+                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Send Message', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Written after research. Not a shared template.']],
                             ['key' => 5, 'type' => 'delay', 'value' => 3, 'time' => 'days', 'label' => 'Wait 3 days'],
-                            ['key' => 6, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Follow-up Message', 'config' => ['message' => 'Hi {{firstName}}, just bumping this in case you missed it.']],
+                            ['key' => 6, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Follow-up Message', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized follow-up. Not a shared check-in template.']],
                         ],
                         'not_accepted' => [],
                     ]],
@@ -86,10 +86,10 @@ class V2OutreachCampaign extends Model
                     ['key' => 2, 'type' => 'delay', 'value' => 3, 'time' => 'days', 'label' => 'Wait 3 days'],
                     ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [
-                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Send Message', 'config' => ['message' => 'Thanks for connecting, {{firstName}}!']],
+                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'Send Message', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized first message after accept. Not a shared template.']],
                         ],
                         'not_accepted' => [
-                            ['key' => 5, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Send Email', 'config' => ['subject' => 'Quick intro', 'body' => 'Hi {{firstName}}, I tried reaching you on LinkedIn and wanted to follow up here.']],
+                            ['key' => 5, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Send Email', 'config' => ['subject' => '', 'body' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized email when LinkedIn invite was not accepted.']],
                         ],
                     ]],
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
@@ -105,10 +105,10 @@ class V2OutreachCampaign extends Model
                     ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
                     ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [
-                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'LinkedIn Message', 'config' => ['message' => 'Thanks {{firstName}} — quick question for you.']],
+                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'LinkedIn Message', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized LinkedIn message after accept.']],
                         ],
                         'not_accepted' => [
-                            ['key' => 5, 'type' => 'action', 'channel' => 'whatsapp', 'action' => 'send_message', 'label' => 'WhatsApp Message', 'config' => ['message' => 'Hi {{firstName}}, I reached out on LinkedIn — happy to chat here if easier.']],
+                            ['key' => 5, 'type' => 'action', 'channel' => 'whatsapp', 'action' => 'send_message', 'label' => 'WhatsApp Message', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized WhatsApp when LinkedIn invite was not accepted.']],
                         ],
                     ]],
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
@@ -124,12 +124,12 @@ class V2OutreachCampaign extends Model
                     ['key' => 2, 'type' => 'delay', 'value' => 3, 'time' => 'days', 'label' => 'Wait 3 days'],
                     ['key' => 3, 'type' => 'condition', 'channel' => 'linkedin', 'condition' => 'invite_accepted', 'label' => 'Invite Accepted?', 'branches' => [
                         'accepted' => [
-                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'LinkedIn Message', 'config' => ['message' => 'Thanks for connecting, {{firstName}}!']],
+                            ['key' => 4, 'type' => 'action', 'channel' => 'linkedin', 'action' => 'send_message', 'label' => 'LinkedIn Message', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized LinkedIn message after accept.']],
                         ],
                         'not_accepted' => [
-                            ['key' => 5, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Email Follow-up', 'config' => ['subject' => 'Following up', 'body' => 'Hi {{firstName}}, I tried LinkedIn — sharing a quick note by email.']],
+                            ['key' => 5, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Email Follow-up', 'config' => ['subject' => '', 'body' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized email follow-up. Not a shared check-in template.']],
                             ['key' => 6, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
-                            ['key' => 7, 'type' => 'action', 'channel' => 'whatsapp', 'action' => 'send_message', 'label' => 'WhatsApp Touch', 'config' => ['message' => 'Hi {{firstName}}, just checking if you saw my note — happy to chat here.']],
+                            ['key' => 7, 'type' => 'action', 'channel' => 'whatsapp', 'action' => 'send_message', 'label' => 'WhatsApp Touch', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized WhatsApp follow-up. Not a shared check-in template.']],
                         ],
                     ]],
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
@@ -141,9 +141,9 @@ class V2OutreachCampaign extends Model
                 'icon' => 'mail',
                 'color' => 'green',
                 'node_model' => [
-                    ['key' => 1, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Introduction', 'config' => ['subject' => 'Introduction', 'body' => 'Hi {{firstName}}, I wanted to reach out briefly.']],
+                    ['key' => 1, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Introduction', 'config' => ['subject' => '', 'body' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized introduction. Not a shared template.']],
                     ['key' => 2, 'type' => 'delay', 'value' => 3, 'time' => 'days', 'label' => 'Wait 3 days'],
-                    ['key' => 3, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Follow-up', 'config' => ['subject' => 'Following up', 'body' => 'Hi {{firstName}}, just checking in on my last note.']],
+                    ['key' => 3, 'type' => 'action', 'channel' => 'email', 'action' => 'send_email', 'label' => 'Follow-up', 'config' => ['subject' => '', 'body' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized follow-up. Not a shared check-in template.']],
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
                 ],
             ],
@@ -153,9 +153,9 @@ class V2OutreachCampaign extends Model
                 'icon' => 'message-circle',
                 'color' => 'green',
                 'node_model' => [
-                    ['key' => 1, 'type' => 'action', 'channel' => 'whatsapp', 'action' => 'send_message', 'label' => 'WhatsApp Intro', 'config' => ['message' => 'Hi {{firstName}}, hope you are doing well — quick question for you.']],
+                    ['key' => 1, 'type' => 'action', 'channel' => 'whatsapp', 'action' => 'send_message', 'label' => 'WhatsApp Intro', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized WhatsApp intro. Not a shared template.']],
                     ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days', 'label' => 'Wait 2 days'],
-                    ['key' => 3, 'type' => 'action', 'channel' => 'whatsapp', 'action' => 'send_message', 'label' => 'WhatsApp Follow-up', 'config' => ['message' => 'Hi {{firstName}}, just bumping this in case you missed it.']],
+                    ['key' => 3, 'type' => 'action', 'channel' => 'whatsapp', 'action' => 'send_message', 'label' => 'WhatsApp Follow-up', 'config' => ['message' => '', 'personalize_before_send' => true, 'placeholder' => 'Personalized WhatsApp follow-up. Not a shared check-in template.']],
                     ['key' => 99, 'type' => 'end', 'label' => 'End'],
                 ],
             ],

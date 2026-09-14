@@ -86,6 +86,11 @@ class CommandCenterAwarenessService
             'Autonomy: '.($snap['autonomy'] ?? 'Assisted'),
         ];
 
+        $searchable = app(PlatformAllocationService::class)->searchableChannels($user);
+        if ($searchable === []) {
+            $lines[] = 'INTEGRATION WALL: No searchable channel connected. Do NOT call discover_prospects. Tell them to connect LinkedIn at '.url('/integrations');
+        }
+
         $brief = is_array($snap['inbox_brief'] ?? null) ? $snap['inbox_brief'] : [];
         $awaiting = (int) ($brief['need_you'] ?? 0);
         $hot = (int) ($brief['hot'] ?? 0);

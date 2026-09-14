@@ -1628,7 +1628,11 @@ class UnifiedInboxService
         $payload = [
             'to' => [['identifier' => $toEmail]],
             'subject' => $subject,
-            'body' => $text !== '' ? $text : ($attachment ? ' ' : ''),
+            'body' => $text !== ''
+                ? (\App\V2\Ai\Support\EmailOutboundFormat::toHtmlBody($text)
+                    ?: \App\V2\Ai\Support\EmailOutboundFormat::formatPlainBody($text)
+                    ?: $text)
+                : ($attachment ? ' ' : ''),
         ];
 
         $replyTo = trim((string) ($meta['last_email_provider_id'] ?? ''));

@@ -43,6 +43,19 @@ class SemanticTurnPlanEquivalenceTest extends TestCase
         $this->assertSame(50, $enforcement['measurable_expectations']['target_count']);
     }
 
+    public function test_handoff_query_is_what_downstream_receives_not_the_utterance(): void
+    {
+        $semantic = $this->discoverySemantic(10);
+        $semantic['handoff_brief'] = 'Find 10 CTOs who need custom software.';
+        $semantic['handoff_query'] = 'CTOs needing custom software';
+
+        $plan = $this->normalizer->toEnforcementPlan($semantic, 'go ahead, just 10');
+
+        $this->assertSame('CTOs needing custom software', $plan['objective']['criteria']);
+        $this->assertSame('Find 10 CTOs who need custom software.', $plan['handoff_brief']);
+        $this->assertSame('find_only', $plan['required_outcome']);
+    }
+
     public function test_exclusion_phrasing_variants_share_constraint(): void
     {
         $contacted = $this->outreachSemantic(100, excludeContacted: true);
@@ -87,6 +100,88 @@ class SemanticTurnPlanEquivalenceTest extends TestCase
         $this->assertSame('whatsapp', $plan['constraints']['preferred_channel'] ?? null);
         $this->assertTrue($plan['constraints']['exclude_contacted'] ?? false);
         $this->assertTrue($plan['constraints']['decision_maker_required'] ?? false);
+    }
+
+    public function test_llm_prepare_only_maps_to_setup_only_without_keyword_override(): void
+    {
+        $semantic = [
+            'user_objective' => 'prepare_outreach',
+            'target_entity' => 'prospects',
+            'target_segment' => 'first experiment ICP',
+            'quantity' => 40,
+            'new_only' => true,
+            'exclude_previously_contacted' => false,
+            'decision_maker_required' => false,
+            'preferred_channel' => null,
+            'preferred_channels' => [],
+            'channel_scope' => 'unspecified',
+            'geography' => null,
+            'schedule_hint' => null,
+            'data_preference' => 'discover_new',
+            'execution_mode' => 'prepare_outreach',
+            'prepare_only' => true,
+            'send_requested' => false,
+            'delete_requested' => false,
+            'cold_one_shot' => false,
+            'recipient_correction' => false,
+            'message_correction' => false,
+            'offer_override' => null,
+            'inbox_reply' => false,
+            'audience_intent' => 'discover',
+            'audience_ref' => null,
+            'requires_clarification' => false,
+            'clarification_reason' => null,
+            'ambiguous_referent' => null,
+            'handoff_brief' => 'Prepare outreach for 40 ICP prospects without sending',
+            'handoff_query' => 'first experiment ICP',
+            'confidence' => 0.9,
+        ];
+
+        $plan = $this->normalizer->toEnforcementPlan($semantic, 'build this');
+
+        $this->assertSame('setup_only', $plan['required_outcome']);
+        $this->assertSame('prepare_only', $plan['side_effect_budget']);
+    }
+
+    public function test_llm_send_requested_is_not_overridden_by_build_this_keywords(): void
+    {
+        $semantic = [
+            'user_objective' => 'execute_outreach',
+            'target_entity' => 'prospects',
+            'target_segment' => 'first experiment ICP',
+            'quantity' => 40,
+            'new_only' => true,
+            'exclude_previously_contacted' => false,
+            'decision_maker_required' => false,
+            'preferred_channel' => null,
+            'preferred_channels' => [],
+            'channel_scope' => 'unspecified',
+            'geography' => null,
+            'schedule_hint' => null,
+            'data_preference' => 'discover_new',
+            'execution_mode' => 'send_outreach',
+            'prepare_only' => false,
+            'send_requested' => true,
+            'delete_requested' => false,
+            'cold_one_shot' => false,
+            'recipient_correction' => false,
+            'message_correction' => false,
+            'offer_override' => null,
+            'inbox_reply' => false,
+            'audience_intent' => 'discover',
+            'audience_ref' => null,
+            'requires_clarification' => false,
+            'clarification_reason' => null,
+            'ambiguous_referent' => null,
+            'handoff_brief' => 'Find and message 40 ICP prospects',
+            'handoff_query' => 'first experiment ICP',
+            'confidence' => 0.9,
+        ];
+
+        $plan = $this->normalizer->toEnforcementPlan($semantic, 'build this');
+
+        $this->assertSame('send_now', $plan['required_outcome']);
+        $this->assertNotSame('prepare_only', $plan['side_effect_budget']);
     }
 
     public function test_read_only_state_queries_block_mutations(): void
@@ -304,6 +399,104 @@ class SemanticTurnPlanEquivalenceTest extends TestCase
         $plan = $this->normalizer->toEnforcementPlan($semantic, 'reuse existing');
         $this->assertSame('send_now', $plan['required_outcome']);
         $this->assertTrue($plan['constraints']['reuse_first'] ?? false);
+    }
+
+    public function test_recipient_correction_semantic_implies_cold_one_shot(): void
+    {
+        $semantic = $this->normalizer->sanitizeSemantic([
+            'user_objective' => 'execute_outreach',
+            'target_entity' => 'prospects',
+            'target_segment' => null,
+            'quantity' => 1,
+            'new_only' => false,
+            'exclude_previously_contacted' => false,
+            'decision_maker_required' => false,
+            'preferred_channel' => 'email',
+            'geography' => null,
+            'schedule_hint' => null,
+            'data_preference' => 'unspecified',
+            'execution_mode' => 'send_outreach',
+            'prepare_only' => false,
+            'send_requested' => true,
+            'delete_requested' => false,
+            'cold_one_shot' => false,
+            'recipient_correction' => true,
+            'requires_clarification' => false,
+            'clarification_reason' => null,
+            'ambiguous_referent' => null,
+            'handoff_brief' => 'Reuse prior research/draft; only change recipient to the corrected email.',
+            'handoff_query' => null,
+            'confidence' => 0.95,
+        ]);
+
+        $this->assertTrue($semantic['recipient_correction']);
+        $this->assertTrue($semantic['cold_one_shot']);
+        $this->assertFalse($semantic['inbox_reply']);
+        $this->assertSame(['email'], $semantic['preferred_channels']);
+        $this->assertSame('single', $semantic['channel_scope']);
+
+        $plan = $this->normalizer->toEnforcementPlan($semantic, 'use the other address');
+        $this->assertSame('send_now', $plan['required_outcome']);
+        $this->assertSame('email', $plan['constraints']['preferred_channel'] ?? null);
+    }
+
+    public function test_multichannel_and_named_audience_semantics(): void
+    {
+        $semantic = $this->normalizer->sanitizeSemantic([
+            'user_objective' => 'execute_outreach',
+            'target_entity' => 'prospects',
+            'quantity' => 40,
+            'preferred_channels' => ['linkedin', 'email', 'instagram'],
+            'channel_scope' => 'multi',
+            'audience_intent' => 'reuse_named',
+            'audience_ref' => 'Latest Instagram list',
+            'execution_mode' => 'send_outreach',
+            'send_requested' => true,
+            'prepare_only' => false,
+            'confidence' => 0.9,
+        ]);
+
+        $this->assertSame('multi', $semantic['channel_scope']);
+        $this->assertSame(['linkedin', 'email', 'instagram'], $semantic['preferred_channels']);
+        $this->assertSame('linkedin', $semantic['preferred_channel']);
+        $this->assertSame('reuse_named', $semantic['audience_intent']);
+        $this->assertSame('reuse_existing_first', $semantic['data_preference']);
+
+        $plan = $this->normalizer->toEnforcementPlan($semantic, 'use my latest Instagram list multichannel');
+        $this->assertTrue((bool) ($plan['constraints']['reuse_first'] ?? false));
+        $this->assertSame('Latest Instagram list', $plan['constraints']['audience_ref'] ?? null);
+        $this->assertSame('Latest Instagram list', $plan['constraints']['list_name'] ?? null);
+        $this->assertSame(['linkedin', 'email', 'instagram'], $plan['constraints']['preferred_channels'] ?? null);
+    }
+
+    public function test_inbox_reply_clears_cold_flags_and_message_correction_keeps_cold(): void
+    {
+        $inbox = $this->normalizer->sanitizeSemantic([
+            'inbox_reply' => true,
+            'cold_one_shot' => true,
+            'recipient_correction' => true,
+            'message_correction' => true,
+            'user_objective' => 'execute_outreach',
+            'execution_mode' => 'send_outreach',
+            'send_requested' => true,
+        ]);
+        $this->assertTrue($inbox['inbox_reply']);
+        $this->assertFalse($inbox['cold_one_shot']);
+        $this->assertFalse($inbox['recipient_correction']);
+        $this->assertFalse($inbox['message_correction']);
+
+        $rewrite = $this->normalizer->sanitizeSemantic([
+            'message_correction' => true,
+            'offer_override' => 'custom software and AI for ops teams',
+            'preferred_channel' => 'email',
+            'user_objective' => 'execute_outreach',
+            'execution_mode' => 'send_outreach',
+            'send_requested' => true,
+        ]);
+        $this->assertTrue($rewrite['message_correction']);
+        $this->assertTrue($rewrite['cold_one_shot']);
+        $this->assertSame('custom software and AI for ops teams', $rewrite['offer_override']);
+        $this->assertContains('twitter', \App\V2\Ai\Support\SemanticTurnPlanContract::CHANNELS);
     }
 
     /**

@@ -30,6 +30,9 @@ class UserTurnIntentServiceTest extends TestCase
 
         $this->assertTrue($intent->isProspectDiscoveryRequest('get me 20 clients'));
         $this->assertTrue($intent->isProspectDiscoveryRequest('find prospects in Lagos'));
+        $this->assertTrue($intent->isProspectDiscoveryRequest('go ahead , just 10 ia okay'));
+        $this->assertTrue($intent->isProceedWithTargetCount('just 10 is okay'));
+        $this->assertFalse($intent->isProceedWithTargetCount('go ahead'));
         $this->assertFalse($intent->isProspectDiscoveryRequest('what do we have today'));
     }
 
@@ -66,6 +69,9 @@ class UserTurnIntentServiceTest extends TestCase
         $this->assertTrue($intent->wantsCampaignSetupOnly('create the outreach sequence but do not send yet'));
         $this->assertTrue($intent->wantsCampaignSetupOnly('help me find 10 customers set up a campaign but dont send yet'));
         $this->assertTrue($intent->wantsCampaignSetupOnly('help me find 10 customers set up a campagin but dont sen yet'));
+        $this->assertTrue($intent->wantsCampaignSetupOnly('build this'));
+        $this->assertTrue($intent->wantsCampaignSetupOnly('Build it'));
+        $this->assertFalse($intent->wantsCampaignSetupOnly('build this and launch now'));
     }
 
     public function test_campaign_action_request_detects_send_the_campaign(): void
@@ -111,7 +117,7 @@ class UserTurnIntentServiceTest extends TestCase
         $this->assertTrue($intent->wantsMultichannelDiscovery('search all channels for SaaS founders'));
     }
 
-    public function test_what_do_we_have_today_returns_sync_brief_without_agent(): void
+    public function test_what_do_we_have_today_rewrites_to_agent_brief_tools(): void
     {
         $user = User::factory()->create();
         $org = V2Organization::query()->create([
@@ -131,9 +137,8 @@ class UserTurnIntentServiceTest extends TestCase
             'what do we have today',
         );
 
-        $this->assertTrue($result['handled'] ?? false);
-        $this->assertSame('status_brief', $result['decision'] ?? null);
-        $this->assertStringContainsString("Here's where things stand", (string) ($result['reply'] ?? ''));
-        $this->assertStringNotContainsString('discover', strtolower((string) ($result['reply'] ?? '')));
+        $this->assertFalse($result['handled'] ?? true);
+        $this->assertSame('status_brief_rewrite', $result['decision'] ?? null);
+        $this->assertStringContainsString('get_sales_brief', (string) ($result['rewrite'] ?? ''));
     }
 }

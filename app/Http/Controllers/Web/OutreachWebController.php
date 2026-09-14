@@ -50,31 +50,79 @@ class OutreachWebController extends Controller
             : null;
 
         $search = trim((string) $request->query('search', ''));
+        $statusFilter = trim((string) $request->query('status', ''));
+        $channelFilter = trim((string) $request->query('channel', ''));
+
         if ($query && $search !== '') {
             $query->where('name', 'like', '%'.$search.'%');
         }
 
+        if ($query && $statusFilter !== '' && $statusFilter !== 'all') {
+            if ($statusFilter === 'running') {
+                $query->whereIn('status', ['running', 'active', 'preparing']);
+            } else {
+                $query->where('status', $statusFilter);
+            }
+        }
+
+        if ($query && $channelFilter !== '' && $channelFilter !== 'all') {
+            $matchingIds = V2OutreachCampaign::query()
+                ->where('organization_id', $orgId)
+                ->where('status', '!=', 'template')
+                ->get(['id', 'node_model', 'template_type'])
+                ->filter(fn (V2OutreachCampaign $campaign) => OutreachChannelRegistry::firstActionChannelForNodes(
+                    is_array($campaign->node_model) ? $campaign->node_model : [],
+                    $campaign->template_type,
+                ) === $channelFilter)
+                ->pluck('id')
+                ->all();
+
+            $query->whereIn('id', $matchingIds !== [] ? $matchingIds : [0]);
+        }
+
         $campaigns = $query
-            ? $query->latest()->paginate(12)->appends($request->query())
+            ? $query->latest()->paginate(24)->appends($request->query())
             : collect()->paginate(1);
 
         if ($query) {
-            $campaigns->getCollection()->transform(fn (V2OutreachCampaign $c) => [
-                'id' => $c->id,
-                'name' => $c->name,
-                'template_type' => $c->template_type,
-                'status' => $c->status,
-                'created_at' => $c->created_at?->toIso8601String(),
-                'outreach_leads_count' => $c->outreach_leads_count,
-                'outreach_lists_count' => $c->outreach_lists_count,
-            ]);
+            $campaigns->getCollection()->transform(function (V2OutreachCampaign $c) {
+                $primaryChannel = OutreachChannelRegistry::firstActionChannelForNodes(
+                    is_array($c->node_model) ? $c->node_model : [],
+                    $c->template_type,
+                );
+
+                return [
+                    'id' => $c->id,
+                    'name' => $c->name,
+                    'template_type' => $c->template_type,
+                    'status' => $c->status,
+                    'created_at' => $c->created_at?->toIso8601String(),
+                    'outreach_leads_count' => $c->outreach_leads_count,
+                    'outreach_lists_count' => $c->outreach_lists_count,
+                    'primary_channel' => $primaryChannel,
+                    'channel_label' => $primaryChannel ? OutreachChannelRegistry::channelLabel($primaryChannel) : null,
+                ];
+            });
         }
+
+        $channelOptions = collect(OutreachChannelRegistry::sequenceChannels())
+            ->map(fn (array $config, string $key) => [
+                'channel' => $key,
+                'label' => (string) ($config['label'] ?? ucfirst($key)),
+            ])
+            ->values()
+            ->all();
 
         return Inertia::render('crm/outreach/OutreachCampaigns', [
             'campaigns' => $campaigns,
             'hasOrg' => (bool) $orgId,
             'connectedChannels' => app(ChannelConnectionService::class)->summarizeSequenceForUser($user),
-            'filters' => ['search' => $search !== '' ? $search : null],
+            'channelOptions' => $channelOptions,
+            'filters' => [
+                'search' => $search !== '' ? $search : null,
+                'status' => $statusFilter !== '' && $statusFilter !== 'all' ? $statusFilter : null,
+                'channel' => $channelFilter !== '' && $channelFilter !== 'all' ? $channelFilter : null,
+            ],
         ]);
     }
 
@@ -615,11 +663,108 @@ class OutreachWebController extends Controller
 
     public function destroy(int $id): RedirectResponse
     {
-        $campaign = $this->findOwned($id);
+        $this->destroyCampaign($this->findOwned($id));
+
+        return redirect('/outreach')->with('success', 'Outreach campaign deleted.');
+    }
+
+    public function bulkAction(Request $request, OutreachChannelGuard $guard): RedirectResponse
+    {
+        /** @var \App\Models\User $user */
+        $user = auth()->user();
+        $orgId = (int) $user->current_organization_id;
+
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:50'],
+            'ids.*' => ['integer'],
+            'action' => ['required', 'string', 'in:pause,launch,delete'],
+        ]);
+
+        $ids = array_values(array_unique(array_map('intval', $data['ids'])));
+        $campaigns = V2OutreachCampaign::query()
+            ->where('organization_id', $orgId)
+            ->whereIn('id', $ids)
+            ->get();
+
+        if ($campaigns->isEmpty()) {
+            return back()->withErrors(['campaign' => 'No matching campaigns found.']);
+        }
+
+        $action = $data['action'];
+        $applied = 0;
+        $skipped = 0;
+        $errors = [];
+
+        foreach ($campaigns as $campaign) {
+            if ($action === 'delete') {
+                $this->destroyCampaign($campaign);
+                $applied++;
+
+                continue;
+            }
+
+            if ($action === 'pause') {
+                if (in_array($campaign->status, ['running', 'active', 'preparing'], true)) {
+                    $campaign->update(['status' => 'paused']);
+                    $applied++;
+                } else {
+                    $skipped++;
+                }
+
+                continue;
+            }
+
+            if (in_array($campaign->status, ['completed', 'running', 'active', 'preparing'], true)) {
+                $skipped++;
+
+                continue;
+            }
+
+            if ($campaign->outreachLists()->count() === 0) {
+                $errors[] = "#{$campaign->id} has no lead lists.";
+                $skipped++;
+
+                continue;
+            }
+
+            $missing = $guard->missingChannels((int) $user->id, is_array($campaign->node_model) ? $campaign->node_model : []);
+            if ($missing !== []) {
+                $errors[] = "#{$campaign->id} needs ".implode(', ', $missing).' connected.';
+                $skipped++;
+
+                continue;
+            }
+
+            $this->queueLeadSyncAndRun($campaign, $orgId);
+            $applied++;
+        }
+
+        $label = match ($action) {
+            'pause' => 'paused',
+            'launch' => 'launched',
+            default => 'deleted',
+        };
+
+        $message = $applied === 1
+            ? "1 campaign {$label}."
+            : "{$applied} campaigns {$label}.";
+
+        if ($skipped > 0) {
+            $message .= " {$skipped} skipped.";
+        }
+
+        if ($errors !== []) {
+            $message .= ' '.implode(' ', array_slice($errors, 0, 3));
+        }
+
+        return redirect('/outreach')->with($applied > 0 ? 'success' : 'error', $message);
+    }
+
+    private function destroyCampaign(V2OutreachCampaign $campaign): void
+    {
         $campaignId = (int) $campaign->id;
         $userId = (int) $campaign->user_id;
 
-        // Stop new work immediately; pending queue jobs are purged in the background.
         if (in_array($campaign->status, ['active', 'running', 'preparing'], true)) {
             $campaign->update(['status' => 'stopped']);
         }
@@ -634,8 +779,6 @@ class OutreachWebController extends Controller
             $campaignId,
             $userId,
         );
-
-        return redirect('/outreach')->with('success', 'Outreach campaign deleted.');
     }
 
     /**

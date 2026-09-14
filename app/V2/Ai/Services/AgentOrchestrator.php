@@ -505,55 +505,14 @@ class AgentOrchestrator
             return ['early' => $payload];
         }
 
-        $inboxPreflight = app(InboxReplyTurnPreflightService::class)->tryHandle(
+        // Inbox + cold outbound are owned by SociFusionAgent tools (draft_reply / draft_cold_outbound).
+        // Deterministic retry of a failed draft_reply approval stays here.
+
+        // Campaign staging is owned by SociFusionAgent (draft_campaign_plan). Only short-circuit
+        // when there is already a pending approval to LAUNCH/show — never invent a second staging brain.
+        $campaignPreflight = app(CampaignOutreachPreflightService::class)->tryHandlePendingOnly(
             $user,
             $organizationId,
-            $conversation,
-            $message,
-            $channel,
-        );
-
-        if ($inboxPreflight && ($inboxPreflight['handled'] ?? false)) {
-            AiMessage::query()->create([
-                'conversation_id' => $conversation->id,
-                'role' => 'user',
-                'content' => $message,
-                'provider_message_id' => $providerMessageId,
-                'meta' => ['channel' => $channel],
-            ]);
-
-            $reply = (string) ($inboxPreflight['reply'] ?? '');
-            $approval = $inboxPreflight['approval'] ?? null;
-
-            AiMessage::query()->create([
-                'conversation_id' => $conversation->id,
-                'role' => 'assistant',
-                'content' => $reply,
-                'meta' => array_filter([
-                    'channel' => $channel,
-                    'control' => 'inbox_reply_preflight',
-                    'approval_id' => $approval instanceof AiActionApproval ? $approval->id : null,
-                ]),
-            ]);
-
-            $payload = $this->payload(
-                $user,
-                $organizationId,
-                $conversation->id,
-                $reply,
-                $approval instanceof AiActionApproval && $approval->status === 'pending'
-                    ? $approval
-                    : null,
-            );
-            $payload['status'] = 'done';
-
-            return ['early' => $payload];
-        }
-
-        $campaignPreflight = app(CampaignOutreachPreflightService::class)->tryHandle(
-            $user,
-            $organizationId,
-            $conversation,
             $message,
         );
 
@@ -642,7 +601,14 @@ class AgentOrchestrator
         $latestApproval = null;
         $ledger = app(TurnExecutionLedger::class);
         $ledger->reset();
-        $plan = app(TurnPlanBuilderService::class)->build($user, $organizationId, $promptMessage, $settings);
+        $utterance = $this->utteranceForPlanner($conversation, $promptMessage);
+        $plan = app(TurnPlanBuilderService::class)->build(
+            $user,
+            $organizationId,
+            $utterance,
+            $settings,
+            $conversation,
+        );
         if ($plan['workflow_eligible'] ?? false) {
             $workflowRun = app(WorkflowRuntimeService::class)->start(
                 $user,
@@ -650,10 +616,25 @@ class AgentOrchestrator
                 $plan,
                 $conversation,
             );
-            $plan['workflow_run_id'] = $workflowRun->id;
-            $plan['workflow_baseline_state'] = $workflowRun->meta['baseline_state'] ?? null;
+            if ($workflowRun) {
+                $plan['workflow_run_id'] = $workflowRun->id;
+                $plan['workflow_baseline_state'] = $workflowRun->meta['baseline_state'] ?? null;
+            } else {
+                $plan['workflow_eligible'] = false;
+            }
         }
         app(TurnPlanContext::class)->set($plan);
+        app(WorkstreamMemoryService::class)->rememberFromTurnPlan($conversation, $plan, $utterance);
+        $workstreamBlock = app(WorkstreamMemoryService::class)->promptBlock($conversation);
+        if ($workstreamBlock !== '') {
+            $promptMessage = $workstreamBlock."\n\n".$promptMessage;
+        }
+        if ($brief = trim((string) ($plan['interpreted_brief'] ?? ''))) {
+            $promptMessage = '[Handoff from the interpreter — this is the real request. Do not re-parse the raw user line. '
+                .$brief
+                .' Do not re-ask for facts already in this handoff, the thread, or workspace.]'
+                ."\n\n".$promptMessage;
+        }
         if (($plan['required_outcome'] ?? '') === 'clarify') {
             $reason = trim((string) ($plan['constraints']['clarification_reason'] ?? 'The request needs clarification before any action.'));
             $promptMessage = '[Turn plan: clarification required — '.$reason
@@ -672,6 +653,22 @@ class AgentOrchestrator
                 ."\n\n".$promptMessage;
         } elseif ($plan['planning_degraded'] ?? false) {
             $promptMessage = '[Turn plan: semantic planner unavailable — using conservative fallback. Prefer read/search tools; do not mutate unless the user message clearly requests delete or outreach and policy allows it.]'
+                ."\n\n".$promptMessage;
+        }
+
+        $constraints = is_array($plan['constraints'] ?? null) ? $plan['constraints'] : [];
+        if (! empty($constraints['inbox_reply'])) {
+            $promptMessage = '[Turn plan: inbox_reply — call draft_reply (resolve conversation via attention queue, email, or name). '
+                .'Do not invent a prose-only draft. Do not call draft_cold_outbound unless no inbox thread exists. '
+                .'Use send_inbox_reply only when autonomy allows auto-send and the user clearly wants it sent now.]'
+                ."\n\n".$promptMessage;
+        } elseif (! empty($constraints['cold_one_shot'])
+            || ! empty($constraints['recipient_correction'])
+            || ! empty($constraints['message_correction'])
+        ) {
+            $promptMessage = '[Turn plan: cold_one_shot — call draft_cold_outbound with the contact identity (email/URL/phone/handle) '
+                .'and research_url when present. Set recipient_correction / message_correction / offer_override from the handoff. '
+                .'Do NOT use draft_campaign_plan or discover_prospects for this single-contact send.]'
                 ."\n\n".$promptMessage;
         }
         $stateContext = app(TurnPlanStateEvaluationService::class)
@@ -702,18 +699,14 @@ class AgentOrchestrator
 
         if ($workflowDiscoveryAck) {
             $reply = app(WorkflowDiscoveryAckService::class)->build($user, $organizationId, $plan);
-        } else {
-            $commandCenterResearch = app(CommandCenterResearchService::class);
-            if ($commandCenterResearch->shouldResearch($promptMessage)) {
-                if ($channel === 'web') {
-                    $this->webChatProcessing->update($conversation, 'research', 'Researching link & building context…');
-                }
-                $promptMessage = $commandCenterResearch->enrichTurn($conversation, $promptMessage, $promptMessage);
-            }
         }
 
         try {
             if (! $workflowDiscoveryAck) {
+                // URL research is owned by research_prospect / draft_cold_outbound tools — do not pre-inject a parallel research brain.
+                if ($channel === 'web' && app(CommandCenterResearchService::class)->shouldResearch($promptMessage)) {
+                    $this->webChatProcessing->update($conversation, 'research', 'Ready to research when tools run…');
+                }
                 $providers = app(AiProviderChain::class)->forAgent();
                 $response = (new SociFusionAgent($context))->prompt(
                     $promptMessage,
@@ -950,6 +943,19 @@ class AgentOrchestrator
      *     latest_approval:array<string,mixed>|null
      * }
      */
+    private function utteranceForPlanner(AiConversation $conversation, string $promptMessage): string
+    {
+        $latest = AiMessage::query()
+            ->where('conversation_id', $conversation->id)
+            ->where('role', 'user')
+            ->orderByDesc('id')
+            ->value('content');
+
+        $latest = trim((string) $latest);
+
+        return $latest !== '' ? $latest : trim($promptMessage);
+    }
+
     private function payload(
         User $user,
         int $organizationId,

@@ -106,6 +106,13 @@ class OnboardingWebController extends Controller
 
         $wizard->complete($user, $orgId);
 
+        try {
+            app(\App\V2\Ai\Services\FirstExperimentOnboardingService::class)
+                ->stageAfterComplete($user, $orgId);
+        } catch (\Throwable $e) {
+            report($e);
+        }
+
         return response()->json($wizard->status($user, $orgId));
     }
 

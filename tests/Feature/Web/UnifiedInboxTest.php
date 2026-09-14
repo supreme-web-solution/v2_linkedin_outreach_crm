@@ -1695,6 +1695,91 @@ class UnifiedInboxTest extends TestCase
         $this->assertDatabaseMissing('v2_conversations', ['id' => $conversation->id]);
     }
 
+    public function test_owner_can_mark_thread_outcome_from_inbox(): void
+    {
+        $user = $this->userWithOrg();
+
+        $campaign = V2OutreachCampaign::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'name' => 'Outcome Campaign',
+            'status' => 'running',
+            'node_model' => [],
+        ]);
+
+        $lead = V2OutreachLead::query()->create([
+            'outreach_campaign_id' => $campaign->id,
+            'full_name' => 'Jordan Agency',
+            'status' => 'replied',
+            'meta' => [],
+        ]);
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'whatsapp',
+            'provider_chat_id' => 'wa_outcome_1',
+            'status' => 'active',
+            'meta' => [
+                'source' => 'unified_inbox',
+                'outreach_campaign_id' => $campaign->id,
+                'outreach_lead_id' => $lead->id,
+                'prospect_name' => 'Jordan Agency',
+            ],
+        ]);
+
+        $this->actingAs($user)
+            ->postJson(route('inbox.outcome', ['platform' => 'whatsapp', 'id' => $conversation->id]), [
+                'outcome' => 'qualified',
+            ])
+            ->assertOk()
+            ->assertJsonPath('qualification_stage', 'sql');
+
+        $this->assertSame('sql', data_get($lead->fresh()->meta, 'qualification.stage'));
+        $this->assertSame('inbox_owner', data_get($lead->fresh()->meta, 'qualification.source'));
+    }
+
+    public function test_inbox_resolves_outreach_context_from_lead_when_campaign_meta_missing(): void
+    {
+        $user = $this->userWithOrg();
+
+        $campaign = V2OutreachCampaign::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'name' => 'Lead Only Campaign',
+            'status' => 'running',
+            'node_model' => [],
+        ]);
+
+        $lead = V2OutreachLead::query()->create([
+            'outreach_campaign_id' => $campaign->id,
+            'full_name' => 'Sal Thread',
+            'status' => 'replied',
+            'meta' => [],
+        ]);
+
+        $conversation = V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'whatsapp',
+            'provider_chat_id' => 'wa_lead_only',
+            'status' => 'active',
+            'meta' => [
+                'source' => 'unified_inbox',
+                'outreach_campaign_id' => 99999,
+                'outreach_lead_id' => $lead->id,
+                'prospect_name' => 'Sal Thread',
+            ],
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('inbox.show', ['platform' => 'whatsapp', 'id' => $conversation->id]))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('crm/inbox/Platform')
+                ->where('outreachContext.lead.id', $lead->id)
+                ->where('outreachContext.campaign.id', $campaign->id)
+            );
+    }
+
     private function userWithOrg(): User
     {
         $user = User::factory()->create();

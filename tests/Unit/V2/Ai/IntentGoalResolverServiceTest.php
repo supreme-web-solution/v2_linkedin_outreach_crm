@@ -7,6 +7,15 @@ use Tests\TestCase;
 
 class IntentGoalResolverServiceTest extends TestCase
 {
+    public function test_go_ahead_with_count_maps_to_find_only(): void
+    {
+        $plan = app(IntentGoalResolverService::class)->resolve('go ahead , just 10 ia okay');
+
+        $this->assertSame('discovery', $plan['goal']);
+        $this->assertSame('find_only', $plan['required_outcome']);
+        $this->assertSame(10, $plan['constraints']['target_count']);
+    }
+
     public function test_find_only_maps_to_semantic_discovery_contract(): void
     {
         $plan = app(IntentGoalResolverService::class)->resolve('find prospect details');

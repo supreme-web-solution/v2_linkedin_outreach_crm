@@ -60,6 +60,53 @@ class ConversionStageServiceTest extends TestCase
         );
 
         $this->assertSame(ConversionStageService::STAGE_OFFERED_ASSET, $stage);
+        $dossier = app(ProspectMemoryService::class)->dossier($lead->fresh());
+        $this->assertContains('sales_page', $dossier['offered_assets'] ?? []);
+        $this->assertSame('sql', data_get($lead->fresh()->meta, 'qualification.stage'));
+    }
+
+    public function test_owner_can_mark_hot_thread_outcome(): void
+    {
+        [, $lead] = $this->userAndLead();
+
+        $marked = app(ConversionStageService::class)->markOwnerOutcome($lead, 'booked');
+
+        $this->assertSame('meeting_booked', $marked['stage']);
+        $this->assertSame('meeting_booked', data_get($lead->fresh()->meta, 'qualification.stage'));
+        $this->assertSame(
+            ConversionStageService::STAGE_OFFERED_MEETING,
+            app(ConversionStageService::class)->current($lead->fresh()),
+        );
+    }
+
+    public function test_records_offered_meeting_when_manual_link_sent(): void
+    {
+        [$user, $lead] = $this->userAndLead();
+
+        AiEmployeeSetting::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $user->current_organization_id,
+            'enabled' => true,
+            'kill_switch' => false,
+            'autonomy_level' => 2,
+            'employee_name' => 'Soci',
+            'meta' => [
+                'conversion_assets' => [
+                    'meeting_link' => 'https://cal.com/demo',
+                ],
+            ],
+        ]);
+
+        app(ProspectMemoryService::class)->setConversionStage($lead, ConversionStageService::STAGE_OFFERED_ASSET);
+
+        $stage = app(ConversionStageService::class)->recordOutbound(
+            $lead,
+            'Grab a time here: https://cal.com/demo',
+            $user,
+            (int) $user->current_organization_id,
+        );
+
+        $this->assertSame(ConversionStageService::STAGE_OFFERED_MEETING, $stage);
     }
 
     /**

@@ -481,7 +481,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'notify_url'            => $notifyUrl,
             'name'                  => Arr::get($context, 'name'),
             'state'                 => Arr::get($context, 'state'),
-        ], fn ($value) => $value !== null);
+            'config'                => is_array(Arr::get($context, 'config')) ? Arr::get($context, 'config') : null,
+        ], fn ($value) => $value !== null && $value !== []);
 
         return $this->request('POST', $this->endpoint('hosted_auth_link'), $payload);
     }

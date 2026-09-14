@@ -21,6 +21,7 @@ class OutreachDueLeadDispatcher
         $skippedThrottled = 0;
         $limit = max(1, min($limit, 500));
         $staggerSeconds = max(15, (int) config('services.unipile_pacing.outreach_lead_stagger_seconds', 60));
+        $pacing = app(\App\V2\Services\ChannelPacingService::class);
 
         $due = V2OutreachLeadProgress::query()
             ->whereNotNull('next_run_at')
@@ -34,7 +35,7 @@ class OutreachDueLeadDispatcher
             ->get(['id', 'outreach_campaign_id', 'outreach_lead_id', 'next_run_at']);
 
         foreach ($due as $progress) {
-            if ($this->dispatchOne($progress, $dispatched * $staggerSeconds, $force)) {
+            if ($this->dispatchOne($progress, $this->delayForProgress($progress, $dispatched, $pacing, $staggerSeconds), $force)) {
                 $dispatched++;
             }
         }
@@ -53,7 +54,7 @@ class OutreachDueLeadDispatcher
                 ->get(['id', 'outreach_campaign_id', 'outreach_lead_id', 'next_run_at']);
 
             foreach ($orphaned as $progress) {
-                if ($this->dispatchOne($progress, $dispatched * $staggerSeconds, $force)) {
+                if ($this->dispatchOne($progress, $this->delayForProgress($progress, $dispatched, $pacing, $staggerSeconds), $force)) {
                     $dispatched++;
                 }
             }
@@ -86,7 +87,7 @@ class OutreachDueLeadDispatcher
                     Cache::put($throttleKey, 1, now()->addMinutes(45));
                 }
 
-                if ($this->dispatchOne($progress, $dispatched * $staggerSeconds, $force)) {
+                if ($this->dispatchOne($progress, $this->delayForProgress($progress, $dispatched, $pacing, $staggerSeconds), $force)) {
                     $dispatched++;
                 }
             }
@@ -105,6 +106,22 @@ class OutreachDueLeadDispatcher
             'skipped_throttled' => $skippedThrottled,
             'force' => $force,
         ];
+    }
+
+    private function delayForProgress(
+        V2OutreachLeadProgress $progress,
+        int $index,
+        \App\V2\Services\ChannelPacingService $pacing,
+        int $fallbackStagger,
+    ): int {
+        $campaign = $progress->campaign;
+        if ($campaign === null) {
+            return $index * $fallbackStagger;
+        }
+
+        $channel = $pacing->primaryChannelFromNodes(is_array($campaign->node_model) ? $campaign->node_model : []);
+
+        return $pacing->dispatchDelaySeconds((int) $campaign->user_id, $channel, $index);
     }
 
     private function dispatchOne(V2OutreachLeadProgress $progress, int $delaySeconds = 0, bool $force = false): bool

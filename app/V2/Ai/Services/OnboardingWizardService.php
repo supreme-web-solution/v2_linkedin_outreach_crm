@@ -165,7 +165,8 @@ class OnboardingWizardService
             'goal' => $goalKey !== '' ? $goalKey : null,
             'goal_label' => $goal['label'] ?? null,
             'custom_goal' => $meta['custom_goal'] ?? null,
-            'starter_prompt' => $meta['custom_goal'] ?? ($goal['prompt'] ?? null),
+            // Never prefill Command Center. The first-experiment plan is already in the thread.
+            'starter_prompt' => null,
             'employee_name' => $settings->employee_name,
             'goal_options' => collect(self::GOALS)
                 ->filter(fn ($g) => (bool) ($g['featured'] ?? false))
@@ -265,7 +266,7 @@ class OnboardingWizardService
         if ($state['ready']) {
             return [
                 'role' => 'assistant',
-                'content' => "You're set. Open Command Center and I'll continue from your goal.",
+                'content' => $this->readyWrapUp($user, $organizationId, $state),
             ];
         }
 
@@ -365,9 +366,11 @@ class OnboardingWizardService
             $webinarUrl,
         );
 
+        $status = $this->status($user, $organizationId);
+
         return [
-            'message' => $result['message'],
-            'status' => $this->status($user, $organizationId),
+            'message' => trim($result['message']."\n\n".$this->readyWrapUp($user, $organizationId, $status)),
+            'status' => $status,
         ];
     }
 
@@ -431,9 +434,7 @@ class OnboardingWizardService
             'workspace_configured_at' => now()->toIso8601String(),
         ];
 
-        if ($overrides !== []) {
-            $patch['channel_overrides'] = $overrides;
-        }
+        $patch['channel_overrides'] = $overrides;
 
         $this->settingsService->configureWorkspaceForGoal($user, $organizationId, $goalKey);
         $settings = $this->settingsService->for($user, $organizationId);
@@ -475,7 +476,7 @@ class OnboardingWizardService
             }
         }
 
-        $mentioned = $this->channelPolicy->mentionedInText($hay);
+        $mentioned = $this->namedOutreachChannels($hay);
         $has = fn (string $ch): bool => in_array($ch, $mentioned, true);
 
         $wantsMeeting = str_contains($hay, 'meeting') || str_contains($hay, 'book a call') || str_contains($hay, 'demo');
@@ -487,11 +488,27 @@ class OnboardingWizardService
         $wantsFind = str_contains($hay, 'find') || str_contains($hay, 'prospect') || str_contains($hay, 'lead list');
         $wantsCampaign = str_contains($hay, 'campaign') || str_contains($hay, 'outreach');
         $wantsRun = str_contains($hay, 'run') && ($wantsCampaign || count($mentioned) > 0);
+        $wantsWorkWith = str_contains($hay, 'work with')
+            || str_contains($hay, 'use')
+            || str_contains($hay, 'connect');
 
-        if ($has('whatsapp') && ($wantsCampaign || $wantsRun || $wantsFind || ! $wantsMeeting)) {
+        if (count($mentioned) >= 2) {
+            $overrides = [
+                'required_channels' => $mentioned,
+                'optional_channels' => [],
+            ];
+
+            return [
+                'key' => 'multichannel_outreach',
+                'reply' => $this->goalAckReply('multichannel outreach', $this->channelSummary($overrides)),
+                'overrides' => $overrides,
+            ];
+        }
+
+        if ($has('whatsapp') && ($wantsCampaign || $wantsRun || $wantsFind || $wantsWorkWith || ! $wantsMeeting)) {
             return [
                 'key' => 'whatsapp_outreach',
-                'reply' => $this->goalAckReply('WhatsApp outreach campaign', '**WhatsApp** for sending to prospects'.($has('linkedin') || $has('email') ? ' (LinkedIn/Email optional backup)' : '')),
+                'reply' => $this->goalAckReply('WhatsApp outreach campaign', '**WhatsApp** for sending to prospects'),
             ];
         }
 
@@ -565,14 +582,45 @@ class OnboardingWizardService
             ];
         }
 
-        if (count($mentioned) >= 2) {
-            return [
-                'key' => 'multichannel_outreach',
-                'reply' => $this->goalAckReply('multichannel outreach', $this->channelSummary(self::GOALS['multichannel_outreach'])),
-            ];
+        return null;
+    }
+
+    /**
+     * Outreach channels the owner named, in checklist order.
+     *
+     * @return list<string>
+     */
+    private function namedOutreachChannels(string $hay): array
+    {
+        $mentioned = $this->channelPolicy->mentionedInText($hay);
+        $order = ['linkedin', 'email', 'instagram', 'whatsapp', 'telegram'];
+
+        return array_values(array_filter(
+            $order,
+            fn (string $key) => in_array($key, $mentioned, true) && OutreachChannelRegistry::isEnabled($key),
+        ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $status
+     */
+    private function readyWrapUp(User $user, int $organizationId, array $status): string
+    {
+        $waCommand = is_array($status['whatsapp_command'] ?? null)
+            ? $status['whatsapp_command']
+            : $this->whatsAppCommandStatus($user, $organizationId);
+
+        $lines = [
+            "You're all set. Open **Command Center** and I'll keep going from your goal.",
+        ];
+
+        if (($waCommand['linked'] ?? false) === true) {
+            $lines[] = 'You can also continue with me on **WhatsApp** from your phone — same brain.';
+        } else {
+            $lines[] = 'Want me on your phone too? Tap **Link WhatsApp** below — I\'ll open the QR so you can connect in one scan.';
         }
 
-        return null;
+        return implode("\n\n", $lines);
     }
 
     private function goalAckReply(string $label, string $needs): string

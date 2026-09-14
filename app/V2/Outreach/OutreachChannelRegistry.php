@@ -439,4 +439,37 @@ class OutreachChannelRegistry
 
         return array_values(array_unique($required));
     }
+
+    /**
+     * Primary channel shown on campaign cards — first outbound action in the sequence.
+     */
+    public static function firstActionChannelForNodes(array $nodes, ?string $templateType = null): ?string
+    {
+        $resolver = new OutreachSequenceResolver();
+
+        foreach ($resolver->flattenNodes($nodes) as $node) {
+            if (($node['type'] ?? '') !== 'action') {
+                continue;
+            }
+
+            $channel = trim((string) ($node['channel'] ?? ''));
+            if ($channel !== '' && self::isEnabled($channel)) {
+                return $channel;
+            }
+
+            if ((string) ($node['action'] ?? '') === 'send_invite') {
+                return 'linkedin';
+            }
+        }
+
+        $templateType = trim((string) ($templateType ?? ''));
+        if ($templateType !== '' && str_contains($templateType, '_')) {
+            $guess = explode('_', $templateType)[0];
+            if (self::isEnabled($guess)) {
+                return $guess;
+            }
+        }
+
+        return null;
+    }
 }

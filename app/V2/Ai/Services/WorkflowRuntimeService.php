@@ -34,8 +34,19 @@ class WorkflowRuntimeService
     /**
      * @param  array<string, mixed>  $plan
      */
-    public function start(User $user, int $organizationId, array $plan, ?AiConversation $conversation = null): AiWorkflowRun
+    public function start(User $user, int $organizationId, array $plan, ?AiConversation $conversation = null): ?AiWorkflowRun
     {
+        if (\App\V2\Ai\Support\SingleRecipientTurnGuard::matches($plan)) {
+            \Illuminate\Support\Facades\Log::info('[Soci] Workflow start refused — single-recipient cold turn', [
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'channel' => \App\V2\Ai\Support\SingleRecipientTurnGuard::plannedChannel($plan),
+                'outcome' => $plan['required_outcome'] ?? null,
+            ]);
+
+            return null;
+        }
+
         $initialState = is_array($plan['state_evaluation'] ?? null)
             ? $plan['state_evaluation']
             : $this->stateEvaluation->evaluate($user, $organizationId, $plan);

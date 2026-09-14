@@ -196,11 +196,16 @@ class LaravelAiWebResearchService
         ));
     }
 
-    private function configuredModel(): ?string
+    public function configuredModel(): ?string
     {
         $model = trim((string) config('socifusion_ai.web_research.model', ''));
 
         return $model !== '' ? $model : null;
+    }
+
+    public function providerLab(): ?Lab
+    {
+        return $this->resolveProviderLab();
     }
 
     private function resolveProviderLab(): ?Lab

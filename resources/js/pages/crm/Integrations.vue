@@ -332,42 +332,51 @@ function removeEsp(id: number, provider: string) {
                         <div
                             v-for="ch in section.channels"
                             :key="ch.channel"
-                            class="flex items-center justify-between gap-3 rounded-lg border border-border/80 bg-muted/40 px-3 py-3 shadow-sm shadow-black/[0.02]"
+                            class="rounded-lg border border-border/80 bg-muted/40 px-3 py-3 shadow-sm shadow-black/[0.02]"
                         >
-                            <div class="flex min-w-0 items-center gap-3">
-                                <OutreachChannelIcon :channel="ch.channel" class="h-5 w-5 shrink-0" />
-                                <div class="min-w-0">
-                                    <p class="text-sm font-medium">{{ ch.label }}</p>
-                                    <p class="truncate text-xs text-muted-foreground">{{ channelStatusLabel(ch) }}</p>
+                            <div class="flex items-center justify-between gap-3">
+                                <div class="flex min-w-0 items-center gap-3">
+                                    <OutreachChannelIcon :channel="ch.channel" class="h-5 w-5 shrink-0" />
+                                    <div class="min-w-0">
+                                        <p class="text-sm font-medium">{{ ch.label }}</p>
+                                        <p class="truncate text-xs text-muted-foreground">{{ channelStatusLabel(ch) }}</p>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="flex shrink-0 items-center gap-2">
-                                <Button
-                                    v-if="!ch.connected"
-                                    type="button"
-                                    size="sm"
-                                    @click="handleChannelConnect(ch)"
-                                >
-                                    {{ ch.status === 'disconnected' ? 'Reconnect' : 'Connect' }}
-                                </Button>
-                                <template v-else>
+                                <div class="flex shrink-0 items-center gap-2">
                                     <Button
+                                        v-if="!ch.connected"
                                         type="button"
-                                        variant="outline"
                                         size="sm"
                                         @click="handleChannelConnect(ch)"
                                     >
-                                        Reconnect
+                                        {{ ch.status === 'disconnected' ? 'Reconnect' : 'Connect' }}
                                     </Button>
-                                    <button
-                                        type="button"
-                                        class="text-xs text-red-600 hover:underline"
-                                        @click="handleChannelDisconnect(ch)"
-                                    >
-                                        Disconnect
-                                    </button>
-                                </template>
+                                    <template v-else>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            @click="handleChannelConnect(ch)"
+                                        >
+                                            Reconnect
+                                        </Button>
+                                        <button
+                                            type="button"
+                                            class="text-xs text-red-600 hover:underline"
+                                            @click="handleChannelDisconnect(ch)"
+                                        >
+                                            Disconnect
+                                        </button>
+                                    </template>
+                                </div>
                             </div>
+                            <p
+                                v-if="ch.channel === 'instagram'"
+                                class="mt-2 text-[11px] leading-snug text-muted-foreground"
+                            >
+                                Instagram is strict. On the login screen, choose the country you actually use.
+                                After connect we wait several hours, then send DMs slowly so the account does not look automated.
+                            </p>
                         </div>
                     </div>
                 </div>

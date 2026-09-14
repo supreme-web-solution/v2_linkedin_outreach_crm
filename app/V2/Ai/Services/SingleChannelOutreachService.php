@@ -27,6 +27,12 @@ class SingleChannelOutreachService
         $payload['channels'] = $label;
         $payload['single_channel_only'] = true;
 
+        if (! empty($payload['include_email']) && $channel === 'linkedin') {
+            $payload['preferred_channels'] = $label.' + Email';
+            $payload['channels'] = $payload['preferred_channels'];
+            $payload['single_channel_only'] = false;
+        }
+
         return $payload;
     }
 

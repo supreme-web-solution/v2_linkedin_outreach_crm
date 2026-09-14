@@ -29,18 +29,22 @@ class DiscoveryPlatformResolver
             return $this->normalizePlatform($explicit) ?? $explicit;
         }
 
-        foreach ($this->planChannelHints($plan) as $channel) {
-            $normalized = $this->normalizePlatform($channel);
-            if ($normalized !== null) {
-                return $normalized;
-            }
-        }
-
         $message = trim((string) ($plan['objective']['criteria'] ?? ''));
         $intentSource = $message !== '' ? $message : trim((string) ($query ?? ''));
 
         if ($intentSource !== '') {
-            if ($this->intent->wantsMultichannelDiscovery($intentSource)) {
+            $constraints = is_array($plan['constraints'] ?? null) ? $plan['constraints'] : [];
+            $semantic = is_array($plan['semantic'] ?? null) ? $plan['semantic'] : [];
+            $scope = strtolower(trim((string) ($constraints['channel_scope'] ?? $semantic['channel_scope'] ?? '')));
+            $preferredChannels = $constraints['preferred_channels'] ?? $semantic['preferred_channels'] ?? [];
+            if (! is_array($preferredChannels)) {
+                $preferredChannels = [];
+            }
+
+            if ($scope === 'multi'
+                || count($preferredChannels) >= 2
+                || $this->intent->wantsMultichannelDiscovery($intentSource)
+            ) {
                 return 'auto';
             }
 
@@ -48,6 +52,18 @@ class DiscoveryPlatformResolver
             if ($fromMessage !== null) {
                 return $fromMessage;
             }
+        }
+
+        $hints = [];
+        foreach ($this->planChannelHints($plan) as $channel) {
+            $normalized = $this->normalizePlatform($channel);
+            if ($normalized !== null && ! in_array($normalized, $hints, true)) {
+                $hints[] = $normalized;
+            }
+        }
+
+        if (count($hints) === 1 && ! $this->workspaceWantsBothDiscoveryChannels($plan)) {
+            return $hints[0];
         }
 
         return 'auto';
@@ -89,6 +105,37 @@ class DiscoveryPlatformResolver
             $hints[] = 'instagram';
         }
 
+        foreach (array_merge(
+            is_array($constraints['preferred_channels'] ?? null) ? $constraints['preferred_channels'] : [],
+            is_array($semantic['preferred_channels'] ?? null) ? $semantic['preferred_channels'] : [],
+        ) as $channel) {
+            $normalized = strtolower(trim((string) $channel));
+            if (in_array($normalized, ['linkedin', 'instagram'], true)) {
+                $hints[] = $normalized;
+            }
+        }
+
         return $hints;
+    }
+
+    /**
+     * @param  array<string, mixed>  $plan
+     */
+    private function workspaceWantsBothDiscoveryChannels(array $plan): bool
+    {
+        $channels = $plan['constraints']['preferred_channels'] ?? [];
+        if (! is_array($channels)) {
+            $channels = preg_split('/[,+|\/]/', (string) $channels) ?: [];
+        }
+
+        $named = [];
+        foreach ($channels as $channel) {
+            $normalized = strtolower(trim((string) $channel));
+            if (in_array($normalized, ['linkedin', 'instagram', 'ig'], true)) {
+                $named[$normalized === 'ig' ? 'instagram' : $normalized] = true;
+            }
+        }
+
+        return count($named) >= 2;
     }
 }

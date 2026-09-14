@@ -19,6 +19,29 @@ class CampaignOutreachPreflightService
     ) {}
 
     /**
+     * Launch/show an already-staged pending approval only.
+     * Staging from discovery must go through the agent + draft_campaign_plan.
+     *
+     * @return array{handled:bool, reply?:string, approval?:AiActionApproval|null}|null
+     */
+    public function tryHandlePendingOnly(
+        User $user,
+        int $organizationId,
+        string $message,
+    ): ?array {
+        if (! $this->intent->isCampaignActionRequest($message)) {
+            return null;
+        }
+
+        $pending = $this->commandCenter->pendingApprovals($user, $organizationId)->first();
+        if (! $pending instanceof AiActionApproval) {
+            return null;
+        }
+
+        return $this->handlePendingApproval($user, $organizationId, $pending, $message);
+    }
+
+    /**
      * @return array{handled:bool, reply?:string, approval?:AiActionApproval|null}|null
      */
     public function tryHandle(
@@ -27,16 +50,7 @@ class CampaignOutreachPreflightService
         AiConversation $conversation,
         string $message,
     ): ?array {
-        if (! $this->intent->isCampaignActionRequest($message)) {
-            return null;
-        }
-
-        $pending = $this->commandCenter->pendingApprovals($user, $organizationId)->first();
-        if ($pending instanceof AiActionApproval) {
-            return $this->handlePendingApproval($user, $organizationId, $pending, $message);
-        }
-
-        return $this->stageFromRecentDiscovery($user, $organizationId, $conversation, $message);
+        return $this->tryHandlePendingOnly($user, $organizationId, $message);
     }
 
     /**

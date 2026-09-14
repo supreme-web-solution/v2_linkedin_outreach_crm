@@ -54,6 +54,19 @@ class CampaignDraftFromPlanService
             );
         }
 
+        $live = $this->audienceResolver->liveLeadCount(
+            $user,
+            (string) ($audience['list_src'] ?? ''),
+            (string) ($audience['list_hash'] ?? ''),
+        );
+        if ($live < 1) {
+            throw new MissingProspectAudienceException(
+                'That list has no people on it. Find prospects first, then create the campaign.',
+                $this->audienceResolver->nextSteps($payload),
+            );
+        }
+        $audience['total_leads'] = $live;
+
         $isOneShot = app(PlanSequenceNodeBuilder::class)->isOneShotIntent($payload);
         if ($isOneShot && (int) ($audience['total_leads'] ?? 0) > 1) {
             throw new MissingProspectAudienceException(

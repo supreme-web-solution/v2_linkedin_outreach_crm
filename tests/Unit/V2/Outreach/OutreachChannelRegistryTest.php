@@ -35,6 +35,12 @@ class OutreachChannelRegistryTest extends TestCase
             OutreachChannelRegistry::inboxPlatforms(),
         );
 
+        $nodes = [
+            ['key' => 1, 'type' => 'action', 'channel' => 'instagram', 'action' => 'send_message'],
+            ['key' => 2, 'type' => 'delay', 'value' => 2, 'time' => 'days'],
+        ];
+        $this->assertSame('instagram', OutreachChannelRegistry::firstActionChannelForNodes($nodes));
+
         $this->assertSame(
             ['whatsapp', 'instagram'],
             OutreachChannelRegistry::enabledMessagingChannels(),

@@ -20,6 +20,7 @@ class MultiChannelCampaignStagingService
         private readonly ActionApprovalService $approvals,
         private readonly CommandCenterService $commandCenter,
         private readonly AiEmployeeSettingsService $settings,
+        private readonly ProspectAudienceResolverService $audienceResolver,
     ) {}
 
     /**
@@ -32,7 +33,9 @@ class MultiChannelCampaignStagingService
         string $goal,
         array $lists,
         ?AiConversation $conversation = null,
+        bool $setupOnly = false,
     ): array {
+        $channels = app(PlanChannelIntentService::class);
         $ready = [];
         foreach ($lists as $list) {
             if (! is_array($list)) {
@@ -40,9 +43,16 @@ class MultiChannelCampaignStagingService
             }
             $hash = trim((string) ($list['list_hash'] ?? ''));
             $channel = strtolower(trim((string) ($list['primary_channel'] ?? $list['platform'] ?? '')));
-            if ($hash === '' || ! in_array($channel, ['linkedin', 'instagram'], true)) {
+            if ($hash === '' || ! $channels->isSendChannel($channel)) {
                 continue;
             }
+            $src = trim((string) ($list['list_src'] ?? $channels->defaultListSrc($channel)));
+            $live = $this->audienceResolver->liveLeadCount($user, $src, $hash);
+            if ($live < 1) {
+                continue;
+            }
+            $list['list_src'] = $src;
+            $list['total_leads'] = $live;
             if ($this->campaignExistsForList($hash)) {
                 continue;
             }
@@ -57,7 +67,7 @@ class MultiChannelCampaignStagingService
 
         $settings = $this->settings->for($user, $organizationId);
         $autonomy = AiAutonomyLevel::tryFrom((int) $settings->autonomy_level) ?? AiAutonomyLevel::Assisted;
-        $setupOnly = app(UserTurnIntentService::class)->wantsCampaignSetupOnly($goal);
+        $setupOnly = $setupOnly || app(UserTurnIntentService::class)->wantsCampaignSetupOnly($goal);
         $autoLaunch = $autonomy->value >= AiAutonomyLevel::Autopilot->value && ! $setupOnly;
 
         $staged = [];
@@ -141,32 +151,12 @@ class MultiChannelCampaignStagingService
         $count = max(1, (int) ($list['total_leads'] ?? 1));
         $firstDegree = (bool) ($list['first_degree_only'] ?? false)
             || (bool) preg_match('/\b1st\b|1st°|first[- ]degree/i', (string) ($list['list_name'] ?? ''));
-        $label = $channel === 'instagram' ? 'Instagram' : 'LinkedIn';
+        $channels = app(PlanChannelIntentService::class);
+        $label = \App\V2\Outreach\OutreachChannelRegistry::channelLabel($channel);
         $theme = $this->themeFromGoal($goal);
         $name = $theme.' · '.$label.' ('.$count.')';
 
-        $sequence = $channel === 'instagram'
-            ? [
-                'Instagram DM — personalized after research, no pitch',
-                'Wait 4 days',
-                'Light follow-up if no reply',
-                'Pause on reply — handle in inbox',
-            ]
-            : ($firstDegree
-                ? [
-                    'LinkedIn message — personalized after research, no invite',
-                    'Wait 4 days',
-                    'Light follow-up if no reply',
-                    'Pause on reply — handle in inbox',
-                ]
-                : [
-                    'Send Invite (empty note)',
-                    'After acceptance',
-                    'First LinkedIn message — personalized after research',
-                    'Wait 4 days',
-                    'Light follow-up if no reply',
-                    'Pause on reply — handle in inbox',
-                ]);
+        $sequence = $channels->conversationSequence($channel, $firstDegree);
 
         $plan = [
             'type' => 'campaign',
@@ -207,7 +197,7 @@ class MultiChannelCampaignStagingService
         return PlanLeadList::merge(
             $plan,
             (string) $list['list_hash'],
-            (string) ($list['list_src'] ?? ($channel === 'instagram' ? 'csv' : 'sn')),
+            (string) ($list['list_src'] ?? $channels->defaultListSrc($channel)),
             (string) ($list['list_name'] ?? $name),
         );
     }

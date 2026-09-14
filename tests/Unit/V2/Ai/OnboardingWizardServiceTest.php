@@ -29,6 +29,34 @@ class OnboardingWizardServiceTest extends TestCase
         $this->assertNotNull($result);
         $this->assertSame('whatsapp_outreach', $result['key']);
         $this->assertStringContainsString('WhatsApp', $result['reply']);
+        $this->assertStringNotContainsString('Instagram', $result['reply']);
+    }
+
+    public function test_named_channels_become_the_full_connect_checklist(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $service = app(OnboardingWizardService::class);
+
+        $turn = $service->chatTurn(
+            $user,
+            $org->id,
+            'i just want to work with email, instagram, linkedin and whatsapp',
+        );
+
+        $this->assertStringContainsString('multichannel outreach', strtolower($turn['content']));
+        $this->assertStringContainsString('Instagram', $turn['content']);
+        $this->assertStringNotContainsString('WhatsApp outreach campaign', $turn['content']);
+
+        $status = $service->status($user, $org->id);
+        $keys = collect($status['connections'])->pluck('key')->all();
+
+        $this->assertSame('multichannel_outreach', $status['goal']);
+        $this->assertContains('linkedin', $keys);
+        $this->assertContains('email', $keys);
+        $this->assertContains('instagram', $keys);
+        $this->assertContains('whatsapp', $keys);
+        $this->assertNotContains('telegram', $keys);
+        $this->assertSame(4, $status['required_progress']['total']);
     }
 
     public function test_infers_telegram_campaign_from_free_text(): void
@@ -180,6 +208,34 @@ class OnboardingWizardServiceTest extends TestCase
 
         $this->assertSame('ready', $status['phase']);
         $this->assertTrue($status['can_open_command_center']);
+        $this->assertNull($status['starter_prompt']);
+    }
+
+    public function test_conversion_assets_reply_tells_them_to_open_command_center(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $this->connectLinkedIn($user);
+        $this->connectChannel($user, 'email');
+
+        $wizard = app(OnboardingWizardService::class);
+        $wizard->selectGoal($user, $org->id, 'build_linkedin_audience');
+        $wizard->submitBusinessProfile(
+            $user,
+            $org->id,
+            'We help agencies get clients with outbound.',
+        );
+
+        $result = $wizard->submitConversionAssets(
+            $user,
+            $org->id,
+            'https://example.com/sales',
+            null,
+        );
+
+        $this->assertStringContainsString('sales page', strtolower($result['message']));
+        $this->assertStringContainsString('Command Center', $result['message']);
+        $this->assertStringContainsString('Link WhatsApp', $result['message']);
+        $this->assertStringContainsString('all set', strtolower($result['message']));
     }
 
     /**

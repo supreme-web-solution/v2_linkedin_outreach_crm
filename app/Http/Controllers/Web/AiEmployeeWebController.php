@@ -444,8 +444,8 @@ class AiEmployeeWebController extends Controller
             $data['decision'] === 'approve'
             && ! empty($data['draft_text'])
             && (
-                in_array($approval->tool, ['draft_reply', 'draft_personalized_message'], true)
-                || in_array($approval->payload['type'] ?? '', ['draft_reply', 'personalized_message'], true)
+                in_array($approval->tool, ['draft_reply', 'draft_personalized_message', 'book_meeting'], true)
+                || in_array($approval->payload['type'] ?? '', ['draft_reply', 'personalized_message', 'book_meeting'], true)
             )
         ) {
             app(InboxCommandCenterService::class)->updateDraftText($approval, (string) $data['draft_text']);

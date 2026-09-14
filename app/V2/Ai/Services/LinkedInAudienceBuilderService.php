@@ -2,6 +2,7 @@
 
 namespace App\V2\Ai\Services;
 
+use App\Models\SnLead;
 use App\Models\User;
 use App\Models\V2IntegrationAccount;
 use App\Models\V2Lead;
@@ -50,9 +51,8 @@ class LinkedInAudienceBuilderService
         }
 
         $needed = isset($plan['target_count']) ? max(1, (int) $plan['target_count']) : 1;
-        $reused = empty($plan['prefer_fresh_audience'])
-            ? $this->reuseRecentSearch($user, $needed)
-            : null;
+        $forceNewSearch = ! empty($plan['force_new_search']);
+        $reused = $forceNewSearch ? null : $this->reuseRecentSearch($user, $needed);
         if ($reused !== null) {
             Log::info('[Soci] Reusing recent LinkedIn list — not searching again', [
                 'user_id' => $user->id,
@@ -194,12 +194,23 @@ class LinkedInAudienceBuilderService
 
             $payload = $rows->first()?->source_payload;
             $name = is_array($payload) ? (string) ($payload['source_name'] ?? 'LinkedIn Search') : 'LinkedIn Search';
+            $live = $this->ensureSnLeadsForSearchHash($user, (string) $hash, $name);
+            if ($live < $needed) {
+                Log::info('[Soci] Skipping stale LinkedIn reuse — source rows exist but no usable people', [
+                    'user_id' => $user->id,
+                    'list_hash' => $hash,
+                    'source_rows' => $rows->count(),
+                    'sn_leads' => $live,
+                ]);
+
+                continue;
+            }
 
             return [
                 'list_hash' => (string) $hash,
                 'list_src' => 'sn',
                 'list_name' => $name,
-                'total_leads' => $rows->count(),
+                'total_leads' => $live,
                 'match_score' => 100,
                 'auto_sourced' => true,
                 'reused_recent' => true,
@@ -208,6 +219,38 @@ class LinkedInAudienceBuilderService
         }
 
         return null;
+    }
+
+    /**
+     * Campaign delete can wipe sn_leads while V2LeadSource rows remain.
+     * Restore the SN list from those people before attaching a campaign.
+     */
+    private function ensureSnLeadsForSearchHash(User $user, string $hash, string $name): int
+    {
+        $live = (int) SnLead::query()->where('sn_list_id', $hash)->count();
+        if ($live > 0) {
+            return $live;
+        }
+
+        $leadIds = V2LeadSource::query()
+            ->where('source_type', 'sales_navigator')
+            ->where('source_external_id', $hash)
+            ->pluck('lead_id');
+
+        if ($leadIds->isEmpty()) {
+            return 0;
+        }
+
+        $leads = V2Lead::query()
+            ->where('user_id', $user->id)
+            ->whereIn('id', $leadIds)
+            ->get();
+
+        foreach ($leads as $lead) {
+            $this->leadPipeline->syncV2LeadToSnList($user, $lead, $hash, $name !== '' ? $name : null);
+        }
+
+        return (int) SnLead::query()->where('sn_list_id', $hash)->count();
     }
 
     /**

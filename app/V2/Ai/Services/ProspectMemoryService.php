@@ -278,6 +278,26 @@ class ProspectMemoryService
         return $this->merge($lead, $dossier);
     }
 
+    /**
+     * Remember which conversion asset was actually sent (sales page vs webinar).
+     *
+     * @return array<string, mixed>
+     */
+    public function rememberOfferedAsset(V2OutreachLead $lead, string $type, string $url): array
+    {
+        $dossier = $this->dossier($lead);
+        $offered = is_array($dossier['offered_assets'] ?? null) ? $dossier['offered_assets'] : [];
+        if ($type !== '' && ! in_array($type, $offered, true)) {
+            $offered[] = $type;
+        }
+        $dossier['offered_assets'] = $offered;
+        $dossier['last_offered_asset'] = $type;
+        $dossier['last_offered_asset_url'] = $url;
+        $dossier['last_offered_asset_at'] = Carbon::now()->toIso8601String();
+
+        return $this->merge($lead, $dossier);
+    }
+
     public function agentBrief(V2OutreachLead $lead): string
     {
         $dossier = $this->dossier($lead);
@@ -360,6 +380,56 @@ class ProspectMemoryService
         }
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Compact owner-facing inbox card intel (intent + next step + one dossier fact).
+     *
+     * @return array{intent:?string, next_step:?string, dossier_fact:?string}
+     */
+    public function cardIntel(V2OutreachLead $lead, ?string $conversionAction = null): array
+    {
+        $dossier = $this->dossier($lead);
+        $stage = trim((string) ($dossier['conversion_stage'] ?? ''));
+        $action = trim((string) ($conversionAction ?? ''));
+
+        $intent = $stage !== '' ? str_replace('_', ' ', $stage) : null;
+        $nextStep = $action !== ''
+            ? str_replace('_', ' ', $action)
+            : ($stage !== '' ? 'Continue conversion ladder from '.$intent : null);
+
+        $fact = null;
+        $facts = array_slice($dossier['conversation_facts'] ?? [], -3);
+        foreach (array_reverse($facts) as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $candidate = trim((string) ($row['fact'] ?? ''));
+            if ($candidate !== '') {
+                $fact = Str::limit($candidate, 160, '…');
+                break;
+            }
+        }
+        if ($fact === null) {
+            $business = is_array($dossier['business'] ?? null) ? $dossier['business'] : [];
+            $company = trim((string) ($business['company'] ?? ''));
+            $headline = trim((string) ($business['headline'] ?? ''));
+            if ($company !== '' || $headline !== '') {
+                $fact = Str::limit(trim($company.($headline !== '' ? ' — '.$headline : '')), 160, '…');
+            }
+        }
+        if ($fact === null) {
+            $signals = array_values(array_filter($dossier['signals'] ?? [], fn ($s) => is_string($s) && trim($s) !== ''));
+            if ($signals !== []) {
+                $fact = Str::limit((string) $signals[0], 160, '…');
+            }
+        }
+
+        return [
+            'intent' => $intent,
+            'next_step' => $nextStep,
+            'dossier_fact' => $fact,
+        ];
     }
 
     /**

@@ -19,14 +19,22 @@ class InstagramAudienceBuilderService
 {
     private ?string $lastError = null;
 
+    private ?string $lastQualityWarning = null;
+
     public function __construct(
         private readonly MindcaseClient $mindcase,
         private readonly OutreachImportListService $imports,
+        private readonly DiscoveryAudienceQualityService $audienceQuality,
     ) {}
 
     public function lastError(): ?string
     {
         return $this->lastError;
+    }
+
+    public function lastQualityWarning(): ?string
+    {
+        return $this->lastQualityWarning;
     }
 
     /**
@@ -51,6 +59,7 @@ class InstagramAudienceBuilderService
         bool $forceFresh = false,
     ): ?array {
         $this->lastError = null;
+        $this->lastQualityWarning = null;
 
         if (! $this->mindcase->configured()) {
             $this->lastError = 'Mindcase is not configured. Add MINDCASE_API_KEY from https://console.mindcase.co';
@@ -62,15 +71,31 @@ class InstagramAudienceBuilderService
         }
 
         $cap = max(1, min($this->mindcase->maxResultsCap(), $limit ?? 25));
+        // Oversample so quality filter can drop mega/celebrity noise and still fill the list.
+        $fetchCap = max($cap, min($this->mindcase->maxResultsCap(), $cap * 3));
         $cacheKey = 'soci:recent-ig-search:'.$user->id;
         if ($forceFresh) {
             Cache::forget($cacheKey);
         }
         $cached = $forceFresh ? null : Cache::get($cacheKey);
+        if (is_array($cached)) {
+            $live = app(ProspectAudienceResolverService::class)->liveLeadCount(
+                $user,
+                (string) ($cached['list_src'] ?? 'csv'),
+                (string) ($cached['list_hash'] ?? ''),
+            );
+            if ($live < 1) {
+                Cache::forget($cacheKey);
+                $cached = null;
+            } else {
+                $cached['total_leads'] = $live;
+            }
+        }
         if (is_array($cached) && (int) ($cached['total_leads'] ?? 0) >= min($cap, 1)) {
             Log::info('[Soci] Reusing recent Instagram list — not searching again', [
                 'user_id' => $user->id,
                 'list_hash' => $cached['list_hash'] ?? null,
+                'total_leads' => $cached['total_leads'] ?? 0,
             ]);
 
             return $cached;
@@ -108,7 +133,7 @@ class InstagramAudienceBuilderService
             $rows = $this->mindcase->instagramProfiles(
                 query: $handles === [] ? $query : null,
                 usernames: $handles,
-                maxResults: $cap,
+                maxResults: $fetchCap,
                 heartbeat: $heartbeat,
             );
         } catch (Throwable $e) {
@@ -131,10 +156,30 @@ class InstagramAudienceBuilderService
             return null;
         }
 
+        $orgId = (int) ($user->current_organization_id ?? 0);
+        $buyerTokens = $this->audienceQuality->icpBuyerTokens($user, $orgId);
+        $filtered = $this->audienceQuality->filterInstagramRows($rows, $buyerTokens, $cap);
+        $this->lastQualityWarning = $filtered['warning'];
+        $rows = $filtered['kept'];
+
+        if ($rows === []) {
+            $this->lastError = $filtered['warning']
+                ?? 'Instagram results were too weak to save after quality filtering. Try a buyer-niche keyword.';
+            Log::info('[Soci] Instagram Mindcase search finished — all filtered out', [
+                'user_id' => $user->id,
+                'query' => Str::limit($query, 120),
+                'rejected' => $filtered['rejected'],
+            ]);
+
+            return null;
+        }
+
         Log::info('[Soci] Instagram Mindcase search finished', [
             'user_id' => $user->id,
             'query' => Str::limit($query, 120),
             'profiles' => count($rows),
+            'rejected' => $filtered['rejected'],
+            'weak_fit' => $filtered['weak_fit'],
         ]);
 
         $contacts = [];
@@ -166,6 +211,7 @@ class InstagramAudienceBuilderService
                 'profile_url' => $url,
                 'followers' => Arr::get($row, 'followers') ?? Arr::get($row, 'followersCount'),
                 'platform' => 'instagram',
+                'fit_note' => $filtered['weak_fit'] ? 'weak_icp_fit' : 'ok',
             ];
         }
 
@@ -184,11 +230,14 @@ class InstagramAudienceBuilderService
             'list_src' => 'csv',
             'list_name' => (string) ($result['list']['list_name'] ?? $name),
             'total_leads' => (int) $result['imported'],
-            'match_score' => 95,
+            'match_score' => $filtered['weak_fit'] ? 55 : 95,
             'auto_sourced' => true,
             'sample_profiles' => array_slice($samples, 0, 5),
             'platform' => 'instagram',
             'profile_detail' => $samples[0] ?? null,
+            'quality_warning' => $this->lastQualityWarning,
+            'weak_fit' => $filtered['weak_fit'],
+            'filtered_out' => $filtered['rejected'],
         ];
         Cache::put($cacheKey, $saved, now()->addMinutes(30));
 

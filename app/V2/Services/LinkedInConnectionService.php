@@ -133,6 +133,9 @@ class LinkedInConnectionService
 
         $context = $this->appendHostedAuthReconnect($context, $existing);
 
+        $context = app(HostedAuthLocationService::class)
+            ->applyToContext($context, $user, $request, 'LINKEDIN');
+
         return $this->providerManager->account(
 
             $this->providerManager->defaultProvider()

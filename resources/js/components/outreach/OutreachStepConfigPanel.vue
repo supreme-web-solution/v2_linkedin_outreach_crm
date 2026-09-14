@@ -27,12 +27,13 @@ const emit = defineEmits<{
 const page = usePage();
 const actionQuotas = computed(() => {
     const raw = page.props.action_quotas as
-        | { invites?: ActionQuotaSnapshot; messages?: ActionQuotaSnapshot }
+        | { invites?: ActionQuotaSnapshot; messages?: ActionQuotaSnapshot; instagram_dms?: ActionQuotaSnapshot }
         | undefined;
     return raw ?? null;
 });
 const inviteQuota = computed(() => actionQuotas.value?.invites ?? null);
 const messageQuota = computed(() => actionQuotas.value?.messages ?? null);
+const instagramQuota = computed(() => actionQuotas.value?.instagram_dms ?? null);
 const hasInviteNote = computed(() => trimMessage((props.step.config?.message as string) ?? '') !== '');
 
 function trimMessage(value: string): string {
@@ -140,7 +141,7 @@ const prerequisiteWarning = computed(() =>
                         v-else-if="step.channel && ['linkedin', 'whatsapp', 'instagram', 'telegram', 'twitter'].includes(step.channel)"
                         :channel="step.channel"
                         variant="action"
-                        :quota="step.channel === 'linkedin' ? messageQuota : null"
+                        :quota="step.channel === 'linkedin' ? messageQuota : step.channel === 'instagram' ? instagramQuota : null"
                     />
                 </div>
             </template>

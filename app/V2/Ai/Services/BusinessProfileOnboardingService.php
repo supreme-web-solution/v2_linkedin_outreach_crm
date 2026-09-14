@@ -83,11 +83,20 @@ class BusinessProfileOnboardingService
             throw new \RuntimeException('We could not read enough from your input. Try pasting more detail or a different link.');
         }
 
-        $summary = $this->summarizeBusinessText($rawText);
+        $settings = $this->settingsService->for($user, $organizationId);
+        $meta = is_array($settings->meta) ? $settings->meta : [];
+        $goalProfile = is_array($meta['workspace_goal_profile'] ?? null) ? $meta['workspace_goal_profile'] : [];
+        $onboarding = is_array($meta['onboarding'] ?? null) ? $meta['onboarding'] : [];
+        $ownerGoal = trim((string) ($goalProfile['custom_goal'] ?? $onboarding['custom_goal'] ?? $goalProfile['goal'] ?? $onboarding['goal'] ?? ''));
+        $preferredChannels = is_array($goalProfile['preferred_channels'] ?? null)
+            ? $goalProfile['preferred_channels']
+            : [];
+
+        $summary = $this->planContent->summarizeBusiness($rawText);
         $icpInputs = [
             'offer' => $summary !== '' ? $summary : Str::limit($rawText, 500),
             'website' => $websiteUrl !== '' ? $websiteUrl : null,
-            'geography' => 'Global',
+            'geography' => trim((string) ($goalProfile['geography'] ?? '')) ?: 'Global',
             'notes' => Str::limit($rawText, 4000),
         ];
 
@@ -97,10 +106,13 @@ class BusinessProfileOnboardingService
             [],
             $icpInputs['geography'],
             $icpInputs['notes'],
+            [],
+            [
+                'owner_goal' => $ownerGoal !== '' ? $ownerGoal : null,
+                'preferred_channels' => $preferredChannels,
+                'website_title' => $scrapedTitle,
+            ],
         );
-
-        $settings = $this->settingsService->for($user, $organizationId);
-        $meta = is_array($settings->meta) ? $settings->meta : [];
 
         $meta['business_profile'] = [
             'summary' => $summary !== '' ? $summary : Str::limit($rawText, 400),
@@ -114,7 +126,7 @@ class BusinessProfileOnboardingService
 
         $meta['stored_icp'] = [
             'icp' => $icp,
-            'goal' => is_array($meta['onboarding'] ?? null) ? ($meta['onboarding']['custom_goal'] ?? $meta['onboarding']['goal'] ?? null) : null,
+            'goal' => $ownerGoal !== '' ? $ownerGoal : (is_array($meta['onboarding'] ?? null) ? ($meta['onboarding']['custom_goal'] ?? $meta['onboarding']['goal'] ?? null) : null),
             'saved_at' => Carbon::now()->toIso8601String(),
             'source' => 'onboarding_business_profile',
         ];
@@ -131,7 +143,7 @@ class BusinessProfileOnboardingService
         $settings->update(['meta' => $meta]);
 
         return [
-            'message' => 'Got it — I learned about your business and built your ideal customer profile.',
+            'message' => 'Got it — I learned your business and mapped who you sell to, who decides, what pain to speak to, and how we should search. That ICP now guides discovery and outreach.',
             'business_profile' => $meta['business_profile'],
             'icp' => $icp,
         ];
@@ -211,14 +223,6 @@ class BusinessProfileOnboardingService
         }
 
         return $message;
-    }
-
-    private function summarizeBusinessText(string $rawText): string
-    {
-        $paragraphs = preg_split('/\n{2,}/', $rawText) ?: [];
-        $first = trim((string) ($paragraphs[0] ?? $rawText));
-
-        return Str::limit(preg_replace('/\s+/', ' ', $first) ?? $first, 400);
     }
 
     private function extractUploadedText(UploadedFile $file): string

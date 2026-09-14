@@ -23,6 +23,8 @@ class PersonalizedMessageCommandCenterService
         private readonly CommandCenterService $commandCenter,
         private readonly AiEmployeeSettingsService $settingsService,
         private readonly OpenAIContentService $openai,
+        private readonly OutboundMessageComposerService $composer,
+        private readonly AiProviderChain $providers,
         private readonly ProspectResearchService $prospectResearch,
     ) {}
 
@@ -71,20 +73,21 @@ class PersonalizedMessageCommandCenterService
             throw new \RuntimeException('Outreach lead not found. Pass outreach_lead_id or a Unified Inbox conversation_id.');
         }
 
-        if (! $this->openai->isConfigured()) {
-            throw new \RuntimeException('OpenAI is not configured for personalized message drafting.');
+        if ($this->providers->forAgent() === [] && ! $this->openai->isConfigured()) {
+            throw new \RuntimeException('No AI provider is configured for personalized message drafting.');
         }
 
         $intel = $this->prospectResearch->researchLead($lead);
         $evidence = $this->buildEvidence($lead, $campaign, $v2Conversation, $intel);
-        $context = $this->buildPromptContext($goal, $evidence, $notes);
-        $draft = trim($this->openai->generateOutreachContent(
-            'generate',
+        $draft = trim($this->composer->composeFromEvidence(
             $channel,
-            $action,
-            'message',
-            $context,
-        ));
+            'personalized',
+            $goal,
+            $evidence,
+            null,
+            null,
+            $notes,
+        )['body'] ?? '');
 
         if ($draft === '') {
             throw new \RuntimeException('Could not generate personalized message.');
@@ -234,29 +237,5 @@ class PersonalizedMessageCommandCenterService
             'campaign_name' => $campaign?->name,
             'last_inbound' => $inboundPreview,
         ], fn ($value) => $value !== null && $value !== '');
-    }
-
-    /**
-     * @param  array<string, mixed>  $evidence
-     */
-    private function buildPromptContext(string $goal, array $evidence, ?string $notes): string
-    {
-        $lines = ['Write a personalized outreach message grounded ONLY in the evidence below. Do not invent employers, metrics, or prior conversations not listed.'];
-
-        if ($goal !== '') {
-            $lines[] = 'Goal: '.$goal;
-        }
-
-        foreach ($evidence as $key => $value) {
-            $label = Str::headline(str_replace('_', ' ', (string) $key));
-            $lines[] = "{$label}: {$value}";
-        }
-
-        $noteText = trim((string) $notes);
-        if ($noteText !== '') {
-            $lines[] = 'Additional guidance: '.$noteText;
-        }
-
-        return implode("\n", $lines);
     }
 }

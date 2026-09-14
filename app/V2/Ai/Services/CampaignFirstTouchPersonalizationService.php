@@ -5,6 +5,7 @@ namespace App\V2\Ai\Services;
 use App\Models\User;
 use App\Models\V2OutreachCampaign;
 use App\Models\V2OutreachLead;
+use App\V2\Ai\Services\AiProviderChain;
 use App\V2\Outreach\OutreachChannelRegistry;
 use App\V2\Services\OpenAIContentService;
 use Illuminate\Support\Arr;
@@ -13,12 +14,14 @@ use Illuminate\Support\Str;
 
 /**
  * Evidence-grounded first-touch personalization for AI-created campaigns.
- * Conversation-first: earn a reply with a situational question — no pitch, no links.
+ * Copy goes through OutboundMessageComposerService (Laravel AI), not a separate OpenAI path.
  */
 class CampaignFirstTouchPersonalizationService
 {
     public function __construct(
         private readonly OpenAIContentService $openai,
+        private readonly OutboundMessageComposerService $composer,
+        private readonly AiProviderChain $providers,
         private readonly ProspectResearchService $research,
         private readonly WorkspaceContextService $workspaceContext,
     ) {}
@@ -35,7 +38,7 @@ class CampaignFirstTouchPersonalizationService
             return ['personalized' => 0, 'skipped' => 0];
         }
 
-        if (! $this->openai->isConfigured()) {
+        if ($this->providers->forAgent() === [] && ! $this->openai->isConfigured()) {
             return ['personalized' => 0, 'skipped' => 0];
         }
 
@@ -99,27 +102,18 @@ class CampaignFirstTouchPersonalizationService
         $businessContext = $owner && $orgId > 0
             ? $this->workspaceContext->agentContextBlock($owner, $orgId)
             : '';
+        $sender = $owner
+            ? \App\V2\Ai\Support\SenderIdentity::displayName($owner, $orgId, $campaign)
+            : '';
 
-        $lines = $this->buildPromptLines($channel, $goal, $businessContext);
-
-        if ($owner) {
-            $sender = \App\V2\Ai\Support\SenderIdentity::displayName($owner, $orgId, $campaign);
-            if ($sender !== '') {
-                $lines[] = 'Sender name (sign as this person): '.$sender;
-            }
-        }
-
-        foreach ($evidence as $key => $value) {
-            $lines[] = Str::headline(str_replace('_', ' ', (string) $key)).': '.$value;
-        }
-
-        $draft = trim($this->openai->generateOutreachContent(
-            'generate',
+        $draft = trim($this->composer->composeFromEvidence(
             $channel,
-            'message',
-            'message',
-            implode("\n", $lines),
-        ));
+            'first_touch',
+            $goal,
+            $evidence,
+            $businessContext,
+            $sender !== '' ? $sender : null,
+        )['body'] ?? '');
 
         if ($draft === '') {
             return false;
@@ -197,7 +191,9 @@ class CampaignFirstTouchPersonalizationService
     {
         $campaignMeta = is_array($campaign->meta) ? $campaign->meta : [];
         $enabled = ! empty($campaignMeta['ai_personalize_first_touch'])
-            || ! empty($campaignMeta['ai_plan']['personalize_before_send']);
+            || ! empty($campaignMeta['ai_plan']['personalize_before_send'])
+            || ! empty($node['config']['personalize_before_send'])
+            || $this->isPlaceholderTemplate($templateText);
         if (! $enabled) {
             return trim($templateText) !== '' ? $templateText : null;
         }
@@ -219,30 +215,21 @@ class CampaignFirstTouchPersonalizationService
             ? $this->workspaceContext->agentContextBlock($owner, $orgId)
             : '';
 
-        $lines = [
-            'Write a FOLLOW-UP outreach message (max 280 chars).',
-            'Keep tone channel-native and conversational.',
-            'Reference earlier outreach naturally, then ask one short context-aware question.',
-            'No product pitch, no links, no calendar in this follow-up.',
-            'Use only provided evidence.',
-            'Background goal (do not pitch it): '.$goal,
-            'Prospect name: '.(string) ($lead->full_name ?? ''),
-            'Channel: '.$channel,
-            'Company: '.(string) (Arr::get($meta, 'company_name') ?? Arr::get($meta, 'company', '')),
-            'Signals: '.implode(', ', Arr::get($intel, 'signals', [])),
-            'Recent scraped excerpt: '.(string) Arr::get($intel, 'scraped.0.excerpt', ''),
-        ];
-        if ($businessContext !== '') {
-            $lines[] = trim($businessContext);
-        }
+        $evidence = array_filter([
+            'full_name' => $lead->full_name,
+            'company' => Arr::get($meta, 'company_name') ?? Arr::get($meta, 'company'),
+            'signals' => implode(', ', Arr::get($intel, 'signals', [])),
+            'site_excerpt' => Arr::get($intel, 'scraped.0.excerpt'),
+            'channel' => $channel,
+        ], fn ($v) => $v !== null && trim((string) $v) !== '');
 
-        $draft = trim($this->openai->generateOutreachContent(
-            'generate',
+        $draft = trim($this->composer->composeFromEvidence(
             $channel,
-            'message',
-            'message',
-            implode("\n", $lines),
-        ));
+            'follow_up',
+            $goal,
+            $evidence,
+            $businessContext,
+        )['body'] ?? '');
         if ($draft === '') {
             return trim($templateText) !== '' ? $templateText : null;
         }
@@ -270,7 +257,10 @@ class CampaignFirstTouchPersonalizationService
         $text = trim($templateText);
 
         return $text === ''
-            || (bool) preg_match('/thanks for connecting|just checking in|^\{\{firstName\}\}|^hi \{\{firstname\}\}/i', $text);
+            || (bool) preg_match(
+                '/thanks for connecting|just checking in|just bumping|floating this back up|^\{\{firstName\}\}|^hi \{\{firstname\}\}/i',
+                $text
+            );
     }
 
     private function resolveChannel(V2OutreachLead $lead, V2OutreachCampaign $campaign): string
@@ -295,33 +285,4 @@ class CampaignFirstTouchPersonalizationService
         return 'linkedin';
     }
 
-    /**
-     * @return list<string>
-     */
-    private function buildPromptLines(string $channel, string $goal, string $businessContext): array
-    {
-        $tone = match ($channel) {
-            'instagram', 'whatsapp', 'telegram', 'twitter' => 'Conversational DM tone — short, casual, like texting. Not a formal email.',
-            'email' => 'Professional but warm email tone — short paragraphs OK.',
-            default => 'LinkedIn professional tone — concise and respectful.',
-        };
-
-        $lines = [
-            'Write a FIRST-TOUCH outreach message (max 320 chars).',
-            $tone,
-            'CRITICAL: Your only job is to EARN A REPLY — aim for a message they would actually answer.',
-            'Use what you know: their role, company, headline, about, and any company site excerpt.',
-            'Ask ONE specific question about a situation that role/company would recognize (manual work, disconnected tools, old process).',
-            'Do NOT mention our product, do NOT include links, demos, calendars, or "I help businesses…" pitches.',
-            'Do not invent facts that are not in the evidence. If company is known, mention it naturally.',
-            'Never use placeholders like [Your Name] or {{firstName}}.',
-            'Background goal (do not pitch it): '.$goal,
-        ];
-
-        if ($businessContext !== '') {
-            $lines[] = trim($businessContext);
-        }
-
-        return $lines;
-    }
 }

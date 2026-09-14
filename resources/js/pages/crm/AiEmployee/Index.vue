@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Head, usePage } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import AlexAvatar from '@/components/crm/AlexAvatar.vue';
 import CommandCenterEmployeeSettings from '@/components/crm/CommandCenterEmployeeSettings.vue';
 import { Check, Bot, ChevronDown, Eraser, History, Inbox, Link2, Loader2, MessageCircle, PauseCircle, RefreshCw, Send, Undo2 } from '@lucide/vue';
@@ -268,15 +268,24 @@ const autonomyLabel = computed(() => {
     return map[employeeSettings.value.autonomy_level] ?? 'Assisted';
 });
 
-const suggestions = [
-    'Book 20 meetings with US SaaS founders this month',
-    'Find my ideal customers for lead generation',
-    'Let AI execute',
-    'brief',
-    'weekly brief',
-    'attention',
-    'status',
-];
+const canDiscover = computed(() =>
+    props.integrations.some((ch) =>
+        (ch.key === 'linkedin' || ch.key === 'instagram') && ch.connected,
+    ),
+);
+
+const suggestions = computed(() => {
+    const base = ['Let AI execute', 'brief', 'weekly brief', 'attention', 'status'];
+    if (canDiscover.value) {
+        return [
+            'Book 20 meetings with US SaaS founders this month',
+            'Find my ideal customers for lead generation',
+            ...base,
+        ];
+    }
+
+    return base;
+});
 
 watch(
     pending,
@@ -728,6 +737,13 @@ async function disconnectWhatsApp() {
                 >
                     {{ s }}
                 </Button>
+            </div>
+            <div
+                v-if="!canDiscover"
+                class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+            >
+                You cannot find people until LinkedIn is connected.
+                <Link href="/integrations" class="font-medium underline">Open Integrations</Link>
             </div>
 
             <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-card">

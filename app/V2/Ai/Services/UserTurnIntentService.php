@@ -5,7 +5,11 @@ namespace App\V2\Ai\Services;
 use Illuminate\Support\Str;
 
 /**
- * Lightweight intent guard so status questions don't trigger prospect discovery.
+ * Structural parsers + emergency keyword fallback when SemanticTurnPlanService is unavailable.
+ *
+ * Prefer SemanticTurnPlan fields for meaning (cold_one_shot, inbox_reply, prepare_only, etc.).
+ * Keep using this class for: email/URL/phone/handle extraction, control-command parsing,
+ * observability labels, and IntentGoalResolver fallback when the LLM planner fails.
  */
 class UserTurnIntentService
 {
@@ -69,9 +73,44 @@ class UserTurnIntentService
     /**
      * User wants to find/save prospects — not necessarily start outreach.
      */
+    /**
+     * Keyword fallback when the semantic planner is unavailable.
+     * Prefer thread-aware LLM interpretation for short "go ahead / just N" turns.
+     */
+    public function isProceedWithTargetCount(string $message): bool
+    {
+        $lower = Str::lower(trim($message));
+        if ($lower === '' || ! preg_match('/\b(\d{1,3})\b/', $lower, $match)) {
+            return false;
+        }
+
+        $count = (int) $match[1];
+        if ($count < 1 || $count > 100) {
+            return false;
+        }
+
+        if (preg_match('/\b(campaign|delete|inbox|reply)\b/', $lower)) {
+            return false;
+        }
+
+        if (preg_match('/\b(just|only|about|around)\s+'.$count.'\b/', $lower)) {
+            return true;
+        }
+
+        if (preg_match('/\b'.$count.'\s+(is|ia|are|s)\s+(okay|ok|fine|enough|good)\b/', $lower)) {
+            return true;
+        }
+
+        return (bool) preg_match('/\b(go ahead|proceed)\b/', $lower);
+    }
+
     public function isProspectDiscoveryRequest(string $message): bool
     {
         $lower = Str::lower(trim($message));
+
+        if ($this->isProceedWithTargetCount($lower)) {
+            return true;
+        }
 
         if ((bool) preg_match('/\b(\d{1,3})\s*(client|customer|prospect|lead)s?\b/i', $lower)) {
             return true;
@@ -256,6 +295,13 @@ class UserTurnIntentService
             }
         }
 
+        // Short "build this/it" in a thread means stage the plan for Review & Launch — not send.
+        if (! preg_match('/\b(send|launch|start|activate|run|dm|message)\b/', $lower)
+            && preg_match('/^(please\s+)?(build|rebuild|recreate|make)\s+(this|it|that|the\s+plan)\s*[.!]?\s*$/', $lower)
+        ) {
+            return true;
+        }
+
         return false;
     }
 
@@ -303,6 +349,11 @@ class UserTurnIntentService
             return false;
         }
 
+        // Cold email/DM/URL/phone is outbound — not an inbox reply to an existing thread.
+        if ($this->isColdOutboundRequest($message)) {
+            return false;
+        }
+
         $patterns = [
             '/\b(generate|write|draft|create|compose|prepare)\b.{0,50}\b(reply|response|email|message)\b/i',
             '/\b(send|reply|respond)\b.{0,40}\b(to|for|back to)\b/i',
@@ -319,6 +370,221 @@ class UserTurnIntentService
         }
 
         return false;
+    }
+
+    /**
+     * Keyword fallback when the semantic planner is unavailable.
+     * Prefer SemanticTurnPlan cold_one_shot / recipient_correction in production.
+     *
+     * User is correcting a wrong recipient on a cold outbound they just staged/sent.
+     * Channel-agnostic: email typo, wrong handle, wrong phone, etc.
+     */
+    public function isOutboundRecipientCorrection(string $message): bool
+    {
+        $lower = Str::lower(trim($message));
+        if ($lower === '') {
+            return false;
+        }
+
+        $hasIdentity = ($this->extractColdOutboundIdentity($message)['channel'] ?? null) !== null;
+        if (! $hasIdentity) {
+            return false;
+        }
+
+        // Soft structural cue only — real intent comes from the semantic planner.
+        return (bool) preg_match(
+            '/\b(incorrect|wrong|typo|misspelled|mistake|sorry|oops|meant|instead|not that|fix)\b/i',
+            $lower,
+        ) && (bool) preg_match(
+            '/\b(email|mail|send|dm|message|whatsapp|telegram|instagram|linkedin|twitter|\bx\b|to this|to him|to her)\b/i',
+            $lower,
+        );
+    }
+
+    /**
+     * Keyword fallback when the semantic planner is unavailable.
+     * Prefer SemanticTurnPlan cold_one_shot in production.
+     *
+     * Cold one-shot to a named contact (email, LinkedIn URL, IG, WhatsApp, Telegram, X)
+     * without requiring an existing Unified Inbox thread.
+     */
+    public function isColdOutboundRequest(string $message): bool
+    {
+        $lower = Str::lower(trim($message));
+        if ($lower === '') {
+            return false;
+        }
+
+        if ($this->looksLikeExistingInboxContext($lower)) {
+            return false;
+        }
+
+        $identity = $this->extractColdOutboundIdentity($message);
+        if (($identity['channel'] ?? null) === null) {
+            return false;
+        }
+
+        if ($this->isOutboundRecipientCorrection($message)) {
+            return true;
+        }
+
+        $action = (bool) preg_match(
+            '/\b(email|e-?mail|mail|dm|message|send|reach\s+out|contact|whatsapp|wa|telegram|ig|instagram|tweet|twitter|linkedin|write|draft|compose|plan(?:ned)?\s+reply|intro|check|gather|tailor)\b/i',
+            $lower,
+        );
+
+        return $action;
+    }
+
+    /**
+     * @return array{
+     *     channel: ?string,
+     *     email: ?string,
+     *     phone: ?string,
+     *     linkedin_url: ?string,
+     *     instagram_handle: ?string,
+     *     telegram_handle: ?string,
+     *     twitter_handle: ?string,
+     *     research_url: ?string,
+     *     display_name: ?string
+     * }
+     */
+    public function extractColdOutboundIdentity(string $message): array
+    {
+        $empty = [
+            'channel' => null,
+            'email' => null,
+            'phone' => null,
+            'linkedin_url' => null,
+            'instagram_handle' => null,
+            'telegram_handle' => null,
+            'twitter_handle' => null,
+            'research_url' => null,
+            'display_name' => null,
+        ];
+
+        $text = trim($message);
+        if ($text === '') {
+            return $empty;
+        }
+
+        $lower = Str::lower($text);
+        $researchUrl = null;
+        if (preg_match_all('#https?://[^\s<>"\']+#i', $text, $urlMatches)) {
+            foreach ($urlMatches[0] as $url) {
+                $clean = rtrim($url, '.,);]');
+                if (preg_match('#linkedin\.com/in/#i', $clean)
+                    || preg_match('#instagram\.com/#i', $clean)
+                    || preg_match('#(?:t\.me|telegram\.me)/#i', $clean)
+                    || preg_match('#(?:twitter\.com|x\.com)/#i', $clean)
+                ) {
+                    continue;
+                }
+                $researchUrl = $clean;
+                break;
+            }
+        }
+
+        $email = null;
+        if (preg_match('/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i', $text, $m)) {
+            $email = Str::lower($m[0]);
+        }
+
+        $linkedinUrl = null;
+        if (preg_match('#https?://(?:www\.)?linkedin\.com/in/[\w%-]+/?#i', $text, $m)) {
+            $linkedinUrl = rtrim($m[0], '.,);]');
+        }
+
+        $instagramHandle = null;
+        if (preg_match('#instagram\.com/([a-z0-9._]{2,30})/?#i', $text, $m)) {
+            $instagramHandle = Str::lower($m[1]);
+        } elseif (preg_match('/\b(?:instagram|ig)\b.{0,40}@([a-z0-9._]{2,30})\b/i', $text, $m)) {
+            $instagramHandle = Str::lower($m[1]);
+        }
+
+        $telegramHandle = null;
+        if (preg_match('#(?:t\.me|telegram\.me)/([a-z0-9_]{5,32})#i', $text, $m)) {
+            $telegramHandle = Str::lower($m[1]);
+        } elseif (preg_match('/\btelegram\b.{0,40}@([a-z0-9_]{5,32})\b/i', $text, $m)) {
+            $telegramHandle = Str::lower($m[1]);
+        }
+
+        $twitterHandle = null;
+        if (preg_match('#(?:twitter\.com|x\.com)/([a-z0-9_]{1,30})#i', $text, $m)) {
+            $twitterHandle = Str::lower($m[1]);
+        } elseif (preg_match('/\b(?:twitter|x)\b.{0,40}@([a-z0-9_]{1,30})\b/i', $text, $m)) {
+            $twitterHandle = Str::lower($m[1]);
+        }
+
+        $phone = null;
+        if (preg_match('/(?:\+|whatsapp|\bwa\b|call|text|sms)\s*[:#]?\s*(\+?\d[\d\s().-]{7,}\d)/i', $text, $m)
+            || (preg_match('/\b(?:whatsapp|wa)\b/i', $lower) && preg_match('/\+?\d[\d\s().-]{7,}\d/', $text, $phoneMatch))
+        ) {
+            $raw = $m[1] ?? ($phoneMatch[0] ?? null);
+            $phone = $raw !== null ? (preg_replace('/\s+/', '', $raw) ?: null) : null;
+        }
+
+        // Bare @handle with explicit channel words (domain-agnostic — any niche).
+        if ($instagramHandle === null
+            && preg_match('/\b(?:instagram|ig)\b/i', $lower)
+            && preg_match('/(?:^|\s)@([a-z0-9._]{2,30})\b/i', $text, $m)
+        ) {
+            $instagramHandle = Str::lower($m[1]);
+        }
+        if ($telegramHandle === null
+            && preg_match('/\btelegram\b/i', $lower)
+            && preg_match('/(?:^|\s)@([a-z0-9_]{5,32})\b/i', $text, $m)
+        ) {
+            $telegramHandle = Str::lower($m[1]);
+        }
+
+        $channel = null;
+        if ($linkedinUrl !== null && preg_match('/\b(linkedin|dm|message|send|reach\s+out)\b/i', $lower)) {
+            $channel = 'linkedin';
+        } elseif ($linkedinUrl !== null && ! preg_match('/\b(email|whatsapp|telegram|instagram|twitter|\bx\b)\b/i', $lower)) {
+            $channel = 'linkedin';
+        } elseif ($email !== null && (
+            preg_match('/\b(email|e-mail|mail)\b/i', $lower)
+            || preg_match('/\b(send|write|draft|compose|plan(?:ned)?\s+reply)\b/i', $lower)
+        )) {
+            $channel = 'email';
+        } elseif ($instagramHandle !== null) {
+            $channel = 'instagram';
+        } elseif ($telegramHandle !== null || (preg_match('/\btelegram\b/i', $lower) && $phone !== null)) {
+            $channel = 'telegram';
+        } elseif ($twitterHandle !== null) {
+            $channel = 'twitter';
+        } elseif ($phone !== null && preg_match('/\b(?:whatsapp|wa)\b/i', $lower)) {
+            $channel = 'whatsapp';
+        } elseif ($email !== null) {
+            $channel = 'email';
+        } elseif ($phone !== null) {
+            $channel = 'whatsapp';
+        } elseif ($linkedinUrl !== null) {
+            $channel = 'linkedin';
+        } elseif ($instagramHandle !== null && preg_match('/\b(?:instagram|ig|dm|message)\b/i', $lower)) {
+            $channel = 'instagram';
+        }
+
+        return [
+            'channel' => $channel,
+            'email' => $email,
+            'phone' => $phone,
+            'linkedin_url' => $linkedinUrl,
+            'instagram_handle' => $instagramHandle,
+            'telegram_handle' => $telegramHandle,
+            'twitter_handle' => $twitterHandle,
+            'research_url' => $researchUrl,
+            'display_name' => $email ?? $linkedinUrl ?? $instagramHandle ?? $telegramHandle ?? $twitterHandle ?? $phone,
+        ];
+    }
+
+    private function looksLikeExistingInboxContext(string $lower): bool
+    {
+        return (bool) preg_match(
+            '/\b(inbox|attention queue|that email we (received|got)|existing thread|open thread|from (the )?inbox)\b/',
+            $lower,
+        );
     }
 
     public function wantsDraftOnly(string $message): bool

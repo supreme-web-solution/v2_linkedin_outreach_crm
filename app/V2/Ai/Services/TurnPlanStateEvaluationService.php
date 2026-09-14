@@ -143,6 +143,13 @@ class TurnPlanStateEvaluationService
             $remainingDiscovery = 0;
         }
 
+        if (\App\V2\Ai\Support\SingleRecipientTurnGuard::matches($plan)) {
+            $requiresExternalDiscovery = false;
+            $remainingDiscovery = 0;
+            $remainingDeficit = 0;
+            $constraintsApplied[] = 'single_recipient_no_list_discovery';
+        }
+
         $evaluation = [
             'evaluated_at' => now()->toIso8601String(),
             'skipped' => false,
@@ -314,7 +321,7 @@ class TurnPlanStateEvaluationService
     {
         $channel = is_string($channel) ? strtolower(trim($channel)) : null;
 
-        return in_array($channel, ['whatsapp', 'linkedin', 'email', 'instagram', 'telegram'], true)
+        return in_array($channel, ['whatsapp', 'linkedin', 'email', 'instagram', 'telegram', 'twitter'], true)
             ? $channel
             : null;
     }

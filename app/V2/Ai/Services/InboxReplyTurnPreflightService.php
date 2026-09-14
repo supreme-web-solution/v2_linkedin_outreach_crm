@@ -10,8 +10,8 @@ use App\V2\Services\InboxConversationResolverService;
 use Illuminate\Support\Str;
 
 /**
- * When the owner asks Soci to draft/send an inbox reply, run draft_reply directly
- * instead of letting the LLM paste prose-only drafts that never send in Autopilot.
+ * Optional short-circuit for inbox reply staging when socifusion_ai.outbound_preflight=true.
+ * Default path: SociFusionAgent calls draft_reply (or draft_cold_outbound when no thread).
  */
 class InboxReplyTurnPreflightService
 {
@@ -20,6 +20,8 @@ class InboxReplyTurnPreflightService
         private readonly InboxCommandCenterService $inbox,
         private readonly InboxConversationResolverService $resolver,
         private readonly AiEmployeeSettingsService $settingsService,
+        private readonly OneShotOutboundCommandCenterService $coldOutbound,
+        private readonly SemanticTurnPlanService $semanticPlanner,
     ) {}
 
     /**
@@ -32,7 +34,7 @@ class InboxReplyTurnPreflightService
         string $message,
         string $channel = 'web',
     ): ?array {
-        if (! $this->intent->isInboxReplyRequest($message)) {
+        if (! $this->wantsInboxReply($user, $organizationId, $conversation, $message)) {
             return null;
         }
 
@@ -48,9 +50,21 @@ class InboxReplyTurnPreflightService
         );
 
         if (! $v2Conversation) {
+            // No prior thread — if they named a contact, treat as cold outbound (all channels).
+            $cold = $this->coldOutbound->tryHandle(
+                $user,
+                $organizationId,
+                $conversation,
+                $message,
+                $channel,
+            );
+            if ($cold !== null) {
+                return $cold;
+            }
+
             return [
                 'handled' => true,
-                'reply' => 'I could not find an inbox thread for that person. Try get_attention_queue or pass their email.',
+                'reply' => 'No inbox thread yet for that person. Paste their email, LinkedIn URL, Instagram/Telegram/X handle, or WhatsApp number and I will stage a one-shot send for Review & Launch.',
                 'approval' => null,
             ];
         }
@@ -119,5 +133,25 @@ class InboxReplyTurnPreflightService
             ])),
             'approval' => $approval instanceof AiActionApproval ? $approval : null,
         ];
+    }
+
+    /**
+     * Prefer semantic inbox_reply; keyword heuristics only when the planner is unavailable.
+     */
+    private function wantsInboxReply(
+        User $user,
+        int $organizationId,
+        AiConversation $conversation,
+        string $message,
+    ): bool {
+        $interpreted = $this->semanticPlanner->interpret($user, $organizationId, $message, $conversation);
+        if (is_array($interpreted)) {
+            $semantic = is_array($interpreted['semantic'] ?? null) ? $interpreted['semantic'] : [];
+
+            return (bool) ($semantic['inbox_reply'] ?? false);
+        }
+
+        // Planner unavailable — emergency keyword heuristic only.
+        return $this->intent->isInboxReplyRequest($message);
     }
 }

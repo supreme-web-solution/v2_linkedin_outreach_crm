@@ -78,8 +78,12 @@ function isPersonalizedMessage(a: ReviewLaunchApproval) {
     return a.tool === 'draft_personalized_message' || a.payload.type === 'personalized_message';
 }
 
+function isBookMeeting(a: ReviewLaunchApproval) {
+    return a.tool === 'book_meeting' || a.payload.type === 'book_meeting';
+}
+
 function isEditableDraft(a: ReviewLaunchApproval) {
-    return isDraftReply(a) || isPersonalizedMessage(a);
+    return isDraftReply(a) || isPersonalizedMessage(a) || isBookMeeting(a);
 }
 
 function isOutreachPlan(a: ReviewLaunchApproval) {
@@ -94,6 +98,7 @@ function isOutreachPlan(a: ReviewLaunchApproval) {
 function approveLabelFor(a: ReviewLaunchApproval): string {
     if (a.actions?.approve_label) return a.actions.approve_label;
     if (isDraftReply(a)) return 'Send';
+    if (isBookMeeting(a)) return 'Send';
     if (isPersonalizedMessage(a)) return 'Save';
     return 'Launch';
 }

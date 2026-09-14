@@ -37,24 +37,92 @@ class SemanticTurnPlanNormalizer
             SemanticTurnPlanContract::DATA_PREFERENCES,
             'unspecified',
         );
+        $out['channel_scope'] = $this->enum(
+            (string) $out['channel_scope'],
+            SemanticTurnPlanContract::CHANNEL_SCOPES,
+            'unspecified',
+        );
+        $out['audience_intent'] = $this->enum(
+            (string) $out['audience_intent'],
+            SemanticTurnPlanContract::AUDIENCE_INTENTS,
+            'unspecified',
+        );
 
         $qty = $out['quantity'];
         $out['quantity'] = is_numeric($qty) ? max(0, min(100, (int) $qty)) : null;
 
-        foreach (['new_only', 'exclude_previously_contacted', 'decision_maker_required', 'prepare_only', 'send_requested', 'delete_requested', 'requires_clarification'] as $flag) {
+        foreach ([
+            'new_only',
+            'exclude_previously_contacted',
+            'decision_maker_required',
+            'prepare_only',
+            'send_requested',
+            'delete_requested',
+            'cold_one_shot',
+            'recipient_correction',
+            'message_correction',
+            'inbox_reply',
+            'requires_clarification',
+        ] as $flag) {
             $out[$flag] = (bool) $out[$flag];
         }
 
-        $channel = strtolower(trim((string) ($out['preferred_channel'] ?? '')));
-        $out['preferred_channel'] = in_array($channel, ['whatsapp', 'linkedin', 'email', 'instagram', 'telegram'], true)
-            ? $channel
-            : null;
+        $out['preferred_channels'] = $this->normalizeChannels($out['preferred_channels'] ?? []);
+        $channel = $this->normalizeChannelToken((string) ($out['preferred_channel'] ?? ''));
+        if ($channel === null && $out['preferred_channels'] !== []) {
+            $channel = $out['preferred_channels'][0];
+        }
+        if ($channel !== null && ! in_array($channel, $out['preferred_channels'], true)) {
+            array_unshift($out['preferred_channels'], $channel);
+        }
+        $out['preferred_channel'] = $channel;
+
+        if ($out['channel_scope'] === 'unspecified') {
+            if (count($out['preferred_channels']) >= 2) {
+                $out['channel_scope'] = 'multi';
+            } elseif (count($out['preferred_channels']) === 1) {
+                $out['channel_scope'] = 'single';
+            }
+        }
+
+        if ($out['recipient_correction'] || $out['message_correction']) {
+            $out['cold_one_shot'] = true;
+        }
+
+        if ($out['inbox_reply']) {
+            $out['cold_one_shot'] = false;
+            $out['recipient_correction'] = false;
+            $out['message_correction'] = false;
+        } elseif ($out['cold_one_shot']) {
+            $out['inbox_reply'] = false;
+        }
+
+        if (in_array($out['audience_intent'], ['reuse_named', 'explicit_list', 'reuse_any'], true)
+            && $out['data_preference'] === 'unspecified'
+        ) {
+            $out['data_preference'] = 'reuse_existing_first';
+        }
+        if ($out['audience_intent'] === 'discover'
+            && $out['data_preference'] === 'unspecified'
+        ) {
+            $out['data_preference'] = 'discover_new';
+        }
 
         $out['target_segment'] = is_string($out['target_segment']) ? Str::limit(trim($out['target_segment']), 200, '') : null;
         $out['geography'] = is_string($out['geography']) ? Str::limit(trim($out['geography']), 120, '') : null;
         $out['schedule_hint'] = is_string($out['schedule_hint']) ? Str::limit(trim($out['schedule_hint']), 120, '') : null;
         $out['clarification_reason'] = is_string($out['clarification_reason']) ? Str::limit(trim($out['clarification_reason']), 300, '') : null;
         $out['ambiguous_referent'] = is_string($out['ambiguous_referent']) ? trim($out['ambiguous_referent']) : null;
+        $out['handoff_brief'] = is_string($out['handoff_brief']) ? Str::limit(trim($out['handoff_brief']), 400, '') : null;
+        $out['handoff_query'] = is_string($out['handoff_query']) ? Str::limit(trim($out['handoff_query']), 400, '') : null;
+        $out['offer_override'] = is_string($out['offer_override']) ? Str::limit(trim($out['offer_override']), 300, '') : null;
+        if ($out['offer_override'] === '') {
+            $out['offer_override'] = null;
+        }
+        $out['audience_ref'] = is_string($out['audience_ref']) ? Str::limit(trim($out['audience_ref']), 200, '') : null;
+        if ($out['audience_ref'] === '') {
+            $out['audience_ref'] = null;
+        }
         $out['confidence'] = max(0.0, min(1.0, (float) ($out['confidence'] ?? 0.5)));
 
         if ($out['requires_clarification']) {
@@ -65,68 +133,12 @@ class SemanticTurnPlanNormalizer
     }
 
     /**
-     * Reinforce incremental discovery intent when the LLM missed "more/additional" phrasing.
-     *
-     * @param  array<string, mixed>  $semantic
-     * @return array<string, mixed>
-     */
-    private function applyIncrementalDiscoverySemantics(array $semantic, string $originalMessage): array
-    {
-        if ($semantic['execution_mode'] === 'read_only') {
-            return $semantic;
-        }
-
-        if ($semantic['data_preference'] === 'reuse_existing_first') {
-            return $semantic;
-        }
-
-        if (! preg_match('/\b(more|additional|another|extra)\b/i', $originalMessage)) {
-            return $semantic;
-        }
-
-        $semantic['new_only'] = true;
-        if (in_array($semantic['data_preference'], ['unspecified', 'reuse_existing_first'], true)) {
-            $semantic['data_preference'] = 'discover_new';
-        }
-
-        return $semantic;
-    }
-
-    /**
-     * Find + stage campaign without send → one setup_only workflow (discover then prepare).
-     *
-     * @param  array<string, mixed>  $semantic
-     * @return array<string, mixed>
-     */
-    private function applySetupOnlySemantics(array $semantic, string $originalMessage): array
-    {
-        $intent = app(UserTurnIntentService::class);
-        if (! $intent->wantsCampaignSetupOnly($originalMessage)) {
-            return $semantic;
-        }
-
-        $semantic['prepare_only'] = true;
-        $semantic['send_requested'] = false;
-
-        if ($intent->isProspectDiscoveryRequest($originalMessage)) {
-            $semantic['user_objective'] = 'discover_prospects';
-            $semantic['execution_mode'] = 'prepare_outreach';
-        } elseif (in_array($semantic['execution_mode'], ['find_and_save', 'unspecified', 'clarify'], true)) {
-            $semantic['execution_mode'] = 'prepare_outreach';
-        }
-
-        return $semantic;
-    }
-
-    /**
      * @param  array<string, mixed>  $semantic
      * @return array<string, mixed>
      */
     public function toEnforcementPlan(array $semantic, string $originalMessage): array
     {
         $semantic = $this->sanitizeSemantic($semantic);
-        $semantic = $this->applyIncrementalDiscoverySemantics($semantic, $originalMessage);
-        $semantic = $this->applySetupOnlySemantics($semantic, $originalMessage);
 
         [$goal, $requiredOutcome, $sideEffectBudget] = $this->resolveEnforcement($semantic);
 
@@ -140,17 +152,31 @@ class SemanticTurnPlanNormalizer
             'exclude_contacted' => (bool) $semantic['exclude_previously_contacted'],
             'decision_maker_required' => (bool) $semantic['decision_maker_required'],
             'preferred_channel' => $semantic['preferred_channel'],
+            'preferred_channels' => $semantic['preferred_channels'],
+            'channel_scope' => $semantic['channel_scope'],
             'geography' => $semantic['geography'],
             'scheduled_for' => $semantic['schedule_hint'],
             'data_preference' => $semantic['data_preference'],
-            'reuse_first' => $semantic['data_preference'] === 'reuse_existing_first',
+            'reuse_first' => $semantic['data_preference'] === 'reuse_existing_first'
+                || in_array($semantic['audience_intent'], ['reuse_any', 'reuse_named', 'explicit_list'], true),
             'prepare_only' => (bool) $semantic['prepare_only'],
             'send_requested' => (bool) $semantic['send_requested'],
             'delete_requested' => (bool) $semantic['delete_requested'],
+            'cold_one_shot' => (bool) $semantic['cold_one_shot'],
+            'recipient_correction' => (bool) $semantic['recipient_correction'],
+            'message_correction' => (bool) $semantic['message_correction'],
+            'offer_override' => $semantic['offer_override'],
+            'inbox_reply' => (bool) $semantic['inbox_reply'],
+            'audience_intent' => $semantic['audience_intent'],
+            'audience_ref' => $semantic['audience_ref'],
             'requires_clarification' => (bool) $semantic['requires_clarification'],
             'clarification_reason' => $semantic['clarification_reason'],
             'ambiguous_referent' => $semantic['ambiguous_referent'],
         ];
+
+        if (is_string($semantic['audience_ref'] ?? null) && trim((string) $semantic['audience_ref']) !== '') {
+            $constraints['list_name'] = trim((string) $semantic['audience_ref']);
+        }
 
         return [
             'goal' => $goal,
@@ -158,8 +184,12 @@ class SemanticTurnPlanNormalizer
                 'entity' => $semantic['target_entity'],
                 'segment' => $semantic['target_segment'],
                 'quantity' => $quantity,
-                'criteria' => trim($originalMessage),
+                'criteria' => trim((string) ($semantic['handoff_query'] ?? '')) !== ''
+                    ? $semantic['handoff_query']
+                    : trim($originalMessage),
             ],
+            'handoff_brief' => $semantic['handoff_brief'],
+            'handoff_query' => $semantic['handoff_query'],
             'desired_operation' => $this->desiredOperation($semantic),
             'required_outcome' => $requiredOutcome,
             'side_effect_budget' => $sideEffectBudget,
@@ -193,11 +223,18 @@ class SemanticTurnPlanNormalizer
             'exclude_previously_contacted',
             'decision_maker_required',
             'preferred_channel',
+            'preferred_channels',
+            'channel_scope',
             'data_preference',
             'execution_mode',
             'prepare_only',
             'send_requested',
             'delete_requested',
+            'cold_one_shot',
+            'recipient_correction',
+            'message_correction',
+            'inbox_reply',
+            'audience_intent',
             'requires_clarification',
         ];
         $slice = [];
@@ -245,8 +282,32 @@ class SemanticTurnPlanNormalizer
             return ['management', 'delete_now', 'destructive_allowed'];
         }
 
+        // Explicit interaction modes from the semantic planner — do not mis-route as find_only.
+        if ((bool) ($semantic['inbox_reply'] ?? false)) {
+            return $prepareOnly && ! $sendRequested
+                ? ['outreach', 'setup_only', 'prepare_only']
+                : ['outreach', 'send_now', 'external_send_allowed'];
+        }
+
+        if ((bool) ($semantic['cold_one_shot'] ?? false)
+            || (bool) ($semantic['recipient_correction'] ?? false)
+            || (bool) ($semantic['message_correction'] ?? false)
+        ) {
+            return $prepareOnly && ! $sendRequested
+                ? ['outreach', 'setup_only', 'prepare_only']
+                : ['outreach', 'send_now', 'external_send_allowed'];
+        }
+
         if ($objective === 'report_state' || $mode === 'read_only') {
             return ['reporting', 'status_only', 'read_only'];
+        }
+
+        if ($prepareOnly && ! $sendRequested && in_array($objective, [
+            'prepare_outreach',
+            'execute_outreach',
+            'discover_prospects',
+        ], true)) {
+            return ['outreach', 'setup_only', 'prepare_only'];
         }
 
         if (($objective === 'prepare_outreach' || $mode === 'prepare_outreach') && $prepareOnly && ! $sendRequested) {
@@ -305,8 +366,11 @@ class SemanticTurnPlanNormalizer
     private function defaultFor(string $key): mixed
     {
         return match ($key) {
-            'quantity', 'target_segment', 'preferred_channel', 'geography', 'schedule_hint', 'clarification_reason', 'ambiguous_referent' => null,
-            'new_only', 'exclude_previously_contacted', 'decision_maker_required', 'prepare_only', 'send_requested', 'delete_requested', 'requires_clarification' => false,
+            'quantity', 'target_segment', 'preferred_channel', 'geography', 'schedule_hint', 'clarification_reason', 'ambiguous_referent', 'handoff_brief', 'handoff_query', 'offer_override', 'audience_ref' => null,
+            'preferred_channels' => [],
+            'channel_scope' => 'unspecified',
+            'audience_intent' => 'unspecified',
+            'new_only', 'exclude_previously_contacted', 'decision_maker_required', 'prepare_only', 'send_requested', 'delete_requested', 'cold_one_shot', 'recipient_correction', 'message_correction', 'inbox_reply', 'requires_clarification' => false,
             'confidence' => 0.5,
             'user_objective' => 'general_assist',
             'target_entity' => 'unknown',
@@ -314,6 +378,40 @@ class SemanticTurnPlanNormalizer
             'execution_mode' => 'clarify',
             default => null,
         };
+    }
+
+    /**
+     * @param  mixed  $raw
+     * @return list<string>
+     */
+    private function normalizeChannels(mixed $raw): array
+    {
+        if (is_string($raw)) {
+            $raw = preg_split('/[,+|\/]/', $raw) ?: [];
+        }
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($raw as $channel) {
+            $normalized = $this->normalizeChannelToken((string) $channel);
+            if ($normalized !== null && ! in_array($normalized, $out, true)) {
+                $out[] = $normalized;
+            }
+        }
+
+        return $out;
+    }
+
+    private function normalizeChannelToken(string $channel): ?string
+    {
+        $channel = Str::lower(trim($channel));
+        if ($channel === 'x') {
+            $channel = 'twitter';
+        }
+
+        return in_array($channel, SemanticTurnPlanContract::CHANNELS, true) ? $channel : null;
     }
 
     /**

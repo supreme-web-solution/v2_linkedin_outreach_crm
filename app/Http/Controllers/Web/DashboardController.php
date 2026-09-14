@@ -82,6 +82,9 @@ class DashboardController extends Controller
         $org = $orgId ? V2Organization::find($orgId) : null;
         $onboardingStatus = $orgId > 0 ? $onboarding->status($user, $orgId) : ['show' => false, 'completed' => true];
 
+        $canDiscover = $orgId > 0
+            && app(\App\V2\Ai\Services\PlatformAllocationService::class)->searchableChannels($user) !== [];
+
         return Inertia::render('Dashboard', [
             'stats' => $stats->forUser($user),
             'acquisitionFunnel' => $funnel->forUser($user),
@@ -90,6 +93,7 @@ class DashboardController extends Controller
             'organization' => $org,
             'hasOrg' => (bool) $orgId,
             'onboarding' => $onboardingStatus,
+            'canDiscover' => $canDiscover,
         ]);
     }
 }

@@ -22,7 +22,8 @@ class BookMeetingTool extends GatedTool
 
     public function description(): Stringable|string
     {
-        return 'Stage sending a calendar booking link to a hot inbox conversation (meeting-ready reply). Requires connected calendar. '
+        return 'Last-card: stage a meeting/booking link for a qualified inbox thread (they asked to talk, or the sales page/webinar did not convert). '
+            .'Works with a connected Google/Outlook calendar OR the meeting URL saved in AI Employee settings. '
             .'notes = optional guidance OR a finished recipient-facing message — NEVER paste operator plans like "Reply with… Thank them…".';
     }
 

@@ -79,4 +79,38 @@ class PostExecutionVerifierServiceTest extends TestCase
         $this->assertTrue($result['ok']);
         $this->assertSame([], $result['warnings']);
     }
+
+    public function test_find_only_does_not_warn_about_unrelated_send_metrics(): void
+    {
+        $user = User::factory()->create();
+        $org = V2Organization::query()->create([
+            'name' => 'Find Only Org',
+            'slug' => 'find-only-'.uniqid(),
+            'owner_id' => $user->id,
+        ]);
+
+        $svc = app(PostExecutionVerifierService::class);
+        $before = $svc->snapshot($user, $org->id);
+        $after = $before;
+        $after['execution_metrics'] = [
+            'attempted' => 6,
+            'successful' => 6,
+            'failed' => 0,
+        ];
+
+        $result = $svc->verify($user, $org->id, [
+            'required_outcome' => 'find_only',
+            'measurable_expectations' => ['target_count' => 10],
+            'state_evaluation' => [
+                'channel_eligible_count' => 10,
+                'channel' => 'linkedin',
+            ],
+        ], $before, $after);
+
+        $this->assertTrue($result['ok']);
+        $this->assertSame([], $result['warnings']);
+        $this->assertFalse(collect($result['warnings'])->contains(
+            fn ($w) => is_string($w) && str_contains(strtolower($w), 'successful sends')
+        ));
+    }
 }

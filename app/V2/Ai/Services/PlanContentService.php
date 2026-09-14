@@ -2,16 +2,19 @@
 
 namespace App\V2\Ai\Services;
 
-use App\V2\Services\OpenAIContentService;
 use Illuminate\Support\Str;
 
 class PlanContentService
 {
     public function __construct(
-        private readonly OpenAIContentService $openai,
+        private readonly LaravelAiJsonService $jsonAi,
     ) {}
 
     /**
+     * Official workspace ICP for discovery, strategy, and outreach.
+     * Built from this company's materials and stated goal — not a generic persona.
+     *
+     * @param  array<string, mixed>  $context  owner_goal, preferred_channels, website_title
      * @return array<string, mixed>
      */
     public function buildIcp(
@@ -21,49 +24,103 @@ class PlanContentService
         string $geography,
         ?string $notes,
         array $customers = [],
+        array $context = [],
     ): array {
-        if ($this->openai->isConfigured()) {
+        $base = $this->fallbackIcp($offer, $competitors, $geography, $website, $notes, $customers, $context);
+
+        if ($this->jsonAi->isAvailable()) {
             try {
-                $payload = $this->openai->generateAgentJson(
-                    'You are a B2B sales strategist for SociFusion. Return JSON only. Infer ICP from offer, website, example customers, and competitors.',
+                $payload = $this->jsonAi->generate(
+                    $this->icpSystemPrompt(),
                     json_encode([
-                        'task' => 'Build an Ideal Customer Profile',
-                        'offer' => $offer,
+                        'task' => 'Build this company\'s official Ideal Customer Profile for real outbound.',
+                        'what_they_sell' => $offer,
                         'website' => $website,
-                        'customers' => $customers,
+                        'website_title' => $context['website_title'] ?? null,
+                        'owner_goal' => $context['owner_goal'] ?? null,
+                        'preferred_channels' => $context['preferred_channels'] ?? [],
+                        'example_customers' => $customers,
                         'competitors' => $competitors,
-                        'geography' => $geography,
-                        'notes' => $notes,
-                        'schema' => [
-                            'industry' => 'string',
-                            'company_size' => 'string',
-                            'geography' => 'string',
-                            'decision_maker' => 'string',
-                            'likely_pain' => 'string',
-                            'summary' => 'string',
-                            'buying_triggers' => 'array of strings',
-                            'disqualifiers' => 'array of strings',
-                            'lookalike_of_customers' => 'string describing lookalikes of example customers',
+                        'stated_geography' => $geography,
+                        'source_notes' => $notes,
+                        'required_json_keys' => [
+                            'who_we_sell_to',
+                            'primary_outcome',
+                            'industry',
+                            'niches',
+                            'company_profile',
+                            'geography',
+                            'decision_makers',
+                            'economic_buyer',
+                            'day_to_day_champion',
+                            'pains',
+                            'jobs_to_be_done',
+                            'buying_triggers',
+                            'disqualifiers',
+                            'search_query',
+                            'search_titles',
+                            'lookalikes',
+                            'outreach_angle',
+                            'do_not_say',
+                            'channels_fit',
+                            'summary',
+                            'decision_maker',
+                            'likely_pain',
+                            'company_size',
                         ],
                     ], JSON_THROW_ON_ERROR),
-                    700,
-                    true,
+                    1400,
                 );
 
                 if ($payload !== []) {
-                    return array_merge($this->fallbackIcp($offer, $competitors, $geography, $website, $notes, $customers), $payload, [
+                    return $this->normalizeIcp(array_merge($base, $payload, [
                         'competitors' => $competitors,
                         'customers' => $customers,
                         'website' => $website,
                         'notes' => $notes,
-                    ]);
+                        'owner_goal' => $context['owner_goal'] ?? null,
+                        'preferred_channels' => $context['preferred_channels'] ?? [],
+                    ]));
                 }
             } catch (\Throwable $e) {
                 report($e);
             }
         }
 
-        return $this->fallbackIcp($offer, $competitors, $geography, $website, $notes, $customers);
+        return $this->normalizeIcp($base);
+    }
+
+    public function summarizeBusiness(string $rawText): string
+    {
+        $rawText = trim($rawText);
+        if ($rawText === '') {
+            return '';
+        }
+
+        if ($this->jsonAi->isAvailable()) {
+            try {
+                $payload = $this->jsonAi->generate(
+                    'Write a precise 2–3 sentence description of what this company sells and who pays. '
+                    .'Use only the source. Do not invent SaaS, founders, or a market they did not describe. Return JSON only.',
+                    json_encode([
+                        'source' => Str::limit($rawText, 6000, ''),
+                        'schema' => ['summary' => 'string'],
+                    ], JSON_THROW_ON_ERROR),
+                    400,
+                );
+                $summary = trim((string) ($payload['summary'] ?? ''));
+                if ($summary !== '') {
+                    return Str::limit($summary, 500, '');
+                }
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
+        $paragraphs = preg_split('/\n{2,}/', $rawText) ?: [];
+        $first = trim((string) ($paragraphs[0] ?? $rawText));
+
+        return Str::limit(preg_replace('/\s+/', ' ', $first) ?? $first, 400);
     }
 
     /**
@@ -72,12 +129,12 @@ class PlanContentService
      */
     public function enrichStrategy(array $base): array
     {
-        if (! $this->openai->isConfigured()) {
+        if (! $this->jsonAi->isAvailable()) {
             return $base;
         }
 
         try {
-            $payload = $this->openai->generateAgentJson(
+            $payload = $this->jsonAi->generate(
                 'You are Soci, SociFusion AI Sales Command Center. Return JSON only. '
                 .'Default when unspecified: LinkedIn + Email. When the user asks for Instagram, Telegram, or WhatsApp, make that channel primary in preferred_channels. '
                 .'Prefer pause_on_reply for inbound replies (Soci handles them in inbox). '
@@ -96,7 +153,6 @@ class PlanContentService
                     ],
                 ], JSON_THROW_ON_ERROR),
                 800,
-                true,
             );
 
             if ($payload !== []) {
@@ -129,12 +185,12 @@ class PlanContentService
             return $base;
         }
 
-        if (! $this->openai->isConfigured()) {
+        if (! $this->jsonAi->isAvailable()) {
             return $base;
         }
 
         try {
-            $payload = $this->openai->generateAgentJson(
+            $payload = $this->jsonAi->generate(
                 'You are Soci, SociFusion outreach architect. Return JSON only. '
                 .'Design the smartest sequence for this goal — choose channels and nodes deliberately. '
                 .'LinkedIn: empty send_invite, then After acceptance / invite_accepted before any DM; never a second invite. '
@@ -162,7 +218,6 @@ class PlanContentService
                     ],
                 ], JSON_THROW_ON_ERROR),
                 1100,
-                true,
             );
 
             if ($payload !== []) {
@@ -196,31 +251,144 @@ class PlanContentService
         ?string $website = null,
         ?string $notes = null,
         array $customers = [],
+        array $context = [],
     ): array {
-        $industry = Str::contains(Str::lower($offer), ['saas', 'software'])
-            ? 'B2B SaaS'
-            : 'B2B services';
-
         $lookalike = $customers !== []
             ? 'Companies similar to '.implode(', ', array_slice($customers, 0, 3))
             : null;
+        $offerLine = trim($offer) !== '' ? trim($offer) : 'this offer';
+        $search = Str::limit($offerLine, 120, '');
 
         return [
-            'industry' => $industry,
-            'company_size' => '10–200 employees',
-            'geography' => $geography,
-            'decision_maker' => 'Founder, VP Sales, or Head of Growth',
-            'likely_pain' => 'Inconsistent pipeline and manual prospecting',
-            'summary' => $lookalike
-                ? "{$lookalike} that need {$offer}"
-                : "Teams that need {$offer}",
-            'buying_triggers' => ['Missed quota', 'New funding', 'Hiring sales roles'],
-            'disqualifiers' => ['No budget this quarter', 'Locked in competitor contract'],
+            'who_we_sell_to' => $lookalike
+                ? $lookalike.' that would buy '.$offerLine
+                : 'Buyers described in the owner materials for '.$offerLine,
+            'primary_outcome' => trim((string) ($context['owner_goal'] ?? '')) ?: 'Book a qualified conversation with the right buyer',
+            'industry' => Str::limit($offerLine, 80, ''),
+            'niches' => [],
+            'company_profile' => 'As described in the owner materials',
+            'geography' => $geography !== '' ? $geography : 'Global',
+            'decision_makers' => [],
+            'economic_buyer' => null,
+            'day_to_day_champion' => null,
+            'pains' => array_values(array_filter([Str::limit((string) $notes, 160, '')])),
+            'jobs_to_be_done' => [],
+            'buying_triggers' => [],
+            'disqualifiers' => [],
+            'search_query' => $search,
+            'search_titles' => [],
+            'lookalikes' => $lookalike,
             'lookalike_of_customers' => $lookalike,
+            'outreach_angle' => 'Open with their situation, not a product pitch.',
+            'do_not_say' => [],
+            'channels_fit' => [],
+            'summary' => $lookalike
+                ? $lookalike.' that need '.$offerLine
+                : $offerLine,
+            'decision_maker' => $search,
+            'likely_pain' => Str::limit(trim((string) $notes) !== '' ? (string) $notes : $offerLine, 160, ''),
+            'company_size' => null,
             'competitors' => $competitors,
             'customers' => $customers,
             'website' => $website,
             'notes' => $notes,
+            'owner_goal' => $context['owner_goal'] ?? null,
+            'preferred_channels' => $context['preferred_channels'] ?? [],
+            'needs_review' => true,
         ];
+    }
+
+    private function icpSystemPrompt(): string
+    {
+        return <<<'PROMPT'
+You are a senior sales strategist writing this company's official Ideal Customer Profile for outbound.
+
+This ICP will steer discovery, messaging, and campaigns. If it is vague, every later step fails.
+
+Rules:
+- Use only evidence in what they sell, website, notes, example customers, competitors, and the owner's stated goal.
+- Write as a human building a real company ICP — specific enough that a teammate could search and message tomorrow without asking again.
+- Mirror THEIR market. If they sell to clinics, farms, schools, contractors, or brands, the ICP is that world. Never default to SaaS, founders, or "B2B services" unless their materials say so.
+- Do not invent titles, industries, geos, or pains that are not implied.
+- search_query must be executable people-search language for THIS audience (who + what they care about + geo if known). Not a slogan. Not a pitch.
+- search_titles are 1–4 job titles as they would appear on a profile, taken from this ICP — not a global title list.
+- decision_makers is an array of {title, why}. Also set decision_maker to those titles joined by commas (legacy field).
+- likely_pain is the single sharpest pain (legacy field). pains is the fuller list.
+- outreach_angle is the first-message thesis (one diagnostic idea). No product dump.
+- channels_fit explains how LinkedIn / Instagram / Email / WhatsApp help THIS ICP, using preferred_channels when provided.
+- primary_outcome is the owner's real win (booked call, project inquiry, webinar, etc.).
+- Return JSON only with every required key.
+PROMPT;
+    }
+
+    /**
+     * @param  array<string, mixed>  $icp
+     * @return array<string, mixed>
+     */
+    private function normalizeIcp(array $icp): array
+    {
+        foreach (['niches', 'pains', 'jobs_to_be_done', 'buying_triggers', 'disqualifiers', 'search_titles', 'do_not_say', 'customers', 'competitors'] as $listKey) {
+            $icp[$listKey] = $this->stringList($icp[$listKey] ?? []);
+        }
+
+        $makers = $icp['decision_makers'] ?? [];
+        if (! is_array($makers)) {
+            $makers = [];
+        }
+        $normalizedMakers = [];
+        foreach ($makers as $maker) {
+            if (is_string($maker) && trim($maker) !== '') {
+                $normalizedMakers[] = ['title' => trim($maker), 'why' => ''];
+            } elseif (is_array($maker) && trim((string) ($maker['title'] ?? '')) !== '') {
+                $normalizedMakers[] = [
+                    'title' => trim((string) $maker['title']),
+                    'why' => trim((string) ($maker['why'] ?? '')),
+                ];
+            }
+        }
+        $icp['decision_makers'] = $normalizedMakers;
+
+        if (trim((string) ($icp['decision_maker'] ?? '')) === '' && $normalizedMakers !== []) {
+            $icp['decision_maker'] = implode(', ', array_column($normalizedMakers, 'title'));
+        }
+
+        if (trim((string) ($icp['likely_pain'] ?? '')) === '' && ($icp['pains'][0] ?? null)) {
+            $icp['likely_pain'] = $icp['pains'][0];
+        }
+
+        if (trim((string) ($icp['search_query'] ?? '')) === '') {
+            $icp['search_query'] = trim(implode(' ', array_filter([
+                (string) ($icp['decision_maker'] ?? ''),
+                (string) ($icp['industry'] ?? ''),
+                (string) ($icp['geography'] ?? ''),
+            ])));
+        }
+
+        foreach (['who_we_sell_to', 'summary', 'search_query', 'outreach_angle', 'industry', 'geography', 'primary_outcome'] as $textKey) {
+            if (isset($icp[$textKey]) && is_string($icp[$textKey])) {
+                $icp[$textKey] = trim($icp[$textKey]);
+            }
+        }
+
+        return $icp;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function stringList(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return is_string($value) && trim($value) !== '' ? [trim($value)] : [];
+        }
+
+        $out = [];
+        foreach ($value as $item) {
+            if (is_string($item) && trim($item) !== '') {
+                $out[] = trim($item);
+            }
+        }
+
+        return array_values($out);
     }
 }

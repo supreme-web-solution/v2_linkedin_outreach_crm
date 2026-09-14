@@ -62,6 +62,24 @@ class PromptIntentCoverageMatrixTest extends TestCase
 
             if ($n >= 49 && $n <= 60) {
                 $oneShotPrompt = $this->normalizeOneShotPrompt($n, $prompt);
+                $hasDirectContact = (bool) preg_match(
+                    '/(instagram\.com|linkedin\.com\/in\/|t\.me\/|(?:twitter|x)\.com\/|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\+?\d[\d\s().-]{7,}\d|@[a-z0-9._]{2,})/i',
+                    $oneShotPrompt
+                );
+
+                if ($hasDirectContact && ! preg_match('/\b(inbox|attention queue|that email we)\b/i', $oneShotPrompt)) {
+                    $this->assertTrue(
+                        $intent->isColdOutboundRequest($oneShotPrompt)
+                            || $intent->isOutreachCommand($oneShotPrompt)
+                            || (bool) preg_match('/\b(one[- ]?shot|once|one (email|message|intro|greeting)|dm|whatsapp|telegram)\b/i', $oneShotPrompt),
+                        "Row {$n} with a direct contact should route as cold/one-shot outbound, not inbox-thread-only. Prompt: {$oneShotPrompt}"
+                    );
+                    $this->assertFalse(
+                        $intent->isInboxReplyRequest($oneShotPrompt),
+                        "Row {$n} must not require an existing inbox thread. Prompt: {$oneShotPrompt}"
+                    );
+                }
+
                 $plan = $resolver->enrichPlanWithAudience($user, [
                     'goal' => $oneShotPrompt,
                     'channels' => $this->detectChannels($oneShotPrompt),
@@ -73,7 +91,6 @@ class PromptIntentCoverageMatrixTest extends TestCase
                     $this->assertStringContainsString('linkedin.com/in/', $profileUrl, "Row {$n} should parse LinkedIn profile URL.");
                     continue;
                 }
-                $hasDirectContact = (bool) preg_match('/(instagram\.com|linkedin\.com\/in\/|@[a-z0-9._]{2,}|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\+?\d[\d\s().-]{7,}\d)/i', $oneShotPrompt);
                 if ($hasDirectContact) {
                     $this->assertNotEmpty($plan['list_hash'] ?? '', "Row {$n} should attach one-shot audience.");
                 } else {
@@ -232,14 +249,24 @@ class PromptIntentCoverageMatrixTest extends TestCase
     {
         $lower = strtolower($prompt);
         $parts = [];
-        foreach (['linkedin', 'instagram', 'email', 'whatsapp', 'telegram'] as $channel) {
-            if (str_contains($lower, $channel)) {
+        foreach (['linkedin', 'instagram', 'email', 'whatsapp', 'telegram', 'twitter'] as $channel) {
+            if (str_contains($lower, $channel) || ($channel === 'twitter' && preg_match('/\bx\b/', $lower))) {
                 $parts[] = $channel;
             }
         }
 
         if ($parts === []) {
-            return 'instagram';
+            if (preg_match('/@[a-z0-9._]+/i', $prompt) || str_contains($lower, 'instagram.com')) {
+                return 'instagram';
+            }
+            if (preg_match('/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i', $prompt)) {
+                return 'email';
+            }
+            if (preg_match('/\+?\d[\d\s().-]{7,}\d/', $prompt)) {
+                return 'whatsapp';
+            }
+
+            return 'linkedin';
         }
 
         return implode(',', array_unique($parts));
@@ -249,8 +276,11 @@ class PromptIntentCoverageMatrixTest extends TestCase
     {
         return match ($rowId) {
             51 => 'whatsapp +2347012345678 one intro',
-            53 => 'single linkedin dm to https://www.linkedin.com/in/john-doe',
+            53 => 'single linkedin dm to https://www.linkedin.com/in/jane-doe',
             55 => 'telegram one message to @matrixuser',
+            57 => 'one-time invite email only to ops@example.org',
+            58 => 'send this single IG intro to https://instagram.com/opslead',
+            59 => 'check https://example.com/about then email hello@example.com',
             default => $prompt,
         };
     }
