@@ -137,11 +137,15 @@ class WorkspaceContextService
             : ($segment !== '' ? $segment : ($searchQuery !== '' ? $searchQuery : trim(implode(' ', array_filter([$decisionMaker, $industry, $summary])))));
 
         $titleFromIcp = trim((string) ($searchTitles[0] ?? ''));
-        $titleSource = $segment !== '' ? $segment : ($titleFromIcp !== '' ? $titleFromIcp : $decisionMaker);
+        $titleSource = $titleFromIcp !== '' ? $titleFromIcp : $decisionMaker;
+        $title = $this->jobTitleHint($titleSource);
+        if ($title === null) {
+            $title = $this->jobTitleHint($segment !== '' ? $segment : $audience);
+        }
 
         return [
             'query' => Str::limit($audience, 200, ''),
-            'title' => $this->firstAudiencePhrase($titleSource),
+            'title' => $title,
             'geography' => $geography !== '' ? $geography : null,
             'audience_name' => Str::limit(
                 $segment !== '' ? $segment : ($decisionMaker !== '' ? $decisionMaker : ($searchQuery !== '' ? $searchQuery : 'LinkedIn Search')),
@@ -152,7 +156,35 @@ class WorkspaceContextService
     }
 
     /**
-     * First clause of whatever audience the user/LLM wrote — not a product title list.
+     * Unipile title filter must be a short job title — never a segment sentence.
+     */
+    private function jobTitleHint(string $text): ?string
+    {
+        $text = trim($text);
+        if ($text === '') {
+            return null;
+        }
+
+        if (preg_match('/\b(founder|co-?founder|ceo|cto|cmo|owner|director|manager|vp|head of [a-z ]{2,30})\b/i', $text, $m)) {
+            $hit = trim($m[1]);
+            if (preg_match('/^founder|co-?founder$/i', $hit)) {
+                return 'Founder';
+            }
+            if (preg_match('/^ceo$/i', $hit)) {
+                return 'CEO';
+            }
+            if (preg_match('/^owner$/i', $hit)) {
+                return 'Owner';
+            }
+
+            return Str::limit(Str::title($hit), 40, '');
+        }
+
+        return $this->firstAudiencePhrase($text);
+    }
+
+    /**
+     * First short clause of an audience string — never a long ICP dump.
      */
     private function firstAudiencePhrase(string $text): ?string
     {

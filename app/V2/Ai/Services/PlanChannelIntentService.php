@@ -93,43 +93,90 @@ class PlanChannelIntentService
      */
     public function instagramKeyword(array $payload, array $icp = []): string
     {
-        // Prefer buyer niches / who-we-sell-to over seller pitch (avoids celebrity keyword noise).
-        $niches = Arr::get($icp, 'niches', []);
-        if (is_array($niches) && $niches !== []) {
-            $nicheLine = trim(implode(' ', array_map(fn ($v) => (string) $v, array_slice($niches, 0, 4))));
-            if ($nicheLine !== '' && ! $this->looksLikeJobTitleList($nicheLine)) {
-                return Str::limit($nicheLine, 160, '');
+        // Prefer THIS TURN's audience/goal when it already names a buyer niche (e.g. "US SaaS founders").
+        foreach (['audience', 'goal', 'icp_notes'] as $key) {
+            $fromTurn = $this->compressBuyerKeyword((string) ($payload[$key] ?? ''));
+            if ($fromTurn !== '') {
+                return $fromTurn;
             }
         }
 
-        foreach (['who_we_sell_to', 'industry', 'search_query', 'customers'] as $key) {
+        // Prefer buyer niches / who-we-sell-to over seller pitch (avoids celebrity keyword noise).
+        $niches = Arr::get($icp, 'niches', []);
+        if (is_array($niches) && $niches !== []) {
+            $nicheLine = $this->compressBuyerKeyword(implode(' ', array_map(fn ($v) => (string) $v, array_slice($niches, 0, 4))));
+            if ($nicheLine !== '') {
+                return $nicheLine;
+            }
+        }
+
+        foreach (['search_query', 'industry', 'customers', 'who_we_sell_to'] as $key) {
             $value = Arr::get($icp, $key, '');
             if (is_array($value)) {
                 $value = implode(' ', array_map(fn ($v) => (string) $v, array_slice($value, 0, 4)));
             }
-            $value = trim((string) $value);
-            if ($value !== '' && ! $this->looksLikeJobTitleList($value) && ! $this->looksLikeSellerPitch($value)) {
-                return Str::limit($value, 160, '');
+            $compressed = $this->compressBuyerKeyword((string) $value);
+            if ($compressed !== '') {
+                return $compressed;
             }
         }
 
-        $audience = trim((string) ($payload['audience'] ?? $payload['icp_notes'] ?? ''));
-        if (preg_match('/\bAND\b\s+(.+)/i', $audience, $match)) {
-            $afterTitles = trim(preg_replace('/\s+AND\s+/i', ' ', (string) $match[1]) ?? '');
-            $afterTitles = trim(preg_replace('/\s*·.+$/u', '', $afterTitles) ?? '');
-            if ($afterTitles !== '' && ! $this->looksLikeJobTitleList($afterTitles) && ! $this->looksLikeSellerPitch($afterTitles)) {
-                return Str::limit($afterTitles, 160, '');
+        return 'b2b founders';
+    }
+
+    /**
+     * Mindcase needs short buyer keywords — never ICP essays or seller pitch paragraphs.
+     */
+    public function compressBuyerKeyword(string $text): string
+    {
+        $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
+        if ($text === '') {
+            return '';
+        }
+
+        if ($this->looksLikeSellerPitch($text) || $this->looksLikeJobTitleList($text)) {
+            return '';
+        }
+
+        // Strip meeting/campaign verbs so "Book 20 meetings with US SaaS founders" → niche words.
+        $text = trim(preg_replace(
+            '/\b(book|get|find|schedule|map out|reach out|outreach|campaign|this month|this quarter|\d+\s*(meetings?|demos?|prospects?|leads?|customers?|people)?)\b/i',
+            ' ',
+            $text,
+        ) ?? '');
+        $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
+        $text = trim(preg_replace('/^(with|for|to|about|among|across)\s+/i', '', $text) ?? '');
+
+        if ($text === '' || $this->looksLikeSellerPitch($text)) {
+            return '';
+        }
+
+        // Reject long ICP paragraphs (who_we_sell_to dumps).
+        if (strlen($text) > 90 || substr_count($text, ' ') > 10) {
+            $words = preg_split('/\s+/', $text) ?: [];
+            $keep = [];
+            foreach ($words as $word) {
+                $w = Str::lower(trim($word, " \t.,;:"));
+                if (strlen($w) < 3) {
+                    continue;
+                }
+                if (in_array($w, ['with', 'that', 'this', 'from', 'their', 'your', 'need', 'needs', 'likely', 'building', 'growing', 'businesses', 'application', 'digital', 'product', 'tailored', 'software', 'automation'], true)) {
+                    continue;
+                }
+                $keep[] = $w;
+                if (count($keep) >= 5) {
+                    break;
+                }
             }
+            $text = implode(' ', $keep);
         }
 
-        $hints = trim((string) ($payload['goal'] ?? ''));
-        if ($hints !== '' && ! $this->looksLikeSellerPitch($hints)) {
-            return Str::limit($hints, 160, '');
+        $text = trim($text);
+        if ($text === '' || strlen($text) < 3) {
+            return '';
         }
 
-        $who = trim((string) Arr::get($icp, 'who_we_sell_to', ''));
-
-        return $who !== '' ? Str::limit($who, 160, '') : ($hints !== '' ? Str::limit($hints, 160, '') : 'b2b founders');
+        return Str::limit($text, 80, '');
     }
 
     public function looksLikeSellerPitch(string $text): bool

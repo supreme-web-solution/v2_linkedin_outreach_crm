@@ -56,12 +56,14 @@ class WorkflowConversationNotifier
         $eligible = (int) ($result['eligible'] ?? 0);
         $discoveredThisRun = (int) ($result['discovered_this_run'] ?? $meta['cumulative_candidate_delta'] ?? $eligible);
         $requested = (int) ($result['requested'] ?? 0);
-        $platforms = is_array($meta['platforms_searched'] ?? null) ? implode(' + ', $meta['platforms_searched']) : null;
+        $platforms = $this->formatPlatforms($meta);
+        $failures = $this->formatPlatformFailures($meta);
         $savedCount = $discoveredThisRun > 0 ? $discoveredThisRun : $eligible;
 
         if ($outcome === 'find_only') {
             $savedLine = $requested > 0
-                ? "Saved {$savedCount} new prospect(s)".($savedCount !== $requested ? " (requested {$requested})" : '').' to Leads.'
+                ? "Saved {$savedCount} of {$requested} new prospect(s) to Leads."
+                    .($savedCount < $requested ? ' Short of target — reporting what was actually saved.' : '')
                 : "Saved {$savedCount} prospect(s) to Leads.";
 
             [$content, $whatsappBody] = $this->buildFindOnlyCompletion(
@@ -69,6 +71,7 @@ class WorkflowConversationNotifier
                 $meta,
                 $platforms,
                 $savedLine,
+                $failures,
             );
             $this->notify($run, $content, $whatsappBody);
 
@@ -106,13 +109,20 @@ class WorkflowConversationNotifier
 
         $latestState = is_array($meta['latest_state'] ?? null) ? $meta['latest_state'] : [];
         $requested = (int) ($plan['constraints']['target_count'] ?? $latestState['requested_quantity'] ?? 0);
-        $discovered = (int) ($meta['cumulative_candidate_delta'] ?? 0);
-        $platforms = is_array($meta['platforms_searched'] ?? null) ? implode(' + ', $meta['platforms_searched']) : null;
+        $discovered = max(0, (int) ($meta['cumulative_candidate_delta'] ?? 0));
+        $platforms = $this->formatPlatforms($meta);
+        $failures = $this->formatPlatformFailures($meta);
+        $short = $requested > 0 && $discovered < $requested;
 
         $this->notify($run, implode("\n", array_filter([
-            "✅ Workflow #{$run->id} — found {$discovered}".($requested > 0 ? " of {$requested}" : '').' prospects.',
-            $platforms ? "Saved to Leads from {$platforms}." : 'Saved to Leads.',
-            'Staging reply-first outreach for Review & Launch…',
+            $short
+                ? "✅ Workflow #{$run->id} — found {$discovered} of {$requested} prospects (short of target)."
+                : "✅ Workflow #{$run->id} — found {$discovered}".($requested > 0 ? " of {$requested}" : '').' prospects.',
+            $platforms ? "Saved to Leads from {$platforms}." : ($discovered > 0 ? 'Saved to Leads.' : null),
+            $failures,
+            $discovered > 0
+                ? 'Staging reply-first outreach for Review & Launch…'
+                : 'No new prospects saved yet — I will not invent a full count.',
         ])));
 
         $run->update(['meta' => array_merge($meta, ['discovery_notified' => true])]);
@@ -138,6 +148,7 @@ class WorkflowConversationNotifier
         array $meta,
         ?string $platforms,
         string $savedLine,
+        ?string $failures = null,
     ): array {
         $channelLists = is_array($meta['discovery_channel_lists'] ?? null) ? $meta['discovery_channel_lists'] : [];
         $samples = is_array($meta['sample_profiles'] ?? null) ? $meta['sample_profiles'] : [];
@@ -146,11 +157,13 @@ class WorkflowConversationNotifier
             "✅ Workflow #{$run->id} finished discovery.",
             $platforms ? "Platforms searched: {$platforms}." : null,
             $savedLine,
+            $failures,
         ]);
         $waLines = array_filter([
             "Workflow #{$run->id} finished discovery.",
             $platforms ? "Platforms: {$platforms}." : null,
             $savedLine,
+            $failures,
         ]);
 
         [$webListLines, $waListLines] = $this->formatListLinks($channelLists, $meta);
@@ -265,11 +278,45 @@ class WorkflowConversationNotifier
         $fromDelta = (int) ($meta['cumulative_candidate_delta'] ?? 0);
         $lists = is_array($meta['discovery_lists'] ?? null) ? $meta['discovery_lists'] : [];
         $fromLists = $lists === [] ? 0 : array_sum(array_map(
-            fn (array $row) => (int) ($row['total_leads'] ?? 0),
+            fn (array $row) => empty($row['reused_recent']) ? (int) ($row['total_leads'] ?? 0) : 0,
             $lists,
         ));
 
-        return max($fromState, $fromDelta, $fromLists);
+        // Prefer this-run discovery delta; list totals can include reused prior searches.
+        if ($fromDelta > 0) {
+            return $fromDelta;
+        }
+
+        return max($fromState, $fromLists);
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    private function formatPlatforms(array $meta): ?string
+    {
+        $platforms = is_array($meta['platforms_searched'] ?? null) ? $meta['platforms_searched'] : [];
+        $platforms = array_values(array_filter(array_map('strval', $platforms)));
+
+        return $platforms !== [] ? implode(' + ', $platforms) : null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    private function formatPlatformFailures(array $meta): ?string
+    {
+        $failures = is_array($meta['platform_failures'] ?? null) ? $meta['platform_failures'] : [];
+        $failures = array_values(array_filter(array_map(
+            fn ($row) => is_string($row) ? trim($row) : '',
+            $failures,
+        )));
+
+        if ($failures === []) {
+            return null;
+        }
+
+        return 'Note: '.implode(' ', $failures);
     }
 
     public function notifyWaitingForApproval(AiWorkflowRun $run): void
@@ -280,7 +327,8 @@ class WorkflowConversationNotifier
             $approvalIds = [(int) $meta['approval_id']];
         }
         $eligible = $this->prospectCountForDisplay($meta);
-        $platforms = is_array($meta['platforms_searched'] ?? null) ? implode(' + ', $meta['platforms_searched']) : null;
+        $platforms = $this->formatPlatforms($meta);
+        $failures = $this->formatPlatformFailures($meta);
 
         $launchLines = [];
         foreach ($approvalIds as $id) {
@@ -298,11 +346,13 @@ class WorkflowConversationNotifier
         $content = implode("\n", array_filter([
             "✅ Campaign ready for Review & Launch.",
             $platforms ? "Prospects from {$platforms} ({$eligible})." : "Prospects ready: {$eligible}.",
+            $failures,
             'Tap **Launch** below when you\'re ready — nothing sends until you approve.',
         ]));
         $whatsappBody = implode("\n", array_filter([
             'Campaign ready for Review & Launch.',
             $platforms ? "From {$platforms} ({$eligible} prospects)." : "Prospects ready: {$eligible}.",
+            $failures,
             'Tap Launch below — nothing sends until you approve.',
         ]));
 
@@ -316,17 +366,20 @@ class WorkflowConversationNotifier
     private function notifyCampaignReady(AiWorkflowRun $run, array $meta, array $result): void
     {
         $approvalId = (int) ($result['approval_id'] ?? $meta['approval_id'] ?? 0);
-        $platforms = is_array($meta['platforms_searched'] ?? null) ? implode(' + ', $meta['platforms_searched']) : null;
+        $platforms = $this->formatPlatforms($meta);
+        $failures = $this->formatPlatformFailures($meta);
         $eligible = $this->prospectCountForDisplay($meta);
 
         $content = implode("\n", array_filter([
             "✅ Workflow #{$run->id} — campaign staged.",
             $platforms ? "Prospects from {$platforms} ({$eligible})." : null,
+            $failures,
             'Review the plan below, then tap **Launch** when you\'re ready. Nothing sends until you approve.',
         ]));
         $whatsappBody = implode("\n", array_filter([
             "Workflow #{$run->id} — campaign staged.",
             $platforms ? "From {$platforms} ({$eligible} prospects)." : null,
+            $failures,
             'Tap Launch below when ready. Nothing sends until you approve.',
         ]));
 

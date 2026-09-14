@@ -114,6 +114,7 @@ class DiscoverProspectsService
 
         // Any explicit net-new size (or prefer_fresh) → LinkedIn search + SAVE, do not reuse engagers lists.
         $forceFresh = $preferFresh || $targetCount !== null || ($profileUrl !== null && trim($profileUrl) !== '');
+        $safeTitle = $this->sanitizeLinkedInTitle($title);
 
         $lists = $this->matchLeadLists($user, $query, $limit, includeWeakFallback: ! $forceFresh);
         $competitorAudiences = $forceFresh
@@ -132,15 +133,16 @@ class DiscoverProspectsService
             'audience' => $query,
             'target_count' => $profileUrl ? 1 : ($targetCount ?? $this->inferCountFromQuery($query) ?? $limit),
             'prefer_fresh_audience' => $forceFresh,
-            'force_new_search' => app(UserTurnIntentService::class)->wantsFreshProspectPull($query),
+            // Net-new target / preferFresh must not reuse a prior list and double-count it as discovery.
+            'force_new_search' => $forceFresh || app(UserTurnIntentService::class)->wantsFreshProspectPull($query),
             'geography' => $geography,
             'network_degree' => $networkDegree,
-            'title' => $title,
+            'title' => $safeTitle,
             'current_company' => $company,
             'open_link' => $openLink,
             'profile_url' => $profileUrl,
             'linkedin_url' => $profileUrl,
-            'audience_name' => $title !== null && trim($title) !== '' ? Str::limit(trim($title), 80, '') : null,
+            'audience_name' => $safeTitle !== null ? Str::limit($safeTitle, 80, '') : null,
         ], fn ($v) => $v !== null && $v !== '');
 
         // Only attach a saved list before search when it is a strong name match AND user did not ask for fresh N.
@@ -517,6 +519,23 @@ class DiscoverProspectsService
             }
         }
 
+        // Execute the planned total: if a channel fails/underfills, spill remaining quota
+        // onto a working searchable channel (LinkedIn preferred) instead of declaring success early.
+        $channelResults = $this->spillDiscoveryShortfall(
+            $user,
+            $query,
+            $competitors,
+            $limit,
+            $targetCount ?? array_sum($allocation),
+            $channelResults,
+            $geography,
+            $networkDegree,
+            $title,
+            $company,
+            $openLink,
+            $profileUrl,
+        );
+
         $lists = collect($channelResults)
             ->flatMap(function (array $result, string $channel) {
                 return collect($result['lists'] ?? [])
@@ -529,6 +548,13 @@ class DiscoverProspectsService
             ->all();
 
         $ready = collect($channelResults)->contains(fn (array $r) => ! empty($r['ready_for_campaign']));
+        $successfulPlatforms = $this->successfulDiscoveryPlatforms($channelResults);
+        $failedNotes = $this->failedDiscoveryNotes($channelResults);
+        $totalSaved = (int) collect($lists)
+            ->filter(fn (array $row) => empty($row['reused_recent']))
+            ->sum(fn (array $r) => (int) ($r['total_leads'] ?? 0));
+        $availableIncludingReuse = (int) collect($lists)->sum(fn (array $r) => (int) ($r['total_leads'] ?? 0));
+
         $next = [
             $allocationPlan['summary'],
             'Do not call draft_campaign_plan yourself if staged_campaigns is already filled — one campaign is created per platform.',
@@ -538,24 +564,207 @@ class DiscoverProspectsService
         foreach ($channelResults as $channel => $result) {
             $best = $result['best_match'] ?? null;
             if (is_array($best) && ! empty($best['list_hash'])) {
+                $reused = ! empty($best['reused_recent']) ? ' (reused prior list — not new)' : '';
                 $next[] = strtoupper($channel).': '.$best['list_name']
-                    .' ('.($best['total_leads'] ?? 0).' leads) list_hash='.$best['list_hash']
+                    .' ('.($best['total_leads'] ?? 0).' leads)'.$reused
+                    .' list_hash='.$best['list_hash']
                     .' list_src='.($best['list_src'] ?? 'csv');
+            } elseif (! empty($result['search_failed'])) {
+                $next[] = strtoupper($channel).' search failed: '
+                    .trim((string) ($result['failure_reason'] ?? 'no profiles saved'));
             }
+        }
+
+        if ($failedNotes !== []) {
+            $next = array_merge($next, $failedNotes);
+        }
+
+        $planned = (int) ($targetCount ?? array_sum($allocation));
+        if ($planned > 0 && $totalSaved < $planned) {
+            $next[] = 'Shortfall: planned '.$planned.', saved '.$totalSaved
+                .' usable new prospects. Report honestly — do not claim the full planned count.';
         }
 
         return [
             'mode' => 'parallel',
             'query' => $query,
             'allocation' => $allocationPlan,
-            'platforms_searched' => array_keys($channelResults),
+            'platforms_searched' => $successfulPlatforms,
+            'platforms_attempted' => array_keys($channelResults),
+            'platform_failures' => $failedNotes,
             'channel_results' => $channelResults,
             'lists' => $lists,
-            'total_leads_in_matches' => (int) collect($lists)->sum(fn (array $r) => (int) ($r['total_leads'] ?? 0)),
-            'ready_for_campaign' => $ready,
+            'total_leads_in_matches' => $totalSaved,
+            'available_leads_including_reuse' => $availableIncludingReuse,
+            'ready_for_campaign' => $ready && $availableIncludingReuse > 0,
             'single_channel_rule' => 'Never mix channels in one outreach sequence. Follow up on the channel where the prospect was found.',
             'next_steps' => $next,
         ];
+    }
+
+    /**
+     * When Instagram (or another channel) fails, keep working the planned count on LinkedIn.
+     *
+     * @param  array<string, array<string, mixed>>  $channelResults
+     * @return array<string, array<string, mixed>>
+     */
+    private function spillDiscoveryShortfall(
+        User $user,
+        string $query,
+        ?string $competitors,
+        int $limit,
+        int $plannedTotal,
+        array $channelResults,
+        ?string $geography,
+        ?string $networkDegree,
+        ?string $title,
+        ?string $company,
+        ?bool $openLink,
+        ?string $profileUrl,
+    ): array {
+        $plannedTotal = max(1, $plannedTotal);
+        $freshSaved = 0;
+        foreach ($channelResults as $result) {
+            if (! is_array($result)) {
+                continue;
+            }
+            $best = is_array($result['best_match'] ?? null) ? $result['best_match'] : null;
+            if ($best === null || ! empty($best['reused_recent'])) {
+                continue;
+            }
+            $freshSaved += max(0, (int) ($best['total_leads'] ?? 0));
+        }
+
+        $deficit = $plannedTotal - $freshSaved;
+        if ($deficit <= 0) {
+            return $channelResults;
+        }
+
+        $spillChannel = null;
+        if ($this->channelGuard->isChannelConnected($user->id, 'linkedin')) {
+            $spillChannel = 'linkedin';
+        } elseif ($this->channelGuard->isChannelConnected($user->id, 'instagram') && $this->mindcase->configured()) {
+            $spillChannel = 'instagram';
+        }
+
+        if ($spillChannel === null) {
+            return $channelResults;
+        }
+
+        $existing = is_array($channelResults[$spillChannel] ?? null) ? $channelResults[$spillChannel] : null;
+        $existingFresh = 0;
+        if (is_array($existing)) {
+            $best = is_array($existing['best_match'] ?? null) ? $existing['best_match'] : null;
+            if ($best !== null && empty($best['reused_recent'])) {
+                $existingFresh = max(0, (int) ($best['total_leads'] ?? 0));
+            }
+        }
+
+        // Already have a fresh list on the spill channel — only top up when that channel itself underfilled.
+        $needOnSpill = $deficit;
+        if ($existingFresh > 0 && $spillChannel === 'linkedin') {
+            // LinkedIn list exists but total plan still short because Instagram failed — search again for the gap.
+            $needOnSpill = $deficit;
+        }
+
+        Log::info('[Soci] Discovery shortfall spillover', [
+            'user_id' => $user->id,
+            'planned' => $plannedTotal,
+            'fresh_saved' => $freshSaved,
+            'deficit' => $needOnSpill,
+            'spill_channel' => $spillChannel,
+        ]);
+
+        if ($spillChannel === 'linkedin') {
+            $topUp = $this->discover(
+                $user,
+                $query,
+                $competitors,
+                $limit,
+                $needOnSpill + $existingFresh, // ask for combined size so Unipile pulls enough
+                true,
+                $geography,
+                $networkDegree,
+                $title,
+                $company,
+                $openLink,
+                $profileUrl,
+                'linkedin',
+            );
+            $channelResults['linkedin'] = $topUp;
+        } elseif ($spillChannel === 'instagram') {
+            $channelResults['instagram'] = $this->discoverInstagram(
+                $user,
+                $query,
+                $needOnSpill,
+                $profileUrl,
+                $geography,
+                true,
+            );
+        }
+
+        return $channelResults;
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $channelResults
+     * @return list<string>
+     */
+    private function successfulDiscoveryPlatforms(array $channelResults): array
+    {
+        $ok = [];
+        foreach ($channelResults as $channel => $result) {
+            if (! is_array($result)) {
+                continue;
+            }
+            $best = is_array($result['best_match'] ?? null) ? $result['best_match'] : null;
+            $leads = (int) ($best['total_leads'] ?? 0);
+            if ($leads > 0 && empty($result['search_failed']) && empty($best['reused_recent'])) {
+                $ok[] = (string) $channel;
+            }
+        }
+
+        return array_values(array_unique($ok));
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $channelResults
+     * @return list<string>
+     */
+    private function failedDiscoveryNotes(array $channelResults): array
+    {
+        $notes = [];
+        foreach ($channelResults as $channel => $result) {
+            if (! is_array($result)) {
+                continue;
+            }
+            if (! empty($result['search_failed'])) {
+                $reason = trim((string) ($result['failure_reason'] ?? 'no profiles'));
+                $notes[] = ucfirst((string) $channel).' discovery failed: '.$reason;
+            }
+        }
+
+        return $notes;
+    }
+
+    private function sanitizeLinkedInTitle(?string $title): ?string
+    {
+        $title = trim((string) $title);
+        if ($title === '') {
+            return null;
+        }
+
+        // Segment sentences are not Unipile "title" filters.
+        if (strlen($title) > 40
+            || preg_match('/\b(with|need|likely|looking|building|customers?|prospects?|meetings?)\b/i', $title)
+        ) {
+            $extracted = \App\V2\Ai\Support\IcpSearchFilterParser::searchVariants($title, null, 10);
+            $fromParser = trim((string) ($extracted[0]['title'] ?? ''));
+
+            return $fromParser !== '' ? $fromParser : null;
+        }
+
+        return $title;
     }
 
     public function normalizeTargetCount(?int $targetCount): ?int
@@ -687,12 +896,21 @@ class DiscoverProspectsService
             'icp_notes' => $query,
         ], $icp));
 
-        if ($keyword === '' || $keyword === $query) {
-            return $query;
+        if ($keyword === '') {
+            $keyword = $intent->compressBuyerKeyword($query);
         }
 
-        if ($intent->looksLikeJobTitleList($query)) {
-            Log::info('[Soci] Instagram search using offer keywords, not job titles', [
+        if ($keyword === '') {
+            Log::info('[Soci] Instagram search fell back to short default keyword', [
+                'user_id' => $user->id,
+                'original' => Str::limit($query, 160),
+            ]);
+
+            return 'b2b founders';
+        }
+
+        if ($keyword !== $query) {
+            Log::info('[Soci] Instagram search using compressed buyer keyword', [
                 'user_id' => $user->id,
                 'original' => Str::limit($query, 160),
                 'keyword' => $keyword,

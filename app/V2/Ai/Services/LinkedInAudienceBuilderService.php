@@ -51,7 +51,7 @@ class LinkedInAudienceBuilderService
         }
 
         $needed = isset($plan['target_count']) ? max(1, (int) $plan['target_count']) : 1;
-        $forceNewSearch = ! empty($plan['force_new_search']);
+        $forceNewSearch = ! empty($plan['force_new_search']) || ! empty($plan['prefer_fresh_audience']);
         $reused = $forceNewSearch ? null : $this->reuseRecentSearch($user, $needed);
         if ($reused !== null) {
             Log::info('[Soci] Reusing recent LinkedIn list — not searching again', [

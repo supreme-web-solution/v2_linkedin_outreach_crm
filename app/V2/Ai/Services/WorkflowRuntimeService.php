@@ -370,6 +370,9 @@ class WorkflowRuntimeService
                 if (is_array($stepResult['platforms_searched'] ?? null)) {
                     $meta['platforms_searched'] = $stepResult['platforms_searched'];
                 }
+                if (is_array($stepResult['platform_failures'] ?? null) && $stepResult['platform_failures'] !== []) {
+                    $meta['platform_failures'] = $stepResult['platform_failures'];
+                }
                 if (is_array($stepResult['sample_profiles'] ?? null) && $stepResult['sample_profiles'] !== []) {
                     $meta['sample_profiles'] = $stepResult['sample_profiles'];
                 }

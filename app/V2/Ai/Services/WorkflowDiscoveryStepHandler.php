@@ -100,11 +100,27 @@ class WorkflowDiscoveryStepHandler
             }
 
             $lists[] = array_merge($best, ['primary_channel' => (string) $channel]);
-            $saved += (int) ($best['total_leads'] ?? 0);
+            // Never count reused prior lists toward this run's discovery progress.
+            if (empty($best['reused_recent'])) {
+                $saved += (int) ($best['total_leads'] ?? 0);
+            }
             $samples = array_merge($samples, $this->collectSamples($channelResult, $best));
         }
 
+        // Prefer total from discovery service when it already excluded reuse double-counts.
+        $reportedTotal = (int) ($result['total_leads_in_matches'] ?? 0);
+        if ($reportedTotal > 0) {
+            $saved = $reportedTotal;
+        }
+
         $samples = array_slice($samples, 0, 5);
+        $platforms = is_array($result['platforms_searched'] ?? null)
+            ? $result['platforms_searched']
+            : array_values(array_unique(array_map(
+                fn (array $row) => (string) ($row['primary_channel'] ?? ''),
+                array_filter($lists, fn (array $row) => empty($row['reused_recent']) && (int) ($row['total_leads'] ?? 0) > 0),
+            )));
+        $platforms = array_values(array_filter($platforms, fn ($p) => $p !== ''));
 
         return [
             'step_type' => 'discover',
@@ -112,17 +128,16 @@ class WorkflowDiscoveryStepHandler
             'provider_returned' => $saved,
             'saved_reported' => $saved,
             'platform' => $platform,
-            'platforms_searched' => is_array($result['platforms_searched'] ?? null)
-                ? $result['platforms_searched']
-                : array_keys($result['channel_results'] ?? []),
+            'platforms_searched' => $platforms !== [] ? $platforms : ($result['platforms_searched'] ?? []),
+            'platform_failures' => is_array($result['platform_failures'] ?? null) ? $result['platform_failures'] : [],
             'list_hash' => count($lists) === 1 ? ($lists[0]['list_hash'] ?? null) : null,
             'list_src' => count($lists) === 1 ? ($lists[0]['list_src'] ?? null) : null,
             'list_name' => count($lists) === 1 ? ($lists[0]['list_name'] ?? null) : null,
             'sample_profiles' => $samples,
             'discovery_lists' => $lists,
             'discovery_result' => [
-                'auto_sourced' => true,
-                'search_failed' => $lists === [],
+                'auto_sourced' => collect($lists)->contains(fn (array $row) => empty($row['reused_recent'])),
+                'search_failed' => $saved <= 0,
                 'mode' => 'parallel',
             ],
         ];
@@ -136,20 +151,27 @@ class WorkflowDiscoveryStepHandler
     private function freshBestMatch(array $result, array $lists): ?array
     {
         $best = is_array($result['best_match'] ?? null) ? $result['best_match'] : null;
+
+        $freshLists = array_values(array_filter(
+            $lists,
+            fn (array $row) => (bool) ($row['auto_sourced'] ?? false) && empty($row['reused_recent']),
+        ));
+
+        if ($freshLists !== []) {
+            return collect($freshLists)->sortByDesc(fn (array $row) => (int) ($row['total_leads'] ?? 0))->first();
+        }
+
+        // Prefer a non-reused best_match when present.
+        if ($best !== null && ($best['auto_sourced'] ?? false) && empty($best['reused_recent'])) {
+            return $best;
+        }
+
+        // Fall back to reused only so campaign attach still has a list — caller must not count it as new.
         if ($best !== null && ($best['auto_sourced'] ?? false)) {
             return $best;
         }
 
-        $freshLists = array_values(array_filter(
-            $lists,
-            fn (array $row) => (bool) ($row['auto_sourced'] ?? false),
-        ));
-
-        if ($freshLists === []) {
-            return $best;
-        }
-
-        return collect($freshLists)->sortByDesc(fn (array $row) => (int) ($row['total_leads'] ?? 0))->first();
+        return $best;
     }
 
     /**
@@ -158,15 +180,24 @@ class WorkflowDiscoveryStepHandler
      */
     private function freshSavedCount(array $result, ?array $best): int
     {
+        if ($best !== null && ! empty($best['reused_recent'])) {
+            return 0;
+        }
+
         if ($best !== null && ($best['auto_sourced'] ?? false)) {
             return (int) ($best['total_leads'] ?? 0);
         }
 
         if (($result['auto_sourced'] ?? false) && is_array($result['best_match'] ?? null)) {
-            return (int) ($result['best_match']['total_leads'] ?? 0);
+            $match = $result['best_match'];
+            if (! empty($match['reused_recent'])) {
+                return 0;
+            }
+
+            return (int) ($match['total_leads'] ?? 0);
         }
 
-        return (int) ($result['total_leads_in_matches'] ?? $best['total_leads'] ?? 0);
+        return (int) ($result['total_leads_in_matches'] ?? 0);
     }
 
     /**
