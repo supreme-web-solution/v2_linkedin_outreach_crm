@@ -86,46 +86,81 @@ class PlanChannelIntentService
     }
 
     /**
-     * Instagram search wants keywords (offer / niche), not job titles.
+     * Domain-agnostic Instagram search keyword.
+     * Uses THIS TURN + this workspace's ICP — never a hardcoded industry list.
      *
      * @param  array<string, mixed>  $payload
      * @param  array<string, mixed>  $icp
      */
     public function instagramKeyword(array $payload, array $icp = []): string
     {
-        // Prefer THIS TURN's audience/goal when it already names a buyer niche (e.g. "US SaaS founders").
+        $candidates = $this->instagramKeywordCandidates($payload, $icp);
+
+        return $candidates[0] ?? 'business owners';
+    }
+
+    /**
+     * Ordered keyword attempts for Mindcase — rotate on underfill instead of
+     * retrying the same garbled phrase five times.
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $icp
+     * @return list<string>
+     */
+    public function instagramKeywordCandidates(array $payload, array $icp = []): array
+    {
+        $out = [];
+        $push = function (string $raw) use (&$out): void {
+            $kw = $this->compressBuyerKeyword($raw);
+            if ($kw === '') {
+                return;
+            }
+            $lower = Str::lower($kw);
+            foreach ($out as $existing) {
+                if (Str::lower($existing) === $lower) {
+                    return;
+                }
+            }
+            $out[] = $kw;
+        };
+
         foreach (['audience', 'goal', 'icp_notes'] as $key) {
-            $fromTurn = $this->compressBuyerKeyword((string) ($payload[$key] ?? ''));
-            if ($fromTurn !== '') {
-                return $fromTurn;
-            }
+            $push((string) ($payload[$key] ?? ''));
         }
 
-        // Prefer buyer niches / who-we-sell-to over seller pitch (avoids celebrity keyword noise).
         $niches = Arr::get($icp, 'niches', []);
-        if (is_array($niches) && $niches !== []) {
-            $nicheLine = $this->compressBuyerKeyword(implode(' ', array_map(fn ($v) => (string) $v, array_slice($niches, 0, 4))));
-            if ($nicheLine !== '') {
-                return $nicheLine;
+        if (is_array($niches)) {
+            foreach (array_slice($niches, 0, 6) as $niche) {
+                $push((string) $niche);
             }
         }
 
-        foreach (['search_query', 'industry', 'customers', 'who_we_sell_to'] as $key) {
+        $industry = trim((string) Arr::get($icp, 'industry', ''));
+        $decisionMaker = trim((string) Arr::get($icp, 'decision_maker', ''));
+        if ($industry !== '' && ! preg_match('/^(global|various|general)$/i', $industry)) {
+            $role = $this->shortRoleWord($decisionMaker) ?? 'owners';
+            $push($industry.' '.$role);
+        }
+
+        // Buyer-facing ICP fields before product-shaped search_query.
+        foreach (['who_we_sell_to', 'customers', 'search_query'] as $key) {
             $value = Arr::get($icp, $key, '');
             if (is_array($value)) {
                 $value = implode(' ', array_map(fn ($v) => (string) $v, array_slice($value, 0, 4)));
             }
-            $compressed = $this->compressBuyerKeyword((string) $value);
-            if ($compressed !== '') {
-                return $compressed;
-            }
+            $push((string) $value);
         }
 
-        return 'b2b founders';
+        if ($out === []) {
+            $role = $this->shortRoleWord($decisionMaker);
+            $out[] = $role !== null ? $role : 'business owners';
+        }
+
+        return array_values($out);
     }
 
     /**
-     * Mindcase needs short buyer keywords — never ICP essays or seller pitch paragraphs.
+     * Mindcase needs short buyer keywords — structural cleanup only, no industry hardcoding.
      */
     public function compressBuyerKeyword(string $text): string
     {
@@ -134,37 +169,62 @@ class PlanChannelIntentService
             return '';
         }
 
-        if ($this->looksLikeSellerPitch($text) || $this->looksLikeJobTitleList($text)) {
-            return '';
-        }
-
-        // Strip meeting/campaign verbs so "Book 20 meetings with US SaaS founders" → niche words.
+        // Strip channel locks / campaign chrome (domain-agnostic).
         $text = trim(preg_replace(
-            '/\b(book|get|find|schedule|map out|reach out|outreach|campaign|this month|this quarter|\d+\s*(meetings?|demos?|prospects?|leads?|customers?|people)?)\b/i',
+            '/^\s*(instagram|linkedin|email|whatsapp|telegram|twitter|x)\s*only\s*[:\-]?\s*/i',
+            '',
+            $text,
+        ) ?? '');
+        $text = trim(preg_replace(
+            '/\b(instagram|linkedin|email|whatsapp|telegram|twitter)\s*only\b/i',
+            ' ',
+            $text,
+        ) ?? '');
+        $text = trim(preg_replace(
+            '/\b(book|booking|get|find|schedule|map out|reach out|outreach|campaign|this month|this quarter|ideal|my|me|\d+\s*(meetings?|bookings?|demos?|prospects?|leads?|customers?|people)?)\b/i',
             ' ',
             $text,
         ) ?? '');
         $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
-        $text = trim(preg_replace('/^(with|for|to|about|among|across)\s+/i', '', $text) ?? '');
+        $text = trim(preg_replace('/^(with|for|to|from|about|among|across)\s+/i', '', $text) ?? '');
+        $text = trim(preg_replace('/\b(with|for|to|from|about)\b/i', ' ', $text) ?? '');
+        $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
+        $text = trim(preg_replace('/\bonly\b/i', ' ', $text) ?? '');
+        $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
 
-        if ($text === '' || $this->looksLikeSellerPitch($text)) {
+        if ($text === ''
+            || $this->looksLikeSellerPitch($text)
+            || $this->looksLikeJobTitleList($text)
+            || $this->looksLikeGenericAudienceAsk($text)
+            || preg_match('/^(instagram|linkedin|email|whatsapp|telegram|twitter)$/i', $text)
+        ) {
             return '';
         }
 
-        // Reject long ICP paragraphs (who_we_sell_to dumps).
+        // Any niche noun + decision-maker role (works for any vertical).
+        if (preg_match(
+            '/\b([a-z][a-z0-9&\-]{2,40})\s+(founders?|owners?|ceos?|ctos?|cmos?|directors?|managers?|operators?|partners?)\b/i',
+            $text,
+            $m,
+        )) {
+            $noun = Str::lower($m[1]);
+            $role = Str::lower($m[2]);
+            if (! $this->isFillerNoun($noun)) {
+                return Str::limit($noun.' '.$role, 80, '');
+            }
+        }
+
+        // Long ICP essays → keep a few content words; drop structural filler.
         if (strlen($text) > 90 || substr_count($text, ' ') > 10) {
             $words = preg_split('/\s+/', $text) ?: [];
             $keep = [];
             foreach ($words as $word) {
                 $w = Str::lower(trim($word, " \t.,;:"));
-                if (strlen($w) < 3) {
-                    continue;
-                }
-                if (in_array($w, ['with', 'that', 'this', 'from', 'their', 'your', 'need', 'needs', 'likely', 'building', 'growing', 'businesses', 'application', 'digital', 'product', 'tailored', 'software', 'automation'], true)) {
+                if (strlen($w) < 3 || $this->isFillerNoun($w)) {
                     continue;
                 }
                 $keep[] = $w;
-                if (count($keep) >= 5) {
+                if (count($keep) >= 4) {
                     break;
                 }
             }
@@ -172,18 +232,37 @@ class PlanChannelIntentService
         }
 
         $text = trim($text);
-        if ($text === '' || strlen($text) < 3) {
-            return '';
-        }
-
-        // Drop dangling connectors from compression ("uk saas founders and").
         $text = trim(preg_replace('/\b(and|or|with|for|to|about)$/i', '', $text) ?? '');
         $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
         if ($text === '' || strlen($text) < 3) {
             return '';
         }
+        if (preg_match('/\b(needing|looking|established companies|new needing)\b/i', $text)) {
+            return '';
+        }
+        if ($this->looksLikeGenericAudienceAsk($text)) {
+            return '';
+        }
 
         return Str::limit($text, 80, '');
+    }
+
+    public function looksLikeGenericAudienceAsk(string $text): bool
+    {
+        $lower = Str::lower(trim($text));
+
+        if (preg_match(
+            '/\b[a-z][a-z0-9&\-]{2,40}\s+(founders?|owners?|ceos?|ctos?|directors?|managers?)\b/i',
+            $lower,
+        )) {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/\b(ideal customers?|my customers?|my clients?|my prospects?|customers? only|people to book)\b/i',
+            $lower
+        ) || (bool) preg_match('/^(customers?|clients?|prospects?|leads?|me with customers?|with customers?)$/i', $lower)
+            || (bool) preg_match('/^(me\s+)?(with\s+)?customers?$/i', $lower);
     }
 
     public function looksLikeSellerPitch(string $text): bool
@@ -191,17 +270,42 @@ class PlanChannelIntentService
         $lower = Str::lower($text);
 
         return (bool) preg_match(
-            '/\b(we (sell|build|offer|provide)|our (product|platform|software|agency)|custom software|ai[- ]powered solutions|transform business operations)\b/i',
+            '/\b(we (sell|build|offer|provide)|our (product|platform|software|agency|company)|ai[- ]powered solutions|transform business operations|pay (us|the company) to)\b/i',
             $lower
         );
     }
 
     public function looksLikeJobTitleList(string $text): bool
     {
-        return (bool) preg_match(
-            '/\b(chief|officer|director|manager|founder|owner|vp|vice president|head of)\b/i',
+        $titleHits = preg_match_all(
+            '/\b(chief|officer|director|manager|founder|owner|ceo|cto|cmo|vp|vice president|head of)\b/i',
             $text,
-        ) && (bool) preg_match('/\bOR\b|,/', $text);
+        );
+
+        return $titleHits >= 2
+            && (bool) preg_match('/\bOR\b|,|\bor\b/i', $text);
+    }
+
+    private function isFillerNoun(string $word): bool
+    {
+        return in_array($word, [
+            'with', 'that', 'this', 'from', 'their', 'your', 'need', 'needs', 'needing', 'needed',
+            'likely', 'building', 'growing', 'businesses', 'application', 'digital', 'product',
+            'tailored', 'software', 'automation', 'new', 'established', 'companies', 'company',
+            'global', 'across', 'various', 'industries', 'industry', 'startups', 'startup',
+            'enterprise', 'enterprises', 'operations', 'solutions', 'services', 'customers',
+            'customer', 'clients', 'client', 'people', 'business', 'only', 'instagram',
+            'linkedin', 'whatsapp', 'telegram', 'twitter',
+        ], true);
+    }
+
+    private function shortRoleWord(string $decisionMaker): ?string
+    {
+        if (preg_match('/\b(founders?|owners?|ceos?|ctos?|directors?|managers?)\b/i', $decisionMaker, $m)) {
+            return Str::lower($m[1]);
+        }
+
+        return null;
     }
 
     public function isSendChannel(string $channel): bool

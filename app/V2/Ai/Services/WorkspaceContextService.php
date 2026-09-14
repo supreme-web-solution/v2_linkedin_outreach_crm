@@ -268,11 +268,28 @@ class WorkspaceContextService
             return $fromHints;
         }
 
+        // Job-title lists / empty compress → short ICP niche + role for Unipile/Mindcase.
+        $settings = $this->settingsService->for($user, $organizationId);
+        $icp = $this->storedIcp($settings);
+        $industry = trim((string) Arr::get($icp, 'industry', ''));
+        $niche = '';
+        $niches = $icp['niches'] ?? [];
+        if (is_array($niches) && $niches !== []) {
+            $niche = $intent->compressBuyerKeyword((string) $niches[0]);
+        }
+        $role = $this->jobTitleHint((string) Arr::get($icp, 'decision_maker', '')) ?? 'Founder';
+        if ($niche !== '') {
+            return $niche;
+        }
+        if ($industry !== '' && ! preg_match('/^(global|various|general)$/i', $industry)) {
+            return trim($industry.' '.$role);
+        }
+
         if (($hints['query'] ?? '') !== '') {
             return (string) $hints['query'];
         }
 
-        return $query;
+        return $query !== '' ? $query : 'business owners';
     }
 
     /**

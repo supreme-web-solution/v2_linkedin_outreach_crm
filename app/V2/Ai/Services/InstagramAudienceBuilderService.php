@@ -169,6 +169,21 @@ class InstagramAudienceBuilderService
                 'user_id' => $user->id,
                 'query' => Str::limit($query, 120),
                 'rejected' => $filtered['rejected'],
+                'weak_fit' => $filtered['weak_fit'],
+            ]);
+
+            return null;
+        }
+
+        // Never persist weak-fit media/noise lists as "found N prospects".
+        if (! empty($filtered['weak_fit'])) {
+            $this->lastError = $filtered['warning']
+                ?? 'Instagram matches were too weak for your ICP — not saved.';
+            Log::info('[Soci] Instagram Mindcase search finished — weak fit, not saved', [
+                'user_id' => $user->id,
+                'query' => Str::limit($query, 120),
+                'would_have_saved' => count($rows),
+                'rejected' => $filtered['rejected'],
             ]);
 
             return null;

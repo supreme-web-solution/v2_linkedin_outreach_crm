@@ -46,6 +46,86 @@ class DiscoveryQualityAndMemoryTest extends TestCase
         $this->assertNotContains('lifestyle_creator', $usernames);
     }
 
+    public function test_instagram_filter_rejects_media_and_event_pages(): void
+    {
+        $svc = app(DiscoveryAudienceQualityService::class);
+        $filtered = $svc->filterInstagramRows([
+            [
+                'username' => 'startup_media_page',
+                'fullName' => 'Startup Media',
+                'bio' => 'India’s operator-first startup media brand: decoding founders, funding and unicorns.',
+                'followers' => 82000,
+            ],
+            [
+                'username' => 'big_comic_con',
+                'fullName' => 'City Comic Con',
+                'bio' => 'Tag your photos #comiccon. Questions? Don’t slide into our DMs; email us!',
+                'followers' => 400000,
+            ],
+            [
+                'username' => 'saas_ops_co',
+                'fullName' => 'SaaS Ops Co',
+                'bio' => 'We help B2B SaaS founders fix outbound pipeline and sales ops.',
+                'followers' => 3100,
+            ],
+        ], ['saas', 'founders', 'outbound', 'pipeline', 'b2b'], 10);
+
+        $usernames = collect($filtered['kept'])->pluck('username')->all();
+        $this->assertContains('saas_ops_co', $usernames);
+        $this->assertNotContains('startup_media_page', $usernames);
+        $this->assertNotContains('big_comic_con', $usernames);
+        $this->assertFalse($filtered['weak_fit']);
+    }
+
+    public function test_instagram_keyword_rejects_garbled_icp_filler(): void
+    {
+        $keyword = app(PlanChannelIntentService::class)->instagramKeyword(
+            [
+                'audience' => 'Instagram only: Founder, CEO, CTO, or Director of Operations at global startups,',
+                'goal' => 'get 30 leads from instagram only',
+            ],
+            [
+                'who_we_sell_to' => 'startups new needing established companies across various industries looking for software',
+                'niches' => ['clinic owners booking more consultations'],
+                'industry' => 'Healthcare',
+                'decision_maker' => 'Owner',
+            ],
+        );
+
+        $lower = strtolower($keyword);
+        // Workspace niche wins — not a hardcoded SaaS list, not filler soup.
+        $this->assertStringContainsString('clinic', $lower);
+        $this->assertStringNotContainsString('needing', $lower);
+        $this->assertStringNotContainsString('established companies', $lower);
+    }
+
+    public function test_instagram_keyword_candidates_are_domain_agnostic_from_icp(): void
+    {
+        $candidates = app(PlanChannelIntentService::class)->instagramKeywordCandidates(
+            ['audience' => 'Founder OR CEO OR CTO at growing companies'],
+            [
+                'niches' => ['dental clinic owners', 'medspa owners'],
+                'industry' => 'Dental',
+                'decision_maker' => 'Owner',
+            ],
+        );
+
+        $joined = strtolower(implode(' | ', $candidates));
+        $this->assertStringContainsString('dental', $joined);
+        $this->assertStringContainsString('clinic', $joined);
+        $this->assertStringNotContainsString('saas', $joined);
+        $this->assertGreaterThan(1, count($candidates));
+    }
+
+    public function test_compress_uk_saas_still_works_without_hardcoded_prefer_list(): void
+    {
+        $keyword = app(PlanChannelIntentService::class)->compressBuyerKeyword(
+            'Book 20 meetings with US SaaS founders'
+        );
+
+        $this->assertSame('saas founders', strtolower($keyword));
+    }
+
     public function test_instagram_keyword_prefers_buyer_niche_over_seller_pitch(): void
     {
         $keyword = app(PlanChannelIntentService::class)->instagramKeyword(

@@ -149,7 +149,8 @@ class DiscoveryPlanExecutionTest extends TestCase
             'united kingdom saas founders and'
         );
 
-        $this->assertSame('united kingdom saas founders', strtolower($keyword));
+        // Domain-agnostic niche+role extraction (not a SaaS allowlist).
+        $this->assertSame('saas founders', strtolower($keyword));
     }
 
     public function test_discovery_notifier_reports_shortfall_honestly(): void

@@ -9,6 +9,7 @@ use App\V2\Ai\Support\PlanLeadList;
 use App\V2\Integrations\Mindcase\MindcaseClient;
 use App\V2\Outreach\OutreachChannelGuard;
 use App\V2\Services\LeadListService;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -340,32 +341,34 @@ class DiscoverProspectsService
         ?string $geography = null,
         bool $forceFresh = false,
     ): array {
-        $query = $this->instagramQueryWithLocation($this->instagramSearchQuery($user, $query), $geography);
+        $baseKeyword = $this->instagramSearchQuery($user, $query);
+        $searchQuery = $this->instagramQueryWithLocation($baseKeyword, $geography);
 
         // Keyword is primary. Only force username lookup for @handle or profile URL.
         $usernames = [];
         if ($profileUrl && preg_match('~instagram\.com/([^/?#]+)~i', $profileUrl, $m)) {
             $usernames[] = $m[1];
-        } elseif (preg_match('/^@[\w.]{2,30}$/', trim($query))) {
-            $usernames[] = ltrim(trim($query), '@');
-        } elseif (preg_match('~instagram\.com/([^/?#]+)~i', trim($query), $m)) {
+        } elseif (preg_match('/^@[\w.]{2,30}$/', trim($searchQuery))) {
+            $usernames[] = ltrim(trim($searchQuery), '@');
+        } elseif (preg_match('~instagram\.com/([^/?#]+)~i', trim($searchQuery), $m)) {
             $usernames[] = $m[1];
         }
 
         $built = $this->instagramAudience->searchAndPersist(
             $user,
-            $query,
+            $searchQuery,
             max(1, min(self::MAX_TARGET_COUNT, $limit)),
             $usernames !== [] ? $usernames : null,
             forceFresh: $forceFresh,
         );
 
         if ($built === null) {
+            $this->markInstagramKeywordFailed($user->id, $baseKeyword);
             $failureReason = $this->instagramAudience->lastError()
                 ?? 'Instagram search returned no profiles. Check MINDCASE_API_KEY or try a simpler keyword.';
 
             return [
-                'query' => $query,
+                'query' => $searchQuery,
                 'platform' => 'instagram',
                 'lists' => [],
                 'best_match' => null,
@@ -379,6 +382,12 @@ class DiscoverProspectsService
                     'Try again with a shorter keyword, or search from Leads → Find Instagram leads (max '.self::MAX_TARGET_COUNT.' per pull).',
                 ],
             ];
+        }
+
+        $savedCount = (int) ($built['total_leads'] ?? 0);
+        // Underfill or weak fit → rotate keyword on the next discovery attempt.
+        if (! empty($built['weak_fit']) || $savedCount < max(1, (int) ceil($limit * 0.6))) {
+            $this->markInstagramKeywordFailed($user->id, $baseKeyword);
         }
 
         $samples = $built['sample_profiles'] ?? [];
@@ -406,7 +415,7 @@ class DiscoverProspectsService
         }
 
         return [
-            'query' => $query,
+            'query' => $searchQuery,
             'platform' => 'instagram',
             'primary_channel' => 'instagram',
             'lists' => [array_merge($built, ['primary_channel' => 'instagram'])],
@@ -816,7 +825,12 @@ class DiscoverProspectsService
             }
             $best = is_array($result['best_match'] ?? null) ? $result['best_match'] : null;
             $leads = (int) ($best['total_leads'] ?? 0);
-            if ($leads > 0 && empty($result['search_failed']) && empty($best['reused_recent'])) {
+            if ($leads > 0
+                && empty($result['search_failed'])
+                && empty($best['reused_recent'])
+                && empty($result['weak_fit'])
+                && empty($best['weak_fit'])
+            ) {
                 $ok[] = (string) $channel;
             }
         }
@@ -992,34 +1006,58 @@ class DiscoverProspectsService
         }
 
         $intent = app(PlanChannelIntentService::class);
-        $keyword = trim($intent->instagramKeyword([
+        $candidates = $intent->instagramKeywordCandidates([
             'audience' => $query,
             'goal' => $query,
             'icp_notes' => $query,
-        ], $icp));
+        ], $icp);
 
+        $keyword = '';
+        foreach ($candidates as $candidate) {
+            if (! $this->instagramKeywordRecentlyFailed($user->id, $candidate)) {
+                $keyword = $candidate;
+                break;
+            }
+        }
+        if ($keyword === '' && $candidates !== []) {
+            $keyword = $candidates[0];
+        }
         if ($keyword === '') {
-            $keyword = $intent->compressBuyerKeyword($query);
+            $keyword = 'business owners';
         }
 
-        if ($keyword === '') {
-            Log::info('[Soci] Instagram search fell back to short default keyword', [
-                'user_id' => $user->id,
-                'original' => Str::limit($query, 160),
-            ]);
-
-            return 'b2b founders';
-        }
-
-        if ($keyword !== $query) {
-            Log::info('[Soci] Instagram search using compressed buyer keyword', [
-                'user_id' => $user->id,
-                'original' => Str::limit($query, 160),
-                'keyword' => $keyword,
-            ]);
-        }
+        Log::info('[Soci] Instagram search using compressed buyer keyword', [
+            'user_id' => $user->id,
+            'original' => Str::limit($query, 160),
+            'keyword' => $keyword,
+            'candidates' => array_slice($candidates, 0, 5),
+        ]);
 
         return $keyword;
+    }
+
+    private function markInstagramKeywordFailed(int $userId, string $keyword): void
+    {
+        $keyword = Str::lower(trim($keyword));
+        if ($keyword === '') {
+            return;
+        }
+
+        Cache::put(
+            'soci:ig_kw_failed:'.$userId.':'.sha1($keyword),
+            1,
+            now()->addMinutes(45),
+        );
+    }
+
+    private function instagramKeywordRecentlyFailed(int $userId, string $keyword): bool
+    {
+        $keyword = Str::lower(trim($keyword));
+        if ($keyword === '') {
+            return false;
+        }
+
+        return Cache::has('soci:ig_kw_failed:'.$userId.':'.sha1($keyword));
     }
 
     private function instagramQueryWithLocation(string $query, ?string $geography): string

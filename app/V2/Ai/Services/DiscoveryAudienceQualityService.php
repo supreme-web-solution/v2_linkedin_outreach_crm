@@ -8,7 +8,7 @@ use Illuminate\Support\Str;
 
 /**
  * Domain-agnostic audience quality scoring for discovery (esp. Instagram).
- * Prefers ICP buyer/niche overlap; demotes mega/celebrity accounts with no fit signal.
+ * Prefers ICP buyer/niche overlap; demotes mega/celebrity/media accounts with no fit signal.
  */
 class DiscoveryAudienceQualityService
 {
@@ -68,6 +68,10 @@ class DiscoveryAudienceQualityService
             if ($score < 0) {
                 continue;
             }
+            // With ICP tokens, require a real buyer-fit signal — not media/noise padding.
+            if ($buyerTokens !== [] && $score < 2.0) {
+                continue;
+            }
             $scored[] = ['score' => $score, 'row' => $row];
         }
 
@@ -75,10 +79,6 @@ class DiscoveryAudienceQualityService
 
         $kept = [];
         foreach ($scored as $item) {
-            // Prefer meaningful fit when we have ICP tokens; still allow neutral business accounts.
-            if ($buyerTokens !== [] && $item['score'] < 1 && count($kept) >= max(1, (int) ceil($keepLimit * 0.4))) {
-                continue;
-            }
             $kept[] = $item['row'];
             if (count($kept) >= $keepLimit) {
                 break;
@@ -86,17 +86,21 @@ class DiscoveryAudienceQualityService
         }
 
         $rejected = max(0, count($rows) - count($kept));
-        $weakFit = $buyerTokens !== []
-            && $kept !== []
-            && collect($scored)->take(count($kept))->avg('score') < 2.0;
+        $avg = $kept === []
+            ? 0.0
+            : (float) collect($scored)->take(count($kept))->avg('score');
+        // Weak fit means "do not save" — never ship comic-con / media pages as ICP.
+        $weakFit = $buyerTokens !== [] && ($kept === [] || $avg < 2.5);
 
         $warning = null;
         if ($kept === [] && $rows !== []) {
-            $warning = 'Instagram results looked like celebrity/mega-brand accounts with little ICP overlap — not saved. Try a buyer niche keyword (who you sell to), not your product pitch.';
+            $warning = 'Instagram results looked like media, mega-brand, or off-niche accounts — not saved. Try a clearer buyer niche keyword.';
         } elseif ($weakFit) {
-            $warning = 'Instagram list may be weakly matched to your ICP. Review samples before outreach — celebrity or off-niche accounts may still appear.';
+            $warning = 'Instagram matches were too weak for your ICP — not saved. Continuing on other channels.';
+            $kept = [];
+            $rejected = count($rows);
         } elseif ($rejected > 0 && $kept !== []) {
-            $warning = "Filtered {$rejected} weak Instagram profile(s) (mega/celebrity or no buyer-fit signal).";
+            $warning = "Filtered {$rejected} weak Instagram profile(s) (mega/celebrity/media or no buyer-fit signal).";
         }
 
         return [
@@ -122,6 +126,11 @@ class DiscoveryAudienceQualityService
         $hay = trim($username.' '.$name.' '.$bio);
 
         if ($username === '') {
+            return -1;
+        }
+
+        // Media / events / pages are almost never the buyer — reject structurally.
+        if ($this->looksLikeMediaOrEventPage($hay)) {
             return -1;
         }
 
@@ -158,11 +167,20 @@ class DiscoveryAudienceQualityService
         return $score;
     }
 
-    private function looksLikePublicFigureOrBrand(string $hay): bool
+    private function looksLikeMediaOrEventPage(string $hay): bool
     {
         // Structural signals only — no brand/name hardcoding.
         return (bool) preg_match(
-            '/\b(official account|ask me anything|candidato|deputado|congress|senator|celebrity|influencer|content creator|lifestyle|entertainment)\b/u',
+            '/\b(news|media brand|media company|magazine|newsletter|podcast|comic.?con|convention|festival|breaking|funding round|unicorns?|vc news|operator-first|insider guide|tag your photos|don\'t slide into our dms|don\'t dm|email us|official account of|startup news|founder stories)\b/u',
+            $hay
+        );
+    }
+
+    private function looksLikePublicFigureOrBrand(string $hay): bool
+    {
+        // Structural signals only — no brand/name hardcoding beyond clear media patterns above.
+        return (bool) preg_match(
+            '/\b(official account|ask me anything|candidato|deputado|congress|senator|celebrity|influencer|content creator|lifestyle|entertainment|pediatrician|neonatologist|professor)\b/u',
             $hay
         );
     }
