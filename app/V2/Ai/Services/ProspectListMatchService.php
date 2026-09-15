@@ -15,14 +15,19 @@ class ProspectListMatchService
     ) {}
 
     /**
+     * @param  bool  $allowSizeFallback  When false, never return largest lists just because tokens missed.
      * @return array<int, array{list_hash: string, list_src: string, list_name: string, match_score: int}>
      */
-    public function matchForSegment(int $userId, ?string $segment, int $limit = 10): array
+    public function matchForSegment(int $userId, ?string $segment, int $limit = 10, bool $allowSizeFallback = true): array
     {
         $segment = trim((string) $segment);
         $lists = $this->leadLists->listsForUser($userId);
 
         if ($segment === '') {
+            if (! $allowSizeFallback) {
+                return [];
+            }
+
             return $lists->sortByDesc('total_leads')->take($limit)->values()
                 ->map(fn (array $list) => $this->toMatchRow($list, 0))
                 ->all();
@@ -60,6 +65,10 @@ class ProspectListMatchService
 
         if ($matched !== []) {
             return $matched;
+        }
+
+        if (! $allowSizeFallback) {
+            return [];
         }
 
         return $lists->sortByDesc('total_leads')->take(min(3, $limit))->values()

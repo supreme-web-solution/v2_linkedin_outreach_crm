@@ -407,6 +407,12 @@ class WorkflowRuntimeService
                 if (is_array($stepResult['approval_ids'] ?? null)) {
                     $meta['approval_ids'] = $stepResult['approval_ids'];
                 }
+                if (is_array($stepResult['audience_commitment'] ?? null)) {
+                    $meta['audience_commitment'] = $stepResult['audience_commitment'];
+                }
+                if (isset($stepResult['eligible_count'])) {
+                    $meta['committed_prospect_count'] = (int) $stepResult['eligible_count'];
+                }
             }
 
             $meta['latest_state'] = $stepResult['state_after'] ?? $meta['latest_state'] ?? [];

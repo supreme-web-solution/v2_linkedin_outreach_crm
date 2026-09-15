@@ -53,7 +53,8 @@ class IntentGoalResolverService
                 'side_effect_budget' => 'prepare_only',
                 'desired_operation' => 'prepare_outreach',
                 'objective' => $objective,
-                'constraints' => array_merge($constraints, ['reuse_first' => true]),
+                // Quantified setup without a named list must discover — do not force archive reuse.
+                'constraints' => $constraints,
             ];
         }
 
@@ -64,7 +65,8 @@ class IntentGoalResolverService
                 'side_effect_budget' => 'external_send_allowed',
                 'desired_operation' => 'contact_prospects',
                 'objective' => $objective,
-                'constraints' => array_merge($constraints, ['reuse_first' => true]),
+                // Do not force reuse_first — "get me 1 customer" must not bind a 32-lead archive.
+                'constraints' => $constraints,
             ];
         }
 

@@ -104,6 +104,8 @@ class AiEmployeeWebController extends Controller
 
         return response()->json([
             'conversation_id' => $conversation->id,
+            'owner_user_id' => (int) $user->id,
+            'owner_organization_id' => $orgId,
             'messages' => $commandCenter->serializeMessages($historyWindow['messages']),
             'has_older_messages' => $historyWindow['has_older'],
             'pending_approvals' => $commandCenter->serializeApprovals($pending),

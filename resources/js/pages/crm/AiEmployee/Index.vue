@@ -186,6 +186,8 @@ const {
     stopPendingSync,
 } = sharedChat;
 
+const page = usePage();
+
 hydrateFromPage({
     conversation_id: props.conversation_id,
     messages: props.messages,
@@ -193,6 +195,10 @@ hydrateFromPage({
     pending_approvals: props.pending_approvals,
     pending_turn: props.pending_turn,
     settings: props.settings,
+    owner_user_id: Number((page.props.auth as { user?: { id?: number } } | undefined)?.user?.id ?? 0) || null,
+    owner_organization_id: Number(
+        (page.props.auth as { user?: { current_organization_id?: number } } | undefined)?.user?.current_organization_id ?? 0,
+    ) || null,
 });
 
 const pending = ref<Approval[]>([...props.pending_approvals]);
@@ -220,6 +226,25 @@ const attentionOpen = ref(false);
 const nurtureOpen = ref(false);
 
 watch(
+    () => [props.conversation_id, props.messages, props.pending_approvals, props.pending_turn] as const,
+    () => {
+        hydrateFromPage({
+            conversation_id: props.conversation_id,
+            messages: props.messages,
+            has_older_messages: props.has_older_messages,
+            pending_approvals: props.pending_approvals,
+            pending_turn: props.pending_turn,
+            settings: props.settings,
+            owner_user_id: Number((page.props.auth as { user?: { id?: number } } | undefined)?.user?.id ?? 0) || null,
+            owner_organization_id: Number(
+                (page.props.auth as { user?: { current_organization_id?: number } } | undefined)?.user?.current_organization_id ?? 0,
+            ) || null,
+        });
+        pending.value = [...props.pending_approvals];
+    },
+);
+
+watch(
     sharedPendingApprovals,
     (items) => {
         if (Array.isArray(items)) {
@@ -229,7 +254,6 @@ watch(
     { deep: true },
 );
 
-const page = usePage();
 const employeeSettings = ref({
     ...props.settings,
     enabled: Boolean(props.settings.enabled),

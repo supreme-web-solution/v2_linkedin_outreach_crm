@@ -8,6 +8,7 @@ import {
     DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import UserInfo from '@/components/UserInfo.vue';
+import { resetCommandCenterChatSession } from '@/composables/useCommandCenterChat';
 import { logout } from '@/routes';
 import { edit } from '@/routes/profile';
 import { edit as editSecurity } from '@/routes/security';
@@ -18,6 +19,7 @@ type Props = {
 };
 
 const handleLogout = () => {
+    resetCommandCenterChatSession();
     router.flushAll();
 };
 

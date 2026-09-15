@@ -764,6 +764,7 @@ class OutreachWebController extends Controller
     {
         $campaignId = (int) $campaign->id;
         $userId = (int) $campaign->user_id;
+        $organizationId = (int) $campaign->organization_id;
 
         if (in_array($campaign->status, ['active', 'running', 'preparing'], true)) {
             $campaign->update(['status' => 'stopped']);
@@ -779,6 +780,13 @@ class OutreachWebController extends Controller
             $campaignId,
             $userId,
         );
+
+        $owner = \App\Models\User::query()->find($userId);
+        if ($owner && $organizationId > 0) {
+            $lifecycle = app(\App\V2\Ai\Services\WorkflowLifecycleService::class);
+            $lifecycle->cancelForOutreachCampaign($owner, $organizationId, $campaignId);
+            $lifecycle->cancelOrphanedStagingWhenNoCampaigns($owner, $organizationId);
+        }
     }
 
     /**

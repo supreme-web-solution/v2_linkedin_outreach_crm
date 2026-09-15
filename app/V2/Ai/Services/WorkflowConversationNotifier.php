@@ -273,8 +273,13 @@ class WorkflowConversationNotifier
      */
     private function prospectCountForDisplay(array $meta): int
     {
+        $commitment = is_array($meta['audience_commitment'] ?? null) ? $meta['audience_commitment'] : [];
+        $committed = (int) ($commitment['bound_count'] ?? 0);
+        if ($committed > 0) {
+            return $committed;
+        }
+
         $latestState = is_array($meta['latest_state'] ?? null) ? $meta['latest_state'] : [];
-        $fromState = (int) ($latestState['intersection_eligible_count'] ?? 0);
         $fromDelta = (int) ($meta['cumulative_candidate_delta'] ?? 0);
         $lists = is_array($meta['discovery_lists'] ?? null) ? $meta['discovery_lists'] : [];
         $fromLists = $lists === [] ? 0 : array_sum(array_map(
@@ -282,12 +287,17 @@ class WorkflowConversationNotifier
             $lists,
         ));
 
-        // Prefer this-run discovery delta; list totals can include reused prior searches.
+        // Prefer this-run discovery — never inflate from archive intersection.
         if ($fromDelta > 0) {
             return $fromDelta;
         }
+        if ($fromLists > 0) {
+            return $fromLists;
+        }
 
-        return max($fromState, $fromLists);
+        $requested = (int) ($latestState['requested_quantity'] ?? 0);
+
+        return max(0, $requested);
     }
 
     /**

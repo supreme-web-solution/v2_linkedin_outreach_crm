@@ -74,9 +74,16 @@ class WorkflowRunService
 
     public function markRejected(AiWorkflowRun $run): void
     {
+        // waiting/running/blocked must also die — otherwise Soci keeps reporting
+        // stuck send_now workflows after REJECT or campaign delete.
+        $cancelable = ['planned', 'approved', 'waiting', 'running', 'blocked'];
+
         $run->update([
             'approval_status' => 'rejected',
-            'status' => in_array($run->status, ['planned', 'approved'], true) ? 'cancelled' : $run->status,
+            'status' => in_array($run->status, $cancelable, true) ? 'cancelled' : $run->status,
+            'completed_at' => in_array($run->status, $cancelable, true)
+                ? ($run->completed_at ?? now())
+                : $run->completed_at,
         ]);
     }
 

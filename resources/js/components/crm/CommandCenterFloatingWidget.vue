@@ -5,7 +5,7 @@ import { Link, usePage } from '@inertiajs/vue3';
 import { computed, ref, watch } from 'vue';
 import CommandCenterChatPanel from '@/components/crm/CommandCenterChatPanel.vue';
 import { Button } from '@/components/ui/button';
-import { useCommandCenterChat } from '@/composables/useCommandCenterChat';
+import { useCommandCenterChat, resetCommandCenterChatSession } from '@/composables/useCommandCenterChat';
 import { useCurrentUrl } from '@/composables/useCurrentUrl';
 import { useDraggableWidget } from '@/composables/useDraggableWidget';
 
@@ -23,6 +23,15 @@ const showWidget = computed(() => {
     const user = page.props.auth?.user as { current_organization_id?: number | null } | null | undefined;
 
     return Boolean(user?.current_organization_id) && !isCurrentOrParentUrl('/ai-employee');
+});
+
+const authOwnerKey = computed(() => {
+    const user = page.props.auth?.user as
+        | { id?: number; current_organization_id?: number | null }
+        | null
+        | undefined;
+
+    return `${user?.id ?? 0}:${user?.current_organization_id ?? 0}`;
 });
 
 function loadOpenState(): boolean {
@@ -80,6 +89,18 @@ watch(showWidget, (visible) => {
         chat.stopPendingSync();
     } else if (open.value) {
         void chat.bootstrap(true);
+        chat.startPendingSync();
+    }
+});
+
+// Account switch without full reload — wipe Soci so the next owner never sees the prior thread.
+watch(authOwnerKey, async (key, previous) => {
+    if (!previous || key === previous) {
+        return;
+    }
+    resetCommandCenterChatSession();
+    if (open.value && showWidget.value) {
+        await chat.bootstrap(true);
         chat.startPendingSync();
     }
 });

@@ -5,6 +5,7 @@ namespace App\V2\Ai\Services;
 use App\Models\AiConversation;
 use App\Models\User;
 use App\V2\Ai\Enums\AiToolPermission;
+use App\V2\Ai\Support\AudienceCommitment;
 use App\V2\Ai\Support\PlanLeadList;
 use Illuminate\Support\Str;
 
@@ -49,7 +50,6 @@ class WorkflowPrepareOutreachStepHandler
 
         $stateEval = is_array($plan['state_evaluation'] ?? null) ? $plan['state_evaluation'] : [];
         $segment = trim((string) ($plan['objective']['segment'] ?? $plan['constraints']['target_segment'] ?? 'prospects'));
-        $eligible = max(1, (int) ($arguments['eligible_count'] ?? $stateEval['intersection_eligible_count'] ?? 1));
         $setupOnly = (bool) ($arguments['setup_only'] ?? false)
             || (string) ($plan['required_outcome'] ?? '') === 'setup_only';
 
@@ -59,6 +59,19 @@ class WorkflowPrepareOutreachStepHandler
         );
         $conversation = $conversationId ? AiConversation::query()->find($conversationId) : null;
         $goal = $this->goalFromPlan($plan, $segment);
+
+        $runMeta = [
+            'discovery_lists' => $discoveryLists,
+            'cumulative_candidate_delta' => array_sum(array_map(
+                fn (array $row) => (int) ($row['total_leads'] ?? 0),
+                $discoveryLists,
+            )),
+            'workflow_run_id' => $workflowRunId,
+        ];
+        $eligible = max(1, AudienceCommitment::boundCount($plan, $runMeta, $stateEval));
+        if (isset($arguments['eligible_count']) && (int) $arguments['eligible_count'] > 0) {
+            $eligible = max(1, (int) $arguments['eligible_count']);
+        }
 
         if (count($discoveryLists) >= 2) {
             $staged = $this->multiChannelStaging->stage(
@@ -100,28 +113,59 @@ class WorkflowPrepareOutreachStepHandler
         $listHash = trim((string) ($arguments['list_hash'] ?? ''));
         if (count($discoveryLists) === 1) {
             $list = $discoveryLists[0];
+            $provenance = AudienceCommitment::PROVENANCE_DISCOVERED_THIS_RUN;
         } elseif ($listHash !== '') {
             $list = [
                 'list_hash' => $listHash,
                 'list_src' => (string) ($arguments['list_src'] ?? 'sn'),
                 'list_name' => (string) ($arguments['list_name'] ?? $segment),
             ];
+            $provenance = AudienceCommitment::wantsExplicitReuse($plan)
+                ? AudienceCommitment::PROVENANCE_EXPLICIT_USER
+                : AudienceCommitment::PROVENANCE_DISCOVERED_THIS_RUN;
         } else {
-            $matched = $this->listMatch->matchForSegment($user->id, $segment !== '' ? $segment : null, 1);
+            // Token/name match only — never size-only archive grab.
+            $matched = $this->listMatch->matchForSegment(
+                $user->id,
+                $segment !== '' ? $segment : null,
+                1,
+                allowSizeFallback: false,
+            );
             $list = $matched[0] ?? null;
-        }
-        if ($list === null) {
-            throw new \RuntimeException('No prospect list available to stage outreach.');
+
+            if ($list === null) {
+                throw new \RuntimeException(
+                    AudienceCommitment::requiresDiscoverThisRun($plan)
+                        ? 'No prospect list from this run to stage outreach. Discover prospects first.'
+                        : 'No matching prospect list available to stage outreach.'
+                );
+            }
+
+            // Quantified discover-this-run must not silently bind an old list unless this
+            // run already discovered into it (handled above via discovery_lists / list_hash).
+            if (AudienceCommitment::requiresDiscoverThisRun($plan) && $discoveryLists === []) {
+                throw new \RuntimeException('No prospect list from this run to stage outreach. Discover prospects first.');
+            }
+
+            $provenance = AudienceCommitment::PROVENANCE_REUSE_APPROVED;
         }
 
         $channel = $this->resolveOutreachChannel($plan, $list, $discoveryLists);
         $channelIntent = app(PlanChannelIntentService::class);
         $src = trim((string) ($list['list_src'] ?? $channelIntent->defaultListSrc($channel)));
         $hash = trim((string) ($list['list_hash'] ?? ''));
-        if ($hash === '' || $this->audienceResolver->liveLeadCount($user, $src, $hash) < 1) {
+        $liveCount = $this->audienceResolver->liveLeadCount($user, $src, $hash);
+        if ($hash === '' || $liveCount < 1) {
             throw new \RuntimeException('No people on that list yet. Find prospects first, then create the campaign.');
         }
         $list['list_src'] = $src;
+        $requested = AudienceCommitment::requestedCount($plan);
+        $eligible = min($eligible, $liveCount);
+        if ($requested > 0) {
+            $eligible = min($eligible, $requested);
+        }
+        $eligible = max(1, $eligible);
+        $commitment = AudienceCommitment::build($plan, $runMeta, $list, $eligible, $provenance);
         $label = \App\V2\Outreach\OutreachChannelRegistry::channelLabel($channel);
         $theme = Str::limit(trim(preg_replace('/\s+/', ' ', $segment) ?: 'Conversation-first'), 36, '');
         $campaignName = $theme.' · '.$label.' ('.$eligible.')';
@@ -135,6 +179,7 @@ class WorkflowPrepareOutreachStepHandler
             'audience' => (string) ($list['list_name'] ?? $segment),
             'icp_notes' => $goal,
             'target_count' => $eligible,
+            'audience_commitment' => $commitment,
             'preferred_channels' => $label,
             'channels' => $label,
             'primary_channel' => $channel,
@@ -187,6 +232,7 @@ class WorkflowPrepareOutreachStepHandler
             'list_hash' => $list['list_hash'],
             'list_name' => $list['list_name'] ?? null,
             'eligible_count' => $eligible,
+            'audience_commitment' => $commitment,
             'campaign_name' => $campaignName,
         ];
     }

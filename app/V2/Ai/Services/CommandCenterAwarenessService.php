@@ -27,6 +27,10 @@ class CommandCenterAwarenessService
      */
     public function snapshot(User $user, int $organizationId): array
     {
+        // Clean slate: if no outreach campaigns remain, kill orphaned waiting workflows
+        // so Soci stops reporting stuck send_now backgrounds (#6/#7/#10 class).
+        app(WorkflowLifecycleService::class)->cancelOrphanedStagingWhenNoCampaigns($user, $organizationId);
+
         $attention = $this->attention->forUser($user, $organizationId, 8);
         $items = [];
         foreach ($attention['items'] ?? [] as $row) {

@@ -3,6 +3,7 @@
 namespace App\V2\Ai\Services;
 
 use App\V2\Ai\Support\WorkflowStepTypes;
+use App\V2\Ai\Support\AudienceCommitment;
 
 /**
  * Decides the next workflow step from turn plan + current state evaluation.
@@ -92,10 +93,7 @@ class WorkflowPlanBuilderService
         $awaitingApproval = (bool) ($runMeta['awaiting_approval'] ?? false);
 
         if (! $prepared) {
-            $eligible = max(
-                (int) ($stateEval['intersection_eligible_count'] ?? 0),
-                $this->discoveredProspectCount($runMeta),
-            );
+            $eligible = max(1, AudienceCommitment::boundCount($plan, $runMeta, $stateEval));
 
             return [
                 'step_key' => WorkflowStepTypes::PREPARE_OUTREACH,
@@ -115,6 +113,8 @@ class WorkflowPlanBuilderService
         }
 
         if ($outcome === 'send_now' && ! $executed && ! $awaitingApproval) {
+            $committed = (int) (($runMeta['audience_commitment']['bound_count'] ?? 0) ?: AudienceCommitment::boundCount($plan, $runMeta, $stateEval));
+
             return [
                 'step_key' => WorkflowStepTypes::AWAITING_APPROVAL,
                 'sequence' => 95,
@@ -122,7 +122,7 @@ class WorkflowPlanBuilderService
                 'step_type' => WorkflowStepTypes::AWAITING_APPROVAL,
                 'arguments' => [
                     'approval_id' => (int) ($runMeta['approval_id'] ?? 0),
-                    'eligible_count' => $stateEval['intersection_eligible_count'] ?? 0,
+                    'eligible_count' => max(0, $committed),
                 ],
                 'approval_required' => true,
             ];

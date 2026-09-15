@@ -126,7 +126,10 @@ class ActionApprovalService
             'decided_by' => $decider->id,
         ]);
 
-        return $approval->refresh();
+        $fresh = $approval->refresh();
+        app(WorkflowLifecycleService::class)->cancelForApproval($fresh, $decider);
+
+        return $fresh->fresh() ?? $fresh;
     }
 
     public function findPendingForUser(User $user, int $organizationId, int $id): ?AiActionApproval

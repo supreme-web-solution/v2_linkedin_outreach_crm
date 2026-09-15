@@ -100,7 +100,26 @@ class TurnPlanBuilderService
             $plan['list_name'] = $existingConstraints['list_name'];
         }
 
-        if (! isset($plan['execution_preferences'])) {
+        // Quantified find/send without a named list must discover this run.
+        // Workspace "reuse_first" must not silently bind archive lists (1→32 leakage).
+        if (\App\V2\Ai\Support\AudienceCommitment::shouldForceDiscoverThisRun($plan)) {
+            $plan['constraints'] = array_merge(
+                is_array($plan['constraints'] ?? null) ? $plan['constraints'] : [],
+                [
+                    'new_only' => true,
+                    'reuse_first' => false,
+                    'data_preference' => 'discover_new',
+                    'new_vs_existing_preference' => 'new_only',
+                ],
+            );
+            $plan['execution_preferences'] = array_merge(
+                is_array($plan['execution_preferences'] ?? null) ? $plan['execution_preferences'] : [],
+                [
+                    'approval_required' => in_array((string) ($plan['required_outcome'] ?? ''), ['send_now', 'delete_now', 'execute_now'], true),
+                    'source' => 'discover_new',
+                ],
+            );
+        } elseif (! isset($plan['execution_preferences'])) {
             $plan['execution_preferences'] = [
                 'approval_required' => in_array((string) ($plan['required_outcome'] ?? ''), ['send_now', 'delete_now', 'execute_now'], true),
                 'source' => $workspace['new_vs_existing_preference'] ?? 'reuse_first',

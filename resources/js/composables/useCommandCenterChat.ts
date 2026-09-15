@@ -92,9 +92,12 @@ function maxMessageId(messages: CommandCenterChatMessage[]): number {
 }
 
 // Module-level singleton so Inertia navigations do not reset mid-flight polls.
+// MUST reset when auth user / org / conversation changes — Soci is per-person.
 const chat = ref<CommandCenterChatMessage[]>([]);
 const draft = ref('');
 const conversationId = ref<number | null>(null);
+const boundUserId = ref<number | null>(null);
+const boundOrganizationId = ref<number | null>(null);
 const settings = ref<CommandCenterSettings>({
     enabled: true,
     kill_switch: false,
@@ -122,6 +125,91 @@ let pollInFlight = false;
 let pendingSyncTimer: ReturnType<typeof setInterval> | null = null;
 let pendingSyncInFlight = false;
 let pendingSyncSubscribers = 0;
+
+/**
+ * Hard-clear the shared Command Center session (logout / account switch).
+ * Soci is one employee per user — never leak another account's thread.
+ */
+export function resetCommandCenterChatSession(): void {
+    if (pollTimer !== null) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+    }
+    if (pendingSyncTimer !== null) {
+        clearInterval(pendingSyncTimer);
+        pendingSyncTimer = null;
+    }
+    pollAfterId = 0;
+    pollDeadline = 0;
+    pollInFlight = false;
+    pendingSyncInFlight = false;
+    awaitingReply.value = false;
+    processingLabel.value = DEFAULT_PROCESSING_LABEL;
+    chat.value = [];
+    draft.value = '';
+    conversationId.value = null;
+    boundUserId.value = null;
+    boundOrganizationId.value = null;
+    pendingApprovals.value = [];
+    pendingApprovalsCount.value = 0;
+    hasOlderMessages.value = false;
+    loadingOlder.value = false;
+    bootstrapped.value = false;
+    bootstrapping.value = false;
+    sending.value = false;
+    decidingApprovalId.value = null;
+    clearingChat.value = false;
+}
+
+function welcomeMessage(name?: string): CommandCenterChatMessage {
+    return {
+        role: 'assistant',
+        content: `Hi — I'm ${name ?? settings.value.employee_name}, your SociFusion Command Center.\nTell me what you want to accomplish (same thread as WhatsApp once linked).`,
+    };
+}
+
+/**
+ * Bind this singleton to the authenticated owner. Returns true when the
+ * session was wiped because the owner/conversation changed.
+ */
+function bindOwner(opts: {
+    userId?: number | null;
+    organizationId?: number | null;
+    conversationId?: number | null;
+}): boolean {
+    const nextUser = opts.userId ?? null;
+    const nextOrg = opts.organizationId ?? null;
+    const nextConversation = opts.conversationId ?? null;
+
+    const ownerChanged =
+        (boundUserId.value !== null && nextUser !== null && boundUserId.value !== nextUser)
+        || (boundOrganizationId.value !== null && nextOrg !== null && boundOrganizationId.value !== nextOrg);
+
+    const conversationChanged =
+        conversationId.value !== null
+        && nextConversation !== null
+        && conversationId.value !== nextConversation;
+
+    if (ownerChanged || conversationChanged) {
+        resetCommandCenterChatSession();
+        if (nextUser !== null) {
+            boundUserId.value = nextUser;
+        }
+        if (nextOrg !== null) {
+            boundOrganizationId.value = nextOrg;
+        }
+        return true;
+    }
+
+    if (nextUser !== null) {
+        boundUserId.value = nextUser;
+    }
+    if (nextOrg !== null) {
+        boundOrganizationId.value = nextOrg;
+    }
+
+    return false;
+}
 
 function resetProcessingLabel(): void {
     processingLabel.value = DEFAULT_PROCESSING_LABEL;
@@ -387,6 +475,12 @@ async function bootstrap(force = false) {
         const data = await res.json();
         if (!res.ok) return;
 
+        const wiped = bindOwner({
+            userId: data.owner_user_id ?? null,
+            organizationId: data.owner_organization_id ?? null,
+            conversationId: data.conversation_id ?? null,
+        });
+
         conversationId.value = data.conversation_id ?? null;
         settings.value = {
             enabled: Boolean(data.settings?.enabled),
@@ -401,15 +495,8 @@ async function bootstrap(force = false) {
         hasOlderMessages.value = Boolean(data.has_older_messages);
 
         const messages = Array.isArray(data.messages) ? data.messages : [];
-        if (!awaitingReply.value) {
-            chat.value = messages.length
-                ? [...messages]
-                : [
-                      {
-                          role: 'assistant',
-                          content: `Hi — I'm ${settings.value.employee_name}, your SociFusion Command Center.\nTell me what you want to accomplish (same thread as WhatsApp once linked).`,
-                      },
-                  ];
+        if (wiped || !awaitingReply.value) {
+            chat.value = messages.length ? [...messages] : [welcomeMessage()];
         } else if (messages.length) {
             // Keep typing state; still merge any newer server rows (e.g. the reply).
             chat.value = mergeNewerMessages(chat.value, messages);
@@ -429,7 +516,8 @@ async function bootstrap(force = false) {
 
 /**
  * Hydrate from full Command Center Inertia props (shared with widget singleton).
- * Never clobber a live thread that already has newer local/server messages.
+ * Same conversation: never clobber a live mid-flight poll.
+ * Different user / org / conversation: hard replace — Soci is per account.
  */
 function hydrateFromPage(payload: {
     conversation_id: number;
@@ -438,28 +526,32 @@ function hydrateFromPage(payload: {
     pending_approvals?: ApprovalLite[];
     pending_turn?: { after_message_id?: number; processing?: { label?: string } } | null;
     settings?: Partial<CommandCenterSettings> & { autonomy_level?: number };
+    owner_user_id?: number | null;
+    owner_organization_id?: number | null;
 }) {
+    const wiped = bindOwner({
+        userId: payload.owner_user_id,
+        organizationId: payload.owner_organization_id,
+        conversationId: payload.conversation_id,
+    });
+
     conversationId.value = payload.conversation_id;
 
     const incoming = Array.isArray(payload.messages) ? payload.messages : [];
     const localMax = maxMessageId(chat.value);
     const incomingMax = maxMessageId(incoming);
 
-    if (awaitingReply.value) {
-        if (incoming.length) {
-            chat.value = mergeNewerMessages(chat.value, incoming);
+    if (wiped || !awaitingReply.value) {
+        if (wiped || incomingMax >= localMax || chat.value.length === 0) {
+            chat.value = incoming.length
+                ? [...incoming]
+                : [welcomeMessage(payload.settings?.employee_name)];
+        } else if (incoming.length) {
+            // Same owner, same conversation, local has newer optimistic rows — keep them.
+            chat.value = mergeNewerMessages(incoming, chat.value);
         }
-    } else if (incomingMax >= localMax) {
-        chat.value = incoming.length
-            ? [...incoming]
-            : [
-                  {
-                      role: 'assistant',
-                      content: `Hi — I'm ${payload.settings?.employee_name ?? settings.value.employee_name}, your SociFusion Command Center.\nTell me what you want to accomplish (same thread as WhatsApp once linked).`,
-                  },
-              ];
     } else if (incoming.length) {
-        chat.value = mergeNewerMessages(incoming, chat.value);
+        chat.value = mergeNewerMessages(chat.value, incoming);
     }
 
     hasOlderMessages.value = Boolean(payload.has_older_messages);

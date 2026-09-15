@@ -756,6 +756,9 @@ class DeleteCampaignCommandCenterService
             $userId,
         );
 
+        app(WorkflowLifecycleService::class)->cancelForOutreachCampaign($user, $organizationId, $campaignId);
+        app(WorkflowLifecycleService::class)->cancelOrphanedStagingWhenNoCampaigns($user, $organizationId);
+
         return [
             'message' => "Deleted outreach campaign #{$campaignId}: {$name}.",
             'campaign_id' => $campaignId,
