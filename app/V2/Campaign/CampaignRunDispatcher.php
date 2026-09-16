@@ -85,24 +85,39 @@ class CampaignRunDispatcher
         ]);
 
         $queued = 0;
+        $staggerSeconds = max(5, (int) config('services.unipile_pacing.campaign_lead_stagger_seconds', 60));
 
         foreach ($leads as $index => $lead) {
-            V2CampaignLeadProgress::query()->firstOrCreate(
+            $delaySeconds = $index * $staggerSeconds;
+            $runAt = now()->addSeconds($delaySeconds);
+
+            $progress = V2CampaignLeadProgress::query()->firstOrCreate(
                 ['campaign_id' => $campaign->id, 'campaign_lead_id' => $lead->id],
                 [
                     'current_node_key' => 0,
                     'next_node_key' => 1,
                     'run_status' => 0,
+                    'next_run_at' => $runAt,
                 ]
             );
 
+            // DB wake time survives horizon:terminate; Redis delay is best-effort only.
+            if ($progress->next_run_at === null) {
+                $progress->forceFill(['next_run_at' => $runAt])->save();
+            } elseif ($progress->next_run_at->isFuture()) {
+                $runAt = $progress->next_run_at;
+            } else {
+                $progress->forceFill(['next_run_at' => $runAt])->save();
+            }
+
             ProcessCampaignLeadJob::dispatch($campaign->id, $lead->id, $run->id)
-                ->delay(now()->addSeconds($index * max(5, (int) config('services.unipile_pacing.campaign_lead_stagger_seconds', 60))));
+                ->delay($runAt);
 
             Log::debug('[Campaign] Queued ProcessCampaignLeadJob', [
                 'campaign_id' => $campaign->id,
                 'lead_id' => $lead->id,
-                'delay_seconds' => $index * max(5, (int) config('services.unipile_pacing.campaign_lead_stagger_seconds', 60)),
+                'delay_seconds' => $delaySeconds,
+                'next_run_at' => $runAt->toIso8601String(),
             ]);
 
             $queued++;

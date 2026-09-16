@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\V2\Campaign\CampaignConcurrencyLimiter;
 use App\V2\Outreach\OutreachConcurrencyLimiter;
 use App\V2\Services\OpsAlertService;
+use App\V2\Support\QueueRefillFromDatabaseService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -13,12 +14,14 @@ use Illuminate\Support\Facades\Schema;
 class RecoverQueueCommand extends Command
 {
     protected $signature = 'queue:recover
-        {--release-stale : Release jobs stuck in reserved state}
+        {--release-stale : Release jobs stuck in reserved state (database queue only)}
         {--retry-failed : Retry recent failed jobs}
+        {--refill : Refill Redis from durable MySQL schedules (default on for redis queues)}
+        {--no-refill : Skip database→Redis refill}
         {--minutes= : Minutes before a reserved job is considered stale (defaults to queue retry_after)}
         {--failed-limit=25 : Maximum failed jobs to retry in one run}';
 
-    protected $description = 'Recover queue health: release stale reserved jobs and optionally retry failed jobs';
+    protected $description = 'Recover queue health: free leases, optionally release stale DB jobs, and refill Redis from MySQL';
 
     public function handle(): int
     {
@@ -28,17 +31,18 @@ class RecoverQueueCommand extends Command
             return self::SUCCESS;
         }
 
-        if (! Schema::hasTable('jobs')) {
-            $this->warn('Jobs table not found. Run migrations first.');
+        $usesDatabaseJobs = Schema::hasTable('jobs') && config('queue.default') === 'database';
 
-            return self::FAILURE;
+        if ($usesDatabaseJobs) {
+            $this->printQueueStats();
+        } else {
+            $this->line('Queue driver: '.(string) config('queue.default').' (Redis/Horizon — durable refill uses MySQL schedules).');
         }
 
-        $this->printQueueStats();
         $this->warnAboutUnsafeProductionStack();
 
         $released = 0;
-        if ($this->option('release-stale') || ! $this->option('retry-failed')) {
+        if ($usesDatabaseJobs && ($this->option('release-stale') || ! $this->option('retry-failed'))) {
             $released = $this->releaseStaleReservedJobs();
             if ($released > 0) {
                 $this->info("Released {$released} stale reserved job(s) back to the queue.");
@@ -62,8 +66,26 @@ class RecoverQueueCommand extends Command
             $this->info("Freed {$inflightFreed} expired in-flight concurrency lease(s).");
         }
 
-        $this->newLine();
-        $this->printQueueStats();
+        $shouldRefill = ! $this->option('no-refill')
+            && ($this->option('refill') || config('queue.default') === 'redis' || ! $usesDatabaseJobs);
+
+        if ($shouldRefill) {
+            $summary = app(QueueRefillFromDatabaseService::class)->refill(100, false);
+            $this->info(sprintf(
+                'Refilled from DB — outreach:%d campaigns:%d posts:%d workflows:%d preparing:%d/%d',
+                $summary['outreach_leads'],
+                $summary['campaign_leads'],
+                $summary['content_posts'],
+                $summary['workflows'],
+                $summary['preparing_outreach'],
+                $summary['preparing_campaigns'],
+            ));
+        }
+
+        if ($usesDatabaseJobs) {
+            $this->newLine();
+            $this->printQueueStats();
+        }
 
         $failed = Schema::hasTable('failed_jobs')
             ? (int) DB::table('failed_jobs')->count()
@@ -84,8 +106,8 @@ class RecoverQueueCommand extends Command
             );
         }
 
-        if ($released === 0 && $retried === 0 && ! $this->option('retry-failed')) {
-            $this->comment('Tip: run with --retry-failed to re-queue recent failures.');
+        if ($released === 0 && $retried === 0 && ! $this->option('retry-failed') && ! $shouldRefill) {
+            $this->comment('Tip: run with --retry-failed or queue:refill-from-db after a Redis wipe.');
         }
 
         return self::SUCCESS;
@@ -93,6 +115,10 @@ class RecoverQueueCommand extends Command
 
     private function printQueueStats(): void
     {
+        if (! Schema::hasTable('jobs')) {
+            return;
+        }
+
         $pending = (int) DB::table('jobs')->whereNull('reserved_at')->count();
         $reserved = (int) DB::table('jobs')->whereNotNull('reserved_at')->count();
         $failed = Schema::hasTable('failed_jobs')
@@ -111,6 +137,10 @@ class RecoverQueueCommand extends Command
 
     private function releaseStaleReservedJobs(): int
     {
+        if (! Schema::hasTable('jobs')) {
+            return 0;
+        }
+
         $retryAfter = (int) ($this->option('minutes') ?: config('queue.connections.database.retry_after', 90));
         $cutoff = now()->subSeconds($retryAfter)->getTimestamp();
 

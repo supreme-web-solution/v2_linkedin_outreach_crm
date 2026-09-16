@@ -19,13 +19,13 @@ Artisan::command('calls:dispatch-due', function (CallOrchestrationService $orche
 Schedule::command('calls:dispatch-due')->everyMinute();
 
 Schedule::command('campaigns:dispatch-due')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->everyMinute()
+    ->withoutOverlapping(5)
     ->runInBackground();
 
 Schedule::command('outreach:dispatch-due')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->everyMinute()
+    ->withoutOverlapping(5)
     ->runInBackground();
 
 Schedule::command('outreach:enrich-email-waves')
@@ -40,12 +40,18 @@ Schedule::command('outreach:enrich-email-waves')
 
 Schedule::command('queue:recover --release-stale')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(5)
+    ->runInBackground();
+
+// After horizon:terminate / Redis flush: re-push durable work (next_run_at, scheduled posts, workflows).
+Schedule::command('queue:refill-from-db')
+    ->everyMinute()
+    ->withoutOverlapping(5)
     ->runInBackground();
 
 Schedule::command('queue:monitor-depth')
     ->everyFiveMinutes()
-    ->withoutOverlapping()
+    ->withoutOverlapping(5)
     ->runInBackground();
 
 Schedule::command('horizon:snapshot')->everyFiveMinutes();

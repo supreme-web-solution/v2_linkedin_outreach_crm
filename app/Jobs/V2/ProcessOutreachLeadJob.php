@@ -107,6 +107,9 @@ class ProcessOutreachLeadJob implements ShouldQueue
         $leaseId = $limiter->acquire($userId);
         if ($leaseId === null) {
             $delaySeconds = random_int(20, 40);
+            $runAt = now()->addSeconds($delaySeconds);
+            // Persist so a queue wipe during pacing cannot leave the lead with no wake time.
+            $progress->forceFill(['next_run_at' => $runAt])->save();
             if (Cache::add('outreach:concurrency-notice:'.$campaign->id, 1, now()->addMinutes(30))) {
                 $max = $limiter->maxInFlight();
                 $logger->log(
@@ -120,7 +123,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
             }
 
             self::dispatch($this->outreachCampaignId, $this->outreachLeadId, $this->outreachRunId)
-                ->delay(now()->addSeconds($delaySeconds));
+                ->delay($runAt);
 
             return;
         }

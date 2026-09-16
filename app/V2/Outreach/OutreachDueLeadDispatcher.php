@@ -13,6 +13,9 @@ class OutreachDueLeadDispatcher
      * Re-queue outreach leads whose wait window elapsed, recover orphaned progress rows,
      * and periodically re-check leads stuck on Has replied? / Invite accepted?.
      *
+     * Progress.next_run_at is the durable schedule (survives horizon:terminate / Redis loss).
+     * Redis delayed jobs are best-effort acceleration only.
+     *
      * @return array{dispatched: int, skipped_throttled: int, force: bool}
      */
     public function dispatchDue(int $limit = 100, bool $force = false): array
@@ -35,7 +38,11 @@ class OutreachDueLeadDispatcher
             ->get(['id', 'outreach_campaign_id', 'outreach_lead_id', 'next_run_at']);
 
         foreach ($due as $progress) {
-            if ($this->dispatchOne($progress, $this->delayForProgress($progress, $dispatched, $pacing, $staggerSeconds), $force)) {
+            $delaySeconds = $this->delayForProgress($progress, $dispatched, $pacing, $staggerSeconds);
+            $runAt = now()->addSeconds($delaySeconds);
+            // Re-stamp wake time so a Redis wipe mid-recovery still leaves a due row in MySQL.
+            $progress->forceFill(['next_run_at' => $runAt])->save();
+            if ($this->dispatchOne($progress, $delaySeconds, $force)) {
                 $dispatched++;
             }
         }
@@ -54,7 +61,10 @@ class OutreachDueLeadDispatcher
                 ->get(['id', 'outreach_campaign_id', 'outreach_lead_id', 'next_run_at']);
 
             foreach ($orphaned as $progress) {
-                if ($this->dispatchOne($progress, $this->delayForProgress($progress, $dispatched, $pacing, $staggerSeconds), $force)) {
+                $delaySeconds = $this->delayForProgress($progress, $dispatched, $pacing, $staggerSeconds);
+                $runAt = now()->addSeconds($delaySeconds);
+                $progress->forceFill(['next_run_at' => $runAt])->save();
+                if ($this->dispatchOne($progress, $delaySeconds, $force)) {
                     $dispatched++;
                 }
             }
@@ -64,6 +74,7 @@ class OutreachDueLeadDispatcher
 
         if ($remaining > 0) {
             // Condition waits (invite accepted / has replied): poll even when next_run_at is still future if --force.
+            // Do not overwrite a future next_run_at here — that schedule is the durable wait window.
             $waiting = V2OutreachLeadProgress::query()
                 ->whereNull('acceptance_status')
                 ->where('run_status', '>=', 1)

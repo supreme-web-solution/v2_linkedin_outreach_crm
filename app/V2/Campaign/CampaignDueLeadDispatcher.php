@@ -33,14 +33,42 @@ class CampaignDueLeadDispatcher
             ->get(['id', 'campaign_id', 'campaign_lead_id', 'next_run_at']);
 
         foreach ($due as $progress) {
-            if ($this->dispatchOne($progress, $dispatched * $staggerSeconds, $force)) {
+            $delaySeconds = $dispatched * $staggerSeconds;
+            $runAt = now()->addSeconds($delaySeconds);
+            $progress->forceFill(['next_run_at' => $runAt])->save();
+            if ($this->dispatchOne($progress, $delaySeconds, $force)) {
                 $dispatched++;
             }
         }
 
         $remaining = $limit - $dispatched;
         if ($remaining > 0) {
+            // Stranded after Redis wipe: running campaign, null wake time, not finished.
+            $orphaned = V2CampaignLeadProgress::query()
+                ->whereNull('next_run_at')
+                ->where('run_status', '<', 4)
+                ->where('next_node_key', '>', 0)
+                ->whereHas('campaign', fn ($q) => $q->whereIn('status', ['active', 'running']))
+                ->whereHas('campaignLead', fn ($q) => $q->whereIn('status', ['pending', 'running']))
+                ->orderBy('updated_at')
+                ->limit($remaining)
+                ->get(['id', 'campaign_id', 'campaign_lead_id', 'next_run_at']);
+
+            foreach ($orphaned as $progress) {
+                $delaySeconds = $dispatched * $staggerSeconds;
+                $runAt = now()->addSeconds($delaySeconds);
+                $progress->forceFill(['next_run_at' => $runAt])->save();
+                if ($this->dispatchOne($progress, $delaySeconds, $force)) {
+                    $dispatched++;
+                }
+            }
+
+            $remaining = $limit - $dispatched;
+        }
+
+        if ($remaining > 0) {
             // Invite-accepted waits: include future next_run_at so --force can re-poll now.
+            // Do not overwrite a future next_run_at — that schedule is the durable wait window.
             $waiting = V2CampaignLeadProgress::query()
                 ->whereNull('acceptance_status')
                 ->where('run_status', '>=', 1)

@@ -125,6 +125,8 @@ class ProcessCampaignLeadJob implements ShouldQueue
         $leaseId = $limiter->acquire($userId);
         if ($leaseId === null) {
             $delaySeconds = random_int(20, 40);
+            $runAt = now()->addSeconds($delaySeconds);
+            $progress->forceFill(['next_run_at' => $runAt])->save();
             if (Cache::add('campaign:concurrency-notice:'.$campaign->id, 1, now()->addMinutes(30))) {
                 $max = $limiter->maxInFlight();
                 $logger->log(
@@ -138,7 +140,7 @@ class ProcessCampaignLeadJob implements ShouldQueue
             }
 
             self::dispatch($this->campaignId, $this->campaignLeadId, $this->campaignRunId)
-                ->delay(now()->addSeconds($delaySeconds));
+                ->delay($runAt);
 
             return;
         }

@@ -159,8 +159,20 @@ class PersonalizeCampaignFirstTouchJob implements ShouldQueue
             ->limit(50)
             ->get(['id']);
 
-        foreach ($leads as $lead) {
-            ProcessOutreachLeadJob::dispatch($campaign->id, $lead->id);
+        $stagger = max(5, (int) config('services.unipile_pacing.outreach_lead_stagger_seconds', 60));
+
+        foreach ($leads as $index => $lead) {
+            $runAt = now()->addSeconds($index * $stagger);
+            \App\Models\V2OutreachLeadProgress::query()
+                ->where('outreach_campaign_id', $campaign->id)
+                ->where('outreach_lead_id', $lead->id)
+                ->where(function ($q) {
+                    $q->whereNull('next_run_at')->orWhere('next_run_at', '<=', now());
+                })
+                ->update(['next_run_at' => $runAt]);
+
+            ProcessOutreachLeadJob::dispatch($campaign->id, $lead->id)
+                ->delay($runAt);
         }
     }
 }
