@@ -150,14 +150,45 @@ class CampaignFirstTouchPersonalizationService
     }
 
     /**
-     * Write the first DM from research immediately before send.
-     * Returns null when there is not enough evidence yet — caller should defer, not send a generic template.
+     * True when this campaign/node must not send generic template copy.
+     * Campaign meta covers Soci one-shots; node config covers sequence templates.
+     *
+     * @param  array<string, mixed>  $node
      */
-    public function messageForFirstSend(V2OutreachLead $lead, V2OutreachCampaign $campaign, string $templateText): ?string
+    public function requiresPersonalizationBeforeSend(V2OutreachCampaign $campaign, array $node = []): bool
     {
         $campaignMeta = is_array($campaign->meta) ? $campaign->meta : [];
-        $mustPersonalize = ! empty($campaignMeta['ai_personalize_first_touch'])
+
+        return ! empty($node['config']['personalize_before_send'])
+            || ! empty($campaignMeta['ai_personalize_first_touch'])
             || ! empty($campaignMeta['ai_plan']['personalize_before_send']);
+    }
+
+    /**
+     * Shared defer payload when research/draft is not ready yet (email, LinkedIn, WhatsApp, …).
+     *
+     * @return array{status:string,error_message:string,next_run_at:\Illuminate\Support\Carbon,payload:array{reason:string}}
+     */
+    public function deferForPersonalizationResult(string $errorMessage = 'Waiting to research this profile before the first message.'): array
+    {
+        return [
+            'status' => 'deferred',
+            'error_message' => $errorMessage,
+            'next_run_at' => now()->addMinutes(random_int(5, 15)),
+            'payload' => ['reason' => 'awaiting_personalization'],
+        ];
+    }
+
+    /**
+     * Write the first DM from research immediately before send.
+     * Returns null when there is not enough evidence yet — caller should defer, not send a generic template.
+     *
+     * @param  array<string, mixed>  $node
+     */
+    public function messageForFirstSend(V2OutreachLead $lead, V2OutreachCampaign $campaign, string $templateText, array $node = []): ?string
+    {
+        $campaignMeta = is_array($campaign->meta) ? $campaign->meta : [];
+        $mustPersonalize = $this->requiresPersonalizationBeforeSend($campaign, $node);
 
         $existing = trim((string) Arr::get($lead->meta ?? [], 'ai_personalized_draft.text', ''));
         if ($existing !== '') {
@@ -190,9 +221,7 @@ class CampaignFirstTouchPersonalizationService
     public function messageForFollowUpSend(V2OutreachLead $lead, V2OutreachCampaign $campaign, array $node, string $templateText): ?string
     {
         $campaignMeta = is_array($campaign->meta) ? $campaign->meta : [];
-        $enabled = ! empty($campaignMeta['ai_personalize_first_touch'])
-            || ! empty($campaignMeta['ai_plan']['personalize_before_send'])
-            || ! empty($node['config']['personalize_before_send'])
+        $enabled = $this->requiresPersonalizationBeforeSend($campaign, $node)
             || $this->isPlaceholderTemplate($templateText);
         if (! $enabled) {
             return trim($templateText) !== '' ? $templateText : null;

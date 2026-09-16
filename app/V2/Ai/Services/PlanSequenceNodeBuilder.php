@@ -158,6 +158,8 @@ class PlanSequenceNodeBuilder
                 'config' => [
                     'subject' => $subject,
                     'body' => $message,
+                    'personalize_before_send' => true,
+                    'placeholder' => 'Personalized first email after research. Not a shared template.',
                 ],
             ]];
         }
@@ -167,7 +169,11 @@ class PlanSequenceNodeBuilder
             'channel' => $channel,
             'action' => 'send_message',
             'label' => $channel === 'linkedin' ? 'Send Message' : Str::headline($channel).' Message',
-            'config' => ['message' => $message],
+            'config' => [
+                'message' => $message,
+                'personalize_before_send' => true,
+                'placeholder' => 'Personalized first message after research. Not a shared template.',
+            ],
         ]];
     }
 

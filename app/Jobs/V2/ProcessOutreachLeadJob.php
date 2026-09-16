@@ -319,6 +319,7 @@ class ProcessOutreachLeadJob implements ShouldQueue
 
             $deferMessage = match (true) {
                 str_contains($reason, 'handle_resolve') => "Resolving {$platform} contact for {$lead->full_name} — \"{$nodeLabel}\" retries ".$runAt->diffForHumans().'.',
+                str_contains($reason, 'awaiting_personalization') => "Still researching {$lead->full_name} before \"{$nodeLabel}\" — retries ".$runAt->diffForHumans().'.',
                 str_contains($reason, 'instagram_quiet') => "Instagram just connected — waiting before DMs so login does not look automated. \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
                 str_contains($reason, 'hourly_instagram') => "Instagram hourly pace — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
                 str_contains($reason, 'provider_outage') => "{$platform} provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',

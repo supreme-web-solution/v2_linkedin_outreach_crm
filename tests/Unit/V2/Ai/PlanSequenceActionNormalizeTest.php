@@ -189,6 +189,7 @@ class PlanSequenceActionNormalizeTest extends TestCase
         $this->assertSame('send_email', $resolved['node_model'][0]['action']);
         $this->assertSame('You are invited', $resolved['node_model'][0]['config']['subject']);
         $this->assertStringContainsString('webinar', $resolved['node_model'][0]['config']['body']);
+        $this->assertTrue((bool) ($resolved['node_model'][0]['config']['personalize_before_send'] ?? false));
     }
 
     public function test_one_shot_linkedin_greeting_is_single_dm(): void
@@ -207,6 +208,7 @@ class PlanSequenceActionNormalizeTest extends TestCase
         $this->assertCount(1, $actions);
         $this->assertSame('send_message', $actions[0]['action']);
         $this->assertSame('Hello Eleazar, good evening.', $actions[0]['config']['message']);
+        $this->assertTrue((bool) ($actions[0]['config']['personalize_before_send'] ?? false));
     }
 
     public function test_one_time_greeting_goal_never_uses_wait_template(): void

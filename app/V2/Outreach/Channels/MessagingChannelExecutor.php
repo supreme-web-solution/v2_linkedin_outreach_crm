@@ -80,16 +80,13 @@ class MessagingChannelExecutor implements ChannelExecutorInterface
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $message = $this->resolver->messageText($node, $firstName);
         $isFollowUp = (bool) preg_match('/follow[- ]?up|bump|check(ing)? in/i', (string) ($node['label'] ?? ''));
-        $personalize = ! empty($node['config']['personalize_before_send']);
         $personalizer = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class);
+        $mustPersonalize = $personalizer->requiresPersonalizationBeforeSend($campaign, $node);
         $prepared = $isFollowUp
             ? $personalizer->messageForFollowUpSend($lead, $campaign, $node, $message)
-            : $personalizer->messageForFirstSend($lead, $campaign, $message);
-        if ($prepared === null && $personalize) {
-            return [
-                'status' => 'deferred',
-                'error_message' => 'Waiting to research this profile before the first message.',
-            ];
+            : $personalizer->messageForFirstSend($lead, $campaign, $message, $node);
+        if ($prepared === null && $mustPersonalize) {
+            return $personalizer->deferForPersonalizationResult();
         }
         $message = $prepared ?? $message;
 

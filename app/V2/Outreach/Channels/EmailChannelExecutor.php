@@ -69,8 +69,19 @@ class EmailChannelExecutor implements ChannelExecutorInterface
 
         $firstName = $this->resolver->firstNameFromLead($lead->full_name);
         $content = $this->resolver->emailContent($node, $firstName);
-        $content['body'] = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class)
-            ->resolveMessageText($lead, $content['body'] ?: 'Hi there,');
+        $personalizer = app(\App\V2\Ai\Services\CampaignFirstTouchPersonalizationService::class);
+        $templateBody = $content['body'] ?: 'Hi there,';
+        $isFollowUp = (bool) preg_match('/follow[- ]?up|bump|check(ing)? in/i', (string) ($node['label'] ?? ''));
+        $mustPersonalize = $personalizer->requiresPersonalizationBeforeSend($campaign, $node);
+        $prepared = $isFollowUp
+            ? $personalizer->messageForFollowUpSend($lead, $campaign, $node, $templateBody)
+            : $personalizer->messageForFirstSend($lead, $campaign, $templateBody, $node);
+        if ($prepared === null && $mustPersonalize) {
+            return $personalizer->deferForPersonalizationResult(
+                'Waiting to research this profile before the first email.',
+            );
+        }
+        $content['body'] = $prepared ?? $templateBody;
 
         $owner = \App\Models\User::query()->find((int) $campaign->user_id);
         $content['subject'] = \App\V2\Ai\Support\RecipientFacingCopyGuard::prepareOutbound(

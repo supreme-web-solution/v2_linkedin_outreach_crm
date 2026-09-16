@@ -142,8 +142,13 @@ class SyncOutreachLeadsAndRunJob implements ShouldQueue
                 $fresh = $fresh->fresh() ?? $fresh;
             }
 
+            // Personalized Soci campaigns (email, LinkedIn, WhatsApp, …): draft first on
+            // `default`, then queue ProcessOutreachLeadJob. Parallel dispatch stranded sends
+            // when `outreach` lagged while personalize still logged success.
             if ($fresh && ! empty(($fresh->meta['ai_personalize_first_touch'] ?? false)) && ! $this->waitsForInviteAccept($fresh)) {
-                PersonalizeCampaignFirstTouchJob::dispatch($fresh->id, 40);
+                PersonalizeCampaignFirstTouchJob::dispatch($fresh->id, 40, $this->organizationId);
+
+                return;
             }
 
             $result = $dispatcher->dispatch($fresh, $this->organizationId);
