@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import {
-    Activity, AlertCircle, Bot, CheckCircle2, Clock, Copy, Inbox, Info, Layers, Loader2,
+    Activity, AlertCircle, Bot, CheckCircle2, ChevronDown, Clock, Copy, Inbox, Info, Layers, Loader2,
     Pause, Play, Pencil, Radio, Rocket, ScrollText, Sparkles, Trash2, Users, XCircle, Zap,
 } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -136,6 +136,7 @@ const duplicating = ref(false);
 const savingTemplate = ref(false);
 const togglingStatus = ref(false);
 const optimizing = ref(false);
+const sociPanelExpanded = ref(false);
 type LeadRow = {
     id: number;
     full_name: string | null;
@@ -186,6 +187,18 @@ const leadsInProgress = computed(() =>
 const latestActivityMessage = computed(() => activityEvents.value[0]?.message ?? null);
 const flashError = computed(() => (page.props.flash as { error?: string })?.error);
 const flashSuccess = computed(() => (page.props.flash as { success?: string })?.success);
+const sociSuggestionCount = computed(() => props.aiOptimization?.suggestions?.length ?? 0);
+const sociHighCount = computed(() =>
+    (props.aiOptimization?.suggestions ?? []).filter((s) => s.priority === 'high').length,
+);
+const showStatusStrip = computed(() =>
+    Boolean(flashSuccess.value || (isRunning.value && !isPreparing.value && props.concurrency)),
+);
+const pacingLabel = computed(() => {
+    if (!props.concurrency) return '';
+    const active = props.concurrency.in_flight > 0 ? ` · ${props.concurrency.in_flight} active` : '';
+    return `Safe pacing: up to ${props.concurrency.limit} at once${active}`;
+});
 
 type ChannelSettings = { ai_context: string; auto_reply_enabled: boolean; pause_on_reply: boolean };
 const localChannelSettings = ref<Record<string, ChannelSettings>>({});
@@ -427,11 +440,34 @@ const channelActionEntries = computed(() =>
 <template>
     <Head :title="campaign.name" />
 
-    <div class="flex max-w-5xl flex-col gap-5 p-4">
-        <div v-if="flashError" class="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-            <AlertCircle class="mt-0.5 h-4 w-4" /> {{ flashError }}
+    <div class="mx-auto grid max-w-7xl gap-5 p-4 xl:grid-cols-[minmax(0,1fr)_19rem] xl:items-start">
+        <div class="flex min-w-0 flex-col gap-4">
+        <div v-if="flashError" class="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+            <AlertCircle class="mt-0.5 h-3.5 w-3.5 shrink-0" /> {{ flashError }}
         </div>
-        <div v-if="flashSuccess" class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{{ flashSuccess }}</div>
+
+        <div
+            v-if="showStatusStrip"
+            class="flex flex-col gap-2 sm:flex-row sm:items-stretch"
+        >
+            <div
+                v-if="flashSuccess"
+                class="min-w-0 flex-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900"
+            >
+                <p class="line-clamp-2 leading-snug">{{ flashSuccess }}</p>
+            </div>
+            <div
+                v-if="isRunning && !isPreparing && concurrency"
+                class="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-sky-200/80 bg-sky-50/80 px-3 py-2 text-xs text-sky-900"
+                :title="'Others stay queued and start when a slot frees — protects WhatsApp, LinkedIn, etc.'"
+            >
+                <Info class="h-3.5 w-3.5 shrink-0 text-sky-600" />
+                <p class="min-w-0 truncate font-medium leading-snug">
+                    {{ pacingLabel }}
+                    <span class="font-normal text-sky-800/80"> — rest queue automatically</span>
+                </p>
+            </div>
+        </div>
 
         <div
             v-if="isPreparing"
@@ -442,21 +478,6 @@ const channelActionEntries = computed(() =>
                 <p class="font-medium">Preparing leads</p>
                 <p class="mt-0.5 text-amber-900/90">
                     Copying contacts from your lists in the background. The outreach run starts automatically when this finishes.
-                </p>
-            </div>
-        </div>
-
-        <div
-            v-if="isRunning && !isPreparing && concurrency"
-            class="flex items-start gap-3 rounded-xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-sm text-sky-900"
-        >
-            <Info class="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-            <div>
-                <p class="font-medium">Safe pacing</p>
-                <p class="mt-0.5 text-sky-800/90">
-                    Up to {{ concurrency.limit }} leads run at once
-                    <span v-if="concurrency.in_flight > 0"> ({{ concurrency.in_flight }} active now)</span>.
-                    The rest stay queued and start automatically when a slot frees — this protects your connected channels (WhatsApp, LinkedIn, etc.).
                 </p>
             </div>
         </div>
@@ -634,71 +655,6 @@ const channelActionEntries = computed(() =>
                 <p class="mt-1 text-2xl font-semibold tabular-nums">{{ stats.steps_completed }}</p>
                 <p v-if="stats.steps_failed" class="text-xs text-red-600">{{ stats.steps_failed }} failed</p>
             </div>
-        </div>
-
-        <div
-            class="rounded-xl border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900 dark:bg-violet-950/30"
-        >
-            <div class="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                    <div class="flex items-center gap-2 text-sm font-semibold text-violet-950 dark:text-violet-100">
-                        <Sparkles class="h-4 w-4" />
-                        Soci recommendations
-                    </div>
-                    <p v-if="aiOptimization?.summary" class="mt-1 text-xs text-violet-900/80 dark:text-violet-200/80">
-                        {{ aiOptimization.summary }}
-                    </p>
-                </div>
-                <div class="flex flex-wrap items-center gap-2">
-                    <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        class="h-8 text-xs"
-                        :disabled="optimizing"
-                        @click="runOptimize(false)"
-                    >
-                        <Loader2 v-if="optimizing" class="mr-1 h-3 w-3 animate-spin" />
-                        <Sparkles v-else class="mr-1 h-3 w-3" />
-                        Refresh analysis
-                    </Button>
-                    <Button
-                        v-if="aiOptimization?.can_apply_follow_ups"
-                        type="button"
-                        size="sm"
-                        class="h-8 bg-violet-600 text-xs text-white hover:bg-violet-700"
-                        :disabled="optimizing"
-                        @click="runOptimize(true)"
-                    >
-                        Apply wait changes
-                    </Button>
-                    <a
-                        v-if="aiOptimization?.command_center_url"
-                        :href="aiOptimization.command_center_url"
-                        class="text-xs text-violet-700 underline dark:text-violet-300"
-                    >
-                        Command Center
-                    </a>
-                </div>
-            </div>
-            <ul v-if="aiOptimization?.suggestions?.length" class="mt-3 space-y-2">
-                <li
-                    v-for="(item, idx) in aiOptimization.suggestions"
-                    :key="idx"
-                    class="rounded-lg border border-violet-200/80 bg-white/70 px-3 py-2 text-sm dark:border-violet-800 dark:bg-violet-950/40"
-                >
-                    <div class="flex items-center gap-2 font-medium capitalize text-violet-950 dark:text-violet-100">
-                        <span class="rounded-full bg-violet-200/80 px-2 py-0.5 text-[10px] uppercase dark:bg-violet-900">
-                            {{ item.priority }}
-                        </span>
-                        {{ item.title }}
-                    </div>
-                    <p class="mt-1 text-xs text-violet-900/80 dark:text-violet-200/80">{{ item.detail }}</p>
-                </li>
-            </ul>
-            <p v-else class="mt-3 text-xs text-violet-900/70 dark:text-violet-200/70">
-                No urgent changes right now. Tap Refresh analysis anytime, or Ask Soci in Command Center.
-            </p>
         </div>
 
         <div v-if="stats?.funnel?.length" class="rounded-xl border bg-card p-4">
@@ -1019,7 +975,88 @@ const channelActionEntries = computed(() =>
             </table>
             <ListPagination v-if="leads.data.length" :paginator="leads" label="leads" />
         </div>
+        </div>
 
+        <aside class="xl:sticky xl:top-4">
+            <div class="rounded-xl border border-violet-200 bg-violet-50/70 p-3 dark:border-violet-900 dark:bg-violet-950/40">
+                <button
+                    type="button"
+                    class="flex w-full items-center gap-2 text-left"
+                    @click="sociPanelExpanded = !sociPanelExpanded"
+                >
+                    <Sparkles class="h-4 w-4 shrink-0 text-violet-700 dark:text-violet-300" />
+                    <div class="min-w-0 flex-1">
+                        <p class="text-sm font-semibold text-violet-950 dark:text-violet-100">Soci tips</p>
+                        <p class="truncate text-[11px] text-violet-900/75 dark:text-violet-200/75">
+                            <template v-if="sociSuggestionCount > 0">
+                                {{ sociSuggestionCount }} tip{{ sociSuggestionCount === 1 ? '' : 's' }}
+                                <span v-if="sociHighCount"> · {{ sociHighCount }} high</span>
+                            </template>
+                            <template v-else>No urgent changes</template>
+                        </p>
+                    </div>
+                    <ChevronDown
+                        class="h-4 w-4 shrink-0 text-violet-700 transition-transform dark:text-violet-300"
+                        :class="sociPanelExpanded ? 'rotate-180' : ''"
+                    />
+                </button>
+
+                <div v-if="sociPanelExpanded" class="mt-3 space-y-3 border-t border-violet-200/80 pt-3 dark:border-violet-800">
+                    <p v-if="aiOptimization?.summary" class="text-[11px] leading-snug text-violet-900/80 dark:text-violet-200/80">
+                        {{ aiOptimization.summary }}
+                    </p>
+                    <div class="flex flex-wrap gap-1.5">
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            class="h-7 text-[11px]"
+                            :disabled="optimizing"
+                            @click="runOptimize(false)"
+                        >
+                            <Loader2 v-if="optimizing" class="mr-1 h-3 w-3 animate-spin" />
+                            <Sparkles v-else class="mr-1 h-3 w-3" />
+                            Refresh
+                        </Button>
+                        <Button
+                            v-if="aiOptimization?.can_apply_follow_ups"
+                            type="button"
+                            size="sm"
+                            class="h-7 bg-violet-600 text-[11px] text-white hover:bg-violet-700"
+                            :disabled="optimizing"
+                            @click="runOptimize(true)"
+                        >
+                            Shorten waits
+                        </Button>
+                        <a
+                            v-if="aiOptimization?.command_center_url"
+                            :href="aiOptimization.command_center_url"
+                            class="inline-flex h-7 items-center text-[11px] text-violet-700 underline dark:text-violet-300"
+                        >
+                            Command Center
+                        </a>
+                    </div>
+                    <ul v-if="aiOptimization?.suggestions?.length" class="space-y-2">
+                        <li
+                            v-for="(item, idx) in aiOptimization.suggestions"
+                            :key="idx"
+                            class="rounded-lg border border-violet-200/80 bg-white/80 px-2.5 py-2 dark:border-violet-800 dark:bg-violet-950/50"
+                        >
+                            <div class="flex items-center gap-1.5 text-xs font-medium capitalize text-violet-950 dark:text-violet-100">
+                                <span class="rounded-full bg-violet-200/80 px-1.5 py-0.5 text-[9px] uppercase dark:bg-violet-900">
+                                    {{ item.priority }}
+                                </span>
+                                {{ item.title }}
+                            </div>
+                            <p class="mt-1 text-[11px] leading-snug text-violet-900/80 dark:text-violet-200/80">{{ item.detail }}</p>
+                        </li>
+                    </ul>
+                    <p v-else class="text-[11px] text-violet-900/70 dark:text-violet-200/70">
+                        Expand after Refresh, or ask Soci in Command Center.
+                    </p>
+                </div>
+            </div>
+        </aside>
     </div>
 
     <Dialog v-model:open="leadLogOpen">
