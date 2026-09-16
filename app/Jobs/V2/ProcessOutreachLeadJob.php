@@ -320,26 +320,30 @@ class ProcessOutreachLeadJob implements ShouldQueue
             $channel = (string) ($result['payload']['channel'] ?? $node['channel'] ?? 'linkedin');
             $platform = app(\App\V2\Services\UnipileTemporaryLimitGuard::class)->platformLabel($channel);
 
-            $deferMessage = match (true) {
-                str_contains($reason, 'handle_resolve') => "Resolving {$platform} contact for {$lead->full_name} — \"{$nodeLabel}\" retries ".$runAt->diffForHumans().'.',
-                str_contains($reason, 'awaiting_personalization') => "Still researching {$lead->full_name} before \"{$nodeLabel}\" — retries ".$runAt->diffForHumans().'.',
-                str_contains($reason, 'instagram_quiet') => "Instagram just connected — waiting before DMs so login does not look automated. \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
-                str_contains($reason, 'hourly_instagram') => "Instagram hourly pace — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
-                str_contains($reason, 'provider_outage') => "{$platform} provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
-                $isEscalated => "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).',
-                $isTemp => "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
-                default => "Daily {$platform} limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
-            };
+            $suppressActivity = ! empty($result['payload']['suppress_activity']);
 
-            $logger->log(
-                $campaign->id,
-                $lead->id,
-                $run?->id,
-                $node,
-                'scheduled',
-                $deferMessage,
-                $result['payload'] ?? [],
-            );
+            if (! $suppressActivity) {
+                $deferMessage = match (true) {
+                    str_contains($reason, 'handle_resolve') => "Resolving {$platform} contact for {$lead->full_name} — \"{$nodeLabel}\" retries ".$runAt->diffForHumans().'.',
+                    str_contains($reason, 'awaiting_personalization') => "Still researching {$lead->full_name} before \"{$nodeLabel}\" — retries ".$runAt->diffForHumans().'.',
+                    str_contains($reason, 'instagram_quiet') => "Instagram just connected — waiting before DMs so login does not look automated. \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                    str_contains($reason, 'hourly_instagram') => "Instagram hourly pace — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                    str_contains($reason, 'provider_outage') => "{$platform} provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                    $isEscalated => "{$platform} is still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your account).',
+                    $isTemp => "{$platform} temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                    default => "Daily {$platform} limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                };
+
+                $logger->log(
+                    $campaign->id,
+                    $lead->id,
+                    $run?->id,
+                    $node,
+                    'scheduled',
+                    $deferMessage,
+                    $result['payload'] ?? [],
+                );
+            }
 
             $lead->update(['status' => 'pending']);
             // Same node retries later; keys are not advanced.

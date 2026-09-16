@@ -2,6 +2,7 @@
 
 namespace App\V2\Services;
 
+use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Cache;
 
@@ -11,9 +12,10 @@ use Illuminate\Support\Facades\Cache;
  * Counters are atomic cache increments, so concurrent queue workers cannot
  * race past a cap. A cap of 0 or less means unlimited.
  *
- * When a cap is hit, work pauses for daily_resume_after_hours (default ~1h),
- * then the window resets so deferred steps can continue. LinkedIn/Instagram
- * hard provider limits are still handled by UnipileTemporaryLimitGuard.
+ * Invite caps (invites / noted_invites) pause until the next rolling window
+ * (~daily_window_hours, typically tomorrow). Other Soci pacing caps pause
+ * for daily_resume_after_hours (default ~1h). LinkedIn/Instagram hard
+ * provider limits are still handled by UnipileTemporaryLimitGuard.
  */
 class UnipileDailyActionLimiter
 {
@@ -40,6 +42,11 @@ class UnipileDailyActionLimiter
         return trim((string) $message) !== ''
             ? self::ACTION_NOTED_INVITES
             : self::ACTION_INVITES;
+    }
+
+    public static function isInviteAction(string $action): bool
+    {
+        return in_array($action, [self::ACTION_INVITES, self::ACTION_NOTED_INVITES], true);
     }
 
     public function limitFor(string $action): int
@@ -90,7 +97,7 @@ class UnipileDailyActionLimiter
 
         if ($new > $limit) {
             Cache::decrement($key, $count);
-            $resume = $this->resumeAt();
+            $resume = $this->resumeAt($action);
             $this->putHold($userId, $action, $resume);
             app(OpsAlertService::class)->dailyLimitHit($userId, $action, $limit);
 
@@ -147,15 +154,54 @@ class UnipileDailyActionLimiter
 
     /**
      * When deferred work should resume after a Soci pacing cap.
-     * Default ~1 hour (not calendar midnight) — same for LinkedIn + Instagram.
+     * Invites wait for the next rolling window; other actions use ~1 hour.
      */
-    public function resumeAt(): CarbonInterface
+    public function resumeAt(?string $action = null): CarbonInterface
     {
+        if ($action !== null && self::isInviteAction($action)) {
+            return $this->nextWindowResumeAt();
+        }
+
         $hours = max(1, (int) config('services.unipile_pacing.daily_resume_after_hours', 1));
         $jitterMin = max(0, (int) config('services.unipile_pacing.daily_resume_jitter_min_minutes', 5));
         $jitterMax = max($jitterMin, (int) config('services.unipile_pacing.daily_resume_jitter_max_minutes', 20));
 
         return now()->addHours($hours)->addMinutes(random_int($jitterMin, $jitterMax));
+    }
+
+    /**
+     * Existing hold end, or a freshly computed resume time for this action.
+     */
+    public function resumeAtFor(int $userId, string $action): CarbonInterface
+    {
+        return $this->holdUntil($userId, $action) ?? $this->resumeAt($action);
+    }
+
+    public function isOnHold(int $userId, string $action): bool
+    {
+        $until = Cache::get($this->holdKey($userId, $action));
+        if ($until === null) {
+            return false;
+        }
+
+        return now()->getTimestamp() < (int) $until;
+    }
+
+    public function holdUntil(int $userId, string $action): ?CarbonInterface
+    {
+        $this->releaseHoldIfExpired($userId, $action);
+
+        $until = Cache::get($this->holdKey($userId, $action));
+        if ($until === null) {
+            return null;
+        }
+
+        $ts = (int) $until;
+        if (now()->getTimestamp() >= $ts) {
+            return null;
+        }
+
+        return Carbon::createFromTimestamp($ts);
     }
 
     /**
@@ -170,6 +216,24 @@ class UnipileDailyActionLimiter
             'used' => $this->used($userId, $action),
             'remaining' => $limit <= 0 ? -1 : $this->remaining($userId, $action, $limit),
         ];
+    }
+
+    private function nextWindowResumeAt(): CarbonInterface
+    {
+        $windowSeconds = max(3600, $this->windowHours() * 3600);
+        $nextStart = ((int) floor(now()->timestamp / $windowSeconds) + 1) * $windowSeconds;
+        $jitterMin = max(0, (int) config('services.unipile_pacing.daily_resume_jitter_min_minutes', 5));
+        $jitterMax = max($jitterMin, (int) config('services.unipile_pacing.daily_resume_jitter_max_minutes', 20));
+
+        $resume = Carbon::createFromTimestamp($nextStart)
+            ->addMinutes(random_int($jitterMin, $jitterMax));
+
+        // Never schedule in the past if the clock is near a bucket boundary.
+        if ($resume->lessThanOrEqualTo(now())) {
+            return now()->addMinutes(max(1, $jitterMin ?: 5));
+        }
+
+        return $resume;
     }
 
     private function windowHours(): int
@@ -197,16 +261,6 @@ class UnipileDailyActionLimiter
             $resumeAt->getTimestamp(),
             $resumeAt->copy()->addHour(),
         );
-    }
-
-    private function isOnHold(int $userId, string $action): bool
-    {
-        $until = Cache::get($this->holdKey($userId, $action));
-        if ($until === null) {
-            return false;
-        }
-
-        return now()->getTimestamp() < (int) $until;
     }
 
     private function releaseHoldIfExpired(int $userId, string $action): void

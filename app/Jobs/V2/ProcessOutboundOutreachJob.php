@@ -166,7 +166,7 @@ class ProcessOutboundOutreachJob implements ShouldQueue
             return true;
         }
 
-        $resumeAt = $limiter->resumeAt();
+        $resumeAt = $limiter->resumeAtFor($this->userId, $quotaAction);
         $meta['status'] = 'deferred';
         $meta['deferred_until'] = $resumeAt->toIso8601String();
         $meta['deferred_reason'] = 'daily_'.$quotaAction.'_limit';

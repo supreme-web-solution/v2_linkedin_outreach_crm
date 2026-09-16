@@ -657,22 +657,26 @@ class ProcessCampaignLeadJob implements ShouldQueue
             $isTemp = str_starts_with($reason, 'temporary_');
             $isOutage = str_contains($reason, 'provider_outage');
 
-            $deferMessage = match (true) {
-                $isOutage => "LinkedIn provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
-                $isEscalated => "LinkedIn still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your LinkedIn).',
-                $isTemp => "LinkedIn temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
-                default => "Daily LinkedIn limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
-            };
+            $suppressActivity = ! empty($result['payload']['suppress_activity']);
 
-            $logger->log(
-                $campaign->id,
-                $lead->id,
-                $run?->id,
-                $node,
-                'scheduled',
-                $deferMessage,
-                $result['payload'] ?? [],
-            );
+            if (! $suppressActivity) {
+                $deferMessage = match (true) {
+                    $isOutage => "LinkedIn provider blip — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                    $isEscalated => "LinkedIn still limiting this account — \"{$nodeLabel}\" for {$lead->full_name} paused until ".$runAt->diffForHumans().' (protects your LinkedIn).',
+                    $isTemp => "LinkedIn temporary limit — \"{$nodeLabel}\" for {$lead->full_name} retries ".$runAt->diffForHumans().'.',
+                    default => "Daily LinkedIn limit reached — \"{$nodeLabel}\" for {$lead->full_name} resumes ".$runAt->diffForHumans().'.',
+                };
+
+                $logger->log(
+                    $campaign->id,
+                    $lead->id,
+                    $run?->id,
+                    $node,
+                    'scheduled',
+                    $deferMessage,
+                    $result['payload'] ?? [],
+                );
+            }
 
             $lead->update(['status' => 'pending']);
             // Same node retries later; keys are not advanced.

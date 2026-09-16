@@ -239,15 +239,19 @@ class CampaignStepExecutor
     private function deferIfOverDailyCap(int $userId, string $quotaAction): ?array
     {
         $limiter = app(UnipileDailyActionLimiter::class);
+        $alreadyOnHold = $limiter->isOnHold($userId, $quotaAction);
         if ($limiter->tryConsume($userId, $quotaAction)) {
             return null;
         }
 
-        $resumeAt = $limiter->resumeAt();
+        $resumeAt = $limiter->resumeAtFor($userId, $quotaAction);
+        $suppressActivity = $alreadyOnHold && UnipileDailyActionLimiter::isInviteAction($quotaAction);
 
         Log::info('[Campaign] Daily quota reached — step deferred', [
             'user_id' => $userId,
             'quota' => $quotaAction,
+            'already_on_hold' => $alreadyOnHold,
+            'suppress_activity' => $suppressActivity,
             'resume_at' => $resumeAt->toIso8601String(),
         ]);
 
@@ -257,6 +261,8 @@ class CampaignStepExecutor
             'payload' => [
                 'reason' => 'daily_'.$quotaAction.'_limit',
                 'limit' => $limiter->limitFor($quotaAction),
+                'already_on_hold' => $alreadyOnHold,
+                'suppress_activity' => $suppressActivity,
             ],
         ];
     }

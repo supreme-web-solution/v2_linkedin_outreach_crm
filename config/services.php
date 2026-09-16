@@ -101,8 +101,10 @@ return [
     /*
     | Per-user daily action caps + pacing to stay within Unipile / LinkedIn
     | conventional-usage limits. Caps of 0 or less mean "unlimited".
-    | When a cap is reached, queued actions auto-defer ~1 hour (not midnight),
-    | then open a fresh pacing window. Provider hard-limits still cool down separately.
+    | Invite caps (daily_invites / daily_noted_invites) defer until the next
+    | rolling window (~daily_window_hours). Other Soci pacing caps defer
+    | ~daily_resume_after_hours then open a fresh window. Provider hard-limits
+    | still cool down separately via TemporaryLimitGuard.
     */
     'unipile_pacing' => [
         'daily_invites' => (int) env('UNIPILE_DAILY_INVITE_CAP', 40),
@@ -120,8 +122,8 @@ return [
         'instagram_lead_stagger_jitter_seconds' => (int) env('UNIPILE_INSTAGRAM_LEAD_STAGGER_JITTER_SECONDS', 90),
         'instagram_handle_retry_min_minutes' => (int) env('UNIPILE_INSTAGRAM_HANDLE_RETRY_MIN_MINUTES', 20),
         'instagram_handle_retry_max_minutes' => (int) env('UNIPILE_INSTAGRAM_HANDLE_RETRY_MAX_MINUTES', 35),
-        // When a Soci pacing cap is reached, pause ~1h then open a fresh window
-        // (LinkedIn/Instagram provider hard-limits still use TemporaryLimitGuard).
+        // Non-invite Soci pacing: pause ~1h then open a fresh window.
+        // Invite caps use the next rolling window instead (see UnipileDailyActionLimiter).
         'daily_resume_after_hours' => (int) env('UNIPILE_DAILY_RESUME_AFTER_HOURS', 1),
         'daily_resume_jitter_min_minutes' => (int) env('UNIPILE_DAILY_RESUME_JITTER_MIN_MINUTES', 5),
         'daily_resume_jitter_max_minutes' => (int) env('UNIPILE_DAILY_RESUME_JITTER_MAX_MINUTES', 20),

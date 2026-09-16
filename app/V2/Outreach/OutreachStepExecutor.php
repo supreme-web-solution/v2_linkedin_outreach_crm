@@ -235,17 +235,21 @@ class OutreachStepExecutor
         }
 
         $limiter = app(UnipileDailyActionLimiter::class);
+        $alreadyOnHold = $limiter->isOnHold($userId, $quotaAction);
         if ($limiter->tryConsume($userId, $quotaAction)) {
             return null;
         }
 
-        $resumeAt = $limiter->resumeAt();
+        $resumeAt = $limiter->resumeAtFor($userId, $quotaAction);
+        $suppressActivity = $alreadyOnHold && UnipileDailyActionLimiter::isInviteAction($quotaAction);
 
         Log::info('[Outreach] Daily quota reached — step deferred', [
             'user_id' => $userId,
             'channel' => $channel,
             'action' => $action,
             'quota' => $quotaAction,
+            'already_on_hold' => $alreadyOnHold,
+            'suppress_activity' => $suppressActivity,
             'resume_at' => $resumeAt->toIso8601String(),
         ]);
 
@@ -256,6 +260,8 @@ class OutreachStepExecutor
                 'reason' => 'daily_'.$quotaAction.'_limit',
                 'limit' => $limiter->limitFor($quotaAction),
                 'channel' => $channel,
+                'already_on_hold' => $alreadyOnHold,
+                'suppress_activity' => $suppressActivity,
             ],
         ];
     }
