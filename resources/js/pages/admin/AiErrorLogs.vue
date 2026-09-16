@@ -170,6 +170,13 @@ function formatWhen(iso: string | null): string {
                             <td class="px-3 py-2 align-top">
                                 <div class="line-clamp-2">{{ row.message }}</div>
                                 <div
+                                    v-if="row.context?.user_facing"
+                                    class="text-muted-foreground mt-1 line-clamp-1 text-xs"
+                                >
+                                    Shown to user: {{ row.context.user_facing }}
+                                    <span v-if="row.context?.billing" class="ml-1 font-medium text-amber-700 dark:text-amber-400">· billing $</span>
+                                </div>
+                                <div
                                     v-if="row.user_message"
                                     class="text-muted-foreground mt-1 line-clamp-1 text-xs"
                                 >

@@ -5,6 +5,7 @@ namespace App\V2\Ai\Services;
 use App\Models\AiConversation;
 use App\Models\AiErrorLog;
 use App\Models\User;
+use App\V2\Services\OpenAiUserError;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -25,6 +26,9 @@ class AiErrorLogService
         ?string $userMessage = null,
         array $context = [],
     ): AiErrorLog {
+        $blob = strtolower(trim($e->getMessage().' '.($e->getPrevious()?->getMessage() ?? '')));
+        $userFacing = OpenAiUserError::forSociAgent($e);
+
         return AiErrorLog::query()->create([
             'organization_id' => $organizationId,
             'user_id' => $user?->id,
@@ -36,7 +40,14 @@ class AiErrorLogService
             'user_message' => $userMessage !== null
                 ? Str::limit($userMessage, 4000, '…')
                 : null,
-            'context' => $context !== [] ? $context : null,
+            'context' => array_filter([
+                'user_facing' => $userFacing,
+                'billing' => OpenAiUserError::looksLikeBilling($blob),
+                'previous' => $e->getPrevious() !== null
+                    ? Str::limit($e->getPrevious()->getMessage(), 2000, '…')
+                    : null,
+                ...$context,
+            ], fn ($v) => $v !== null && $v !== []),
             'trace' => Str::limit($e->getTraceAsString(), 20000, '…'),
         ]);
     }

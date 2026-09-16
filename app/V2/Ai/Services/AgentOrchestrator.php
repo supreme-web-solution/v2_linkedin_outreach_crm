@@ -321,18 +321,35 @@ class AgentOrchestrator
             return;
         }
 
+        $safeReply = $exception !== null
+            ? \App\V2\Services\OpenAiUserError::forSociAgent($exception)
+            : \App\V2\Services\OpenAiUserError::SOCI_GENERIC;
+
         if ($exception !== null) {
             report($exception);
+            try {
+                app(AiErrorLogService::class)->capture(
+                    $exception,
+                    'web_agent_job_failed',
+                    $user,
+                    $organizationId,
+                    $conversation,
+                    'web',
+                    null,
+                    ['user_message_id' => $userMessageId],
+                );
+            } catch (Throwable $logError) {
+                report($logError);
+            }
         }
 
         AiMessage::query()->create([
             'conversation_id' => $conversation->id,
             'role' => 'assistant',
-            'content' => 'That took too long or hit an error while processing. Please try again — if it keeps failing, check the queue worker is running.',
+            'content' => $safeReply,
             'meta' => [
                 'channel' => 'web',
                 'queued_job_failed' => true,
-                'error' => $exception?->getMessage(),
             ],
         ]);
     }
@@ -860,17 +877,7 @@ class AgentOrchestrator
 
     private function userFacingAgentError(Throwable $e): string
     {
-        $blob = strtolower($e->getMessage().' '.$e->getPrevious()?->getMessage());
-
-        if (str_contains($blob, 'no credits') || str_contains($blob, 'insufficient_quota') || str_contains($blob, 'billing')) {
-            return 'Soci could not finish that — the OpenAI account has no credits left. Add credits at platform.openai.com, or add an OPENROUTER_API_KEY so Soci can switch models, then send the message again.';
-        }
-
-        if (str_contains($blob, 'rate limit') || str_contains($blob, '429')) {
-            return 'Soci hit a model limit and no backup model is configured. Add an OPENROUTER_API_KEY (and credits) so the next attempt can switch providers, then try again.';
-        }
-
-        return 'I hit an error processing that. Please try again in a moment.';
+        return \App\V2\Services\OpenAiUserError::forSociAgent($e);
     }
 
     private function maybeAutoLaunchOutreachPlan(

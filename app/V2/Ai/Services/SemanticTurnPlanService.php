@@ -136,10 +136,26 @@ class SemanticTurnPlanService
                 'error' => $e->getMessage(),
                 'providers' => $providerNames,
                 'has_failover' => count($providerNames) > 1,
-                'hint' => count($providerNames) <= 1
-                    ? 'Set OPENROUTER_API_KEY (preferred multi-model cover) and/or GEMINI_API_KEY / ANTHROPIC_API_KEY so Laravel AI can fail over before regex.'
-                    : 'All configured Laravel AI providers in the failover chain were exhausted.',
             ]);
+
+            try {
+                app(AiErrorLogService::class)->capture(
+                    $e,
+                    'semantic_turn_planner',
+                    $user,
+                    $organizationId,
+                    $conversation,
+                    $conversation?->channel,
+                    $trimmed,
+                    [
+                        'providers' => $providerNames,
+                        'has_failover' => count($providerNames) > 1,
+                        'fallback' => 'regex',
+                    ],
+                );
+            } catch (Throwable $logError) {
+                report($logError);
+            }
 
             return null;
         }
