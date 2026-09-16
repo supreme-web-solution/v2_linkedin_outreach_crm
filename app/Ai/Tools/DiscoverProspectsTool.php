@@ -78,9 +78,9 @@ class DiscoverProspectsTool extends GatedTool
                 'blocked' => true,
                 'launch_blocked' => true,
                 'reason' => 'no_searchable_channel',
-                'message' => 'You cannot find people until LinkedIn (or Instagram Search) is connected.',
+                'message' => 'You cannot find people until a search platform is connected (LinkedIn, Instagram Search, …).',
                 'integrations_url' => url('/integrations'),
-                'instruction' => 'Do not pretend a search ran. Tell the owner to connect LinkedIn on Integrations, then try again.',
+                'instruction' => 'Do not pretend a search ran. Tell the owner to connect a search platform (LinkedIn, Instagram, …) on Integrations, then try again.',
             ];
         }
 

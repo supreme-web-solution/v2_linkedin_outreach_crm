@@ -2,16 +2,24 @@
 
 namespace App\V2\Ai\Services;
 
+use App\Jobs\V2\ProcessWebAiChatJob;
 use App\Jobs\V2\RunWebAgentTurnJob;
 use App\Models\AiConversation;
 use App\Models\AiMessage;
 use App\Models\User;
+use Illuminate\Bus\UniqueLock;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Redis;
+use Throwable;
 
 /**
  * Detects web chat turns stuck in "Thinking…" with no queue worker job
  * (e.g. worker restarted) and re-dispatches the agent turn.
+ *
+ * Production uses Horizon/Redis — never assume only the database `jobs` table.
  */
 class WebChatTurnRecoveryService
 {
@@ -106,39 +114,15 @@ class WebChatTurnRecoveryService
 
     public function hasQueuedTurnJob(int $conversationId, int $userMessageId): bool
     {
-        if (! $this->jobsTableExists()) {
-            return false;
-        }
-
-        $patterns = [
-            '%RunWebAgentTurnJob%',
-            '%"conversationId";i:'.$conversationId.'%',
-            '%"userMessageId";i:'.$userMessageId.'%',
-        ];
-
-        $query = DB::table('jobs');
-
-        foreach ($patterns as $pattern) {
-            $query->where('payload', 'like', $pattern);
-        }
-
-        if ($query->exists()) {
+        if ($this->hasUniqueAgentTurnLock($conversationId, $userMessageId)) {
             return true;
         }
 
-        $coordinatorPatterns = [
-            '%ProcessWebAiChatJob%',
-            '%"conversationId";i:'.$conversationId.'%',
-            '%"userMessageId";i:'.$userMessageId.'%',
-        ];
-
-        $coordinatorQuery = DB::table('jobs');
-
-        foreach ($coordinatorPatterns as $pattern) {
-            $coordinatorQuery->where('payload', 'like', $pattern);
+        if ($this->hasDatabaseQueuedTurnJob($conversationId, $userMessageId)) {
+            return true;
         }
 
-        return $coordinatorQuery->exists();
+        return $this->hasRedisQueuedTurnJob($conversationId, $userMessageId);
     }
 
     public function isStale(AiConversation $conversation, int $userMessageId): bool
@@ -174,6 +158,181 @@ class WebChatTurnRecoveryService
         }
 
         return Carbon::parse($anchor)->addSeconds($staleSeconds)->isPast();
+    }
+
+    private function hasUniqueAgentTurnLock(int $conversationId, int $userMessageId): bool
+    {
+        try {
+            $probe = new RunWebAgentTurnJob(0, 0, $conversationId, $userMessageId, '');
+            $key = UniqueLock::getKey($probe);
+            $lock = Cache::lock($key, 1);
+
+            // If we cannot acquire, another worker already holds the unique lock
+            // (queued or currently processing).
+            if (! $lock->get()) {
+                return true;
+            }
+
+            $lock->release();
+        } catch (Throwable) {
+            // Fall through to queue payload checks.
+        }
+
+        return false;
+    }
+
+    private function hasDatabaseQueuedTurnJob(int $conversationId, int $userMessageId): bool
+    {
+        if (! $this->jobsTableExists()) {
+            return false;
+        }
+
+        try {
+            $patterns = [
+                '%RunWebAgentTurnJob%',
+                '%"conversationId";i:'.$conversationId.'%',
+                '%"userMessageId";i:'.$userMessageId.'%',
+            ];
+
+            $query = DB::table('jobs');
+            foreach ($patterns as $pattern) {
+                $query->where('payload', 'like', $pattern);
+            }
+
+            if ($query->exists()) {
+                return true;
+            }
+
+            $coordinatorPatterns = [
+                '%ProcessWebAiChatJob%',
+                '%"conversationId";i:'.$conversationId.'%',
+                '%"userMessageId";i:'.$userMessageId.'%',
+            ];
+
+            $coordinatorQuery = DB::table('jobs');
+            foreach ($coordinatorPatterns as $pattern) {
+                $coordinatorQuery->where('payload', 'like', $pattern);
+            }
+
+            return $coordinatorQuery->exists();
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function hasRedisQueuedTurnJob(int $conversationId, int $userMessageId): bool
+    {
+        $driver = (string) config('queue.default');
+        if (! in_array($driver, ['redis', 'horizon'], true) && ! $this->redisQueueConfigured()) {
+            // Horizon production still uses redis connection even when default is redis.
+            if (! extension_loaded('redis') && ! class_exists(\Predis\Client::class)) {
+                return false;
+            }
+        }
+
+        $queues = array_values(array_unique(array_filter([
+            (string) config('socifusion_ai.web_chat_agent_queue_name', 'default'),
+            (string) config('socifusion_ai.web_chat_queue_name', 'webhooks'),
+            'default',
+            'webhooks',
+        ])));
+
+        try {
+            $connectionName = (string) config('queue.connections.redis.connection', 'default');
+            $redis = Redis::connection($connectionName);
+
+            foreach ($queues as $queue) {
+                $base = 'queues:'.$queue;
+                $payloads = array_merge(
+                    $this->redisListValues($redis, $base),
+                    $this->redisZsetValues($redis, $base.':delayed'),
+                    $this->redisZsetValues($redis, $base.':reserved'),
+                );
+
+                foreach ($payloads as $payload) {
+                    if ($this->payloadMatchesTurn($payload, $conversationId, $userMessageId)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable) {
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  \Illuminate\Redis\Connections\Connection|\Redis  $redis
+     * @return list<string>
+     */
+    private function redisListValues(mixed $redis, string $key): array
+    {
+        try {
+            $values = $redis->lrange($key, 0, 250);
+
+            return is_array($values) ? array_map('strval', $values) : [];
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * @param  \Illuminate\Redis\Connections\Connection|\Redis  $redis
+     * @return list<string>
+     */
+    private function redisZsetValues(mixed $redis, string $key): array
+    {
+        try {
+            $values = $redis->zrange($key, 0, 250);
+
+            return is_array($values) ? array_map('strval', $values) : [];
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    private function payloadMatchesTurn(string $payload, int $conversationId, int $userMessageId): bool
+    {
+        $decoded = $payload;
+        $json = json_decode($payload, true);
+        if (is_array($json)) {
+            $decoded = json_encode($json) ?: $payload;
+            if (isset($json['data']['command'])) {
+                $decoded .= ' '.$json['data']['command'];
+            }
+            if (isset($json['displayName'])) {
+                $decoded .= ' '.$json['displayName'];
+            }
+        }
+
+        $hasAgent = str_contains($decoded, 'RunWebAgentTurnJob')
+            || str_contains($decoded, ProcessWebAiChatJob::class)
+            || str_contains($decoded, 'ProcessWebAiChatJob');
+
+        if (! $hasAgent) {
+            return false;
+        }
+
+        $hasConversation = str_contains($decoded, '"conversationId";i:'.$conversationId.';')
+            || str_contains($decoded, '"conversationId":'.$conversationId)
+            || str_contains($decoded, 'conversationId";i:'.$conversationId);
+
+        $hasMessage = str_contains($decoded, '"userMessageId";i:'.$userMessageId.';')
+            || str_contains($decoded, '"userMessageId":'.$userMessageId)
+            || str_contains($decoded, 'userMessageId";i:'.$userMessageId);
+
+        return $hasConversation && $hasMessage;
+    }
+
+    private function redisQueueConfigured(): bool
+    {
+        try {
+            return (string) config('queue.connections.redis.driver') === 'redis'
+                || Queue::getDefaultDriver() === 'redis';
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     private function promptMessageFor(AiConversation $conversation, AiMessage $userMessage): string
@@ -224,7 +383,7 @@ class WebChatTurnRecoveryService
 
         try {
             return Carbon::parse($value);
-        } catch (\Throwable) {
+        } catch (Throwable) {
             return null;
         }
     }
@@ -233,7 +392,7 @@ class WebChatTurnRecoveryService
     {
         try {
             return DB::getSchemaBuilder()->hasTable('jobs');
-        } catch (\Throwable) {
+        } catch (Throwable) {
             return false;
         }
     }

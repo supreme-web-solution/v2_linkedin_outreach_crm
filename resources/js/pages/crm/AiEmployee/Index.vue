@@ -770,7 +770,7 @@ async function disconnectWhatsApp() {
                 v-if="!canDiscover"
                 class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
             >
-                You cannot find people until LinkedIn is connected.
+                Connect a search platform (LinkedIn, Instagram, …) before finding people.
                 <Link href="/integrations" class="font-medium underline">Open Integrations</Link>
             </div>
 

@@ -8,6 +8,7 @@ use App\Models\AiWorkflowRun;
 use App\Models\AiWorkflowStep;
 use App\Models\User;
 use App\V2\Ai\Support\WorkflowStepTypes;
+use App\V2\Support\TransientDatabaseException;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -515,6 +516,13 @@ class WorkflowRuntimeService
                 ],
             ];
         } catch (Throwable $e) {
+            // Infrastructure outage must bubble to the job for release/retry.
+            // Writing "failed" while MySQL is down either throws again or permanently
+            // poisons the step with a Connection refused error.
+            if (TransientDatabaseException::matches($e)) {
+                throw $e;
+            }
+
             $this->runs->markStepFailed($step, $e->getMessage());
             $this->runs->incrementStepRetry($step);
             $step = $step->fresh();
@@ -541,6 +549,10 @@ class WorkflowRuntimeService
 
     public function markRunFailedFromJob(int $workflowRunId, string $error): void
     {
+        if (TransientDatabaseException::matches(new \RuntimeException($error))) {
+            return;
+        }
+
         $run = AiWorkflowRun::query()->find($workflowRunId);
         if ($run && ! in_array((string) $run->status, self::TERMINAL_RUN_STATUSES, true)) {
             $this->runs->markFailed($run, $error);

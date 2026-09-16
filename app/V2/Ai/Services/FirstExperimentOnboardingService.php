@@ -106,8 +106,8 @@ class FirstExperimentOnboardingService
         $blocked = $searchable === [] ? 'no_searchable_channel' : null;
         $card = $this->commandCenter->formatPlanCard($plan, $approval->id, 'web');
         $intro = $blocked === 'no_searchable_channel'
-            ? "You're set. I staged your first **".self::TARGET_COUNT."-person** experiment — but I cannot find people until **LinkedIn** (or Instagram Search) is connected.\n\n"
-                .url('/integrations')."\n\nConnect, then Launch plan #{$approval->id}."
+            ? "You're set. I staged your first **".self::TARGET_COUNT."-person** experiment — but I cannot find people until a **search platform** is connected (LinkedIn, Instagram, …).\n\n"
+                .url('/integrations')."\n\nConnect one, then Launch plan #{$approval->id}."
             : "You're set. I staged your first **".self::TARGET_COUNT."-person** conversation experiment from your ICP. Review & Launch when you are ready — no extra prompt needed.";
 
         $this->push->postAssistant(

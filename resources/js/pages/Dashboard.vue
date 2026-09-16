@@ -340,7 +340,7 @@ async function letAiExecute(): Promise<void> {
             <div v-if="!funnelHasActivity" class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border/70 bg-muted/20 px-3 py-3">
                 <p class="text-xs text-muted-foreground">
                     <template v-if="canDiscover === false">
-                        You cannot find people until LinkedIn is connected. Open Integrations, then Launch your first experiment.
+                        Connect a search platform (LinkedIn, Instagram, …) in Integrations before finding people, then Launch your first experiment.
                     </template>
                     <template v-else>
                         Target → contact → reply → qualify → demo → win. Your first experiment is in Command Center — Launch when ready.
@@ -348,7 +348,7 @@ async function letAiExecute(): Promise<void> {
                 </p>
                 <Link :href="canDiscover === false ? '/integrations' : '/ai-employee'">
                     <Button size="sm" variant="outline" class="h-8 rounded-full px-3 text-xs">
-                        {{ canDiscover === false ? 'Connect LinkedIn' : 'Open Command Center' }}
+                        {{ canDiscover === false ? 'Connect a platform' : 'Open Command Center' }}
                         <ArrowRight class="ml-1 size-3" />
                     </Button>
                 </Link>

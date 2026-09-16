@@ -105,6 +105,8 @@ TXT,
 
     /** Queue for durable workflow continuation ticks (ContinueWorkflowRunJob). */
     'workflow_queue_name' => env('SOCIFUSION_AI_WORKFLOW_QUEUE_NAME', 'default'),
+    'workflow_job_timeout' => (int) env('SOCIFUSION_AI_WORKFLOW_JOB_TIMEOUT', 600),
+    'workflow_job_tries' => (int) env('SOCIFUSION_AI_WORKFLOW_JOB_TRIES', 5),
     'web_chat_job_timeout' => (int) env('SOCIFUSION_AI_WEB_CHAT_JOB_TIMEOUT', 600),
     'web_chat_job_tries' => (int) env('SOCIFUSION_AI_WEB_CHAT_JOB_TRIES', 3),
     'web_chat_stale_seconds' => (int) env('SOCIFUSION_AI_WEB_CHAT_STALE_SECONDS', 90),

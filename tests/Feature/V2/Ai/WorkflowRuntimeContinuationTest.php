@@ -11,9 +11,11 @@ use App\Models\V2Organization;
 use App\Models\V2OrganizationUser;
 use App\V2\Ai\Services\WorkflowDiscoveryStepHandler;
 use App\V2\Ai\Services\WorkflowRuntimeService;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
+use PDOException;
 use Tests\TestCase;
 
 class WorkflowRuntimeContinuationTest extends TestCase
@@ -245,6 +247,37 @@ class WorkflowRuntimeContinuationTest extends TestCase
         $this->assertSame($userA->id, $runA->fresh()->user_id);
         $this->assertSame($userB->id, $runB->fresh()->user_id);
         $this->assertNotSame($runA->organization_id, $runB->organization_id);
+    }
+
+    public function test_tick_rethrows_mysql_connection_refused_without_poisoning_step(): void
+    {
+        [$user, $org] = $this->userWithOrg();
+        $this->seedSaasFounders($user, 37);
+        $plan = $this->outreachPlan(100);
+
+        $mock = Mockery::mock(WorkflowDiscoveryStepHandler::class);
+        $mock->shouldReceive('execute')->once()->andThrow(new QueryException(
+            'mysql',
+            'select * from ai_workflow_steps where id = 1 limit 1',
+            [],
+            new PDOException('SQLSTATE[HY000] [2002] Connection refused', 2002),
+        ));
+        $this->app->instance(WorkflowDiscoveryStepHandler::class, $mock);
+
+        $run = app(WorkflowRuntimeService::class)->start($user, $org->id, $plan);
+
+        try {
+            app(WorkflowRuntimeService::class)->tick($run->id);
+            $this->fail('Expected QueryException for connection refused');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('Connection refused', $e->getMessage());
+        }
+
+        $step = $run->fresh()->steps()->where('step_key', 'discover_1')->first();
+        $this->assertNotNull($step);
+        $this->assertSame('running', $step->status);
+        $this->assertNull($step->error);
+        $this->assertSame('running', $run->fresh()->status);
     }
 
     /**

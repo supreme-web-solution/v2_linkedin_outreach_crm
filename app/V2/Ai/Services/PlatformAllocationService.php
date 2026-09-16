@@ -153,7 +153,7 @@ class PlatformAllocationService
     private function summary(array $allocation, bool $usedDefault, ?int $requestedTotal): string
     {
         if ($allocation === []) {
-            return 'No searchable platforms are connected. Connect LinkedIn and/or Instagram, then ask again.';
+            return 'No searchable platforms are connected. Connect LinkedIn, Instagram, or another search platform on Integrations, then ask again.';
         }
 
         $parts = [];
