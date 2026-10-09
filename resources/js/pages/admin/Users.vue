@@ -60,6 +60,18 @@ const userForm = useForm({
 const permForm = useForm({ user_id: 0, entitlements: [] as string[] });
 
 const entitlementLabels = computed(() => props.entitlementOptions.filter((e) => !e.startsWith('view_')));
+
+const entitlementNames: Record<string, string> = {
+    FE: 'FE (core app)',
+    Bundle: 'Bundle (full access)',
+    Reseller: 'Reseller',
+    AffiliateCampaignVault: 'Affiliate Campaign Vault',
+    ProfitMultiplier: 'Profit Multiplier',
+};
+
+function entitlementName(key: string): string {
+    return entitlementNames[key] ?? key;
+}
 const hasUsers = computed(() => props.users.total > 0);
 const isEditing = computed(() => editingUser.value !== null);
 
@@ -110,7 +122,7 @@ async function openPermissions(user: ManagedUser) {
     permUser.value = user;
     const res = await fetch(`/admin/users/${user.id}/permissions`);
     const data = await res.json();
-    selectedEntitlements.value = data.assigned ?? user.entitlements;
+    selectedEntitlements.value = [...(data.assigned ?? user.entitlements)];
     showPermissionsModal.value = true;
 }
 
@@ -238,7 +250,7 @@ function toggleEntitlement(key: string, checked?: boolean | 'indeterminate') {
                                 :key="e"
                                 class="mr-1 inline-block rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
                             >
-                                {{ e }}
+                                {{ entitlementName(e) }}
                             </span>
                             <span v-if="user.entitlements.length === 0" class="text-xs text-muted-foreground">—</span>
                         </td>
@@ -395,8 +407,11 @@ function toggleEntitlement(key: string, checked?: boolean | 'indeterminate') {
                     :key="opt"
                     class="flex cursor-pointer items-center gap-2 rounded-xl border border-border px-3 py-2.5 text-sm transition-colors hover:bg-muted/40"
                 >
-                    <Checkbox :checked="selectedEntitlements.includes(opt)" @update:checked="toggleEntitlement(opt)" />
-                    {{ opt }}
+                    <Checkbox
+                        :model-value="selectedEntitlements.includes(opt)"
+                        @update:model-value="toggleEntitlement(opt, $event)"
+                    />
+                    {{ entitlementName(opt) }}
                 </label>
             </div>
 

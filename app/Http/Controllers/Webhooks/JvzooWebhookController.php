@@ -94,7 +94,11 @@ class JvzooWebhookController extends Controller
         ]);
 
         if ($plainPassword) {
-            Mail::to($email)->send(new WelcomeLicenseMail($user, $plainPassword));
+            try {
+                Mail::to($email)->send(new WelcomeLicenseMail($user, $plainPassword));
+            } catch (\Throwable $e) {
+                Log::error('[JVZoo] Welcome email failed', ['email' => $email, 'error' => $e->getMessage()]);
+            }
         }
 
         return response()->json(['message' => 'Sale processed.']);

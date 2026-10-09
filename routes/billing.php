@@ -17,20 +17,22 @@ Route::get('create-reseller', [LicenseSignupWebController::class, 'showReseller'
 Route::post('auth/reseller-access', [LicenseSignupWebController::class, 'storeReseller'])->name('license.reseller.store');
 
 Route::middleware(['auth', 'verified'])->group(function () {
-    Route::get('bonus/upsell-unlimited', [BonusWebController::class, 'upsellUnlimited'])
-        ->middleware('entitlement:OTO2')->name('bonus.upsell-unlimited');
-    Route::get('bonus/market-agency-setup', [BonusWebController::class, 'marketAgencySetup'])
-        ->middleware('entitlement:OTO3')->name('bonus.market-agency');
-    Route::get('bonus/dfy-campaign', [BonusWebController::class, 'dfyCampaign'])
-        ->middleware('entitlement:OTO4')->name('bonus.dfy-campaign');
-    Route::get('bonus/coach-program', [BonusWebController::class, 'coachProgram'])
-        ->middleware('entitlement:OTO7')->name('bonus.coach-program');
-    Route::get('bonus/unlimited-traffic', [BonusWebController::class, 'unlimitedTraffic'])
-        ->middleware('entitlement:OTO8')->name('bonus.unlimited-traffic');
+    Route::middleware('entitlement:Bundle')->group(function () {
+        Route::get('bonus/upsell-unlimited', [BonusWebController::class, 'upsellUnlimited'])->name('bonus.upsell-unlimited');
+        Route::get('bonus/market-agency-setup', [BonusWebController::class, 'marketAgencySetup'])->name('bonus.market-agency');
+        Route::get('bonus/dfy-campaign', [BonusWebController::class, 'dfyCampaign'])->name('bonus.dfy-campaign');
+        Route::get('bonus/coach-program', [BonusWebController::class, 'coachProgram'])->name('bonus.coach-program');
+        Route::get('bonus/unlimited-traffic', [BonusWebController::class, 'unlimitedTraffic'])->name('bonus.unlimited-traffic');
 
-    Route::get('upsell-unlimited', fn () => redirect()->route('bonus.upsell-unlimited'))->middleware('entitlement:OTO2');
-    Route::get('market-agency-setup', fn () => redirect()->route('bonus.market-agency'))->middleware('entitlement:OTO3');
-    Route::get('dfy-campaign', fn () => redirect()->route('bonus.dfy-campaign'))->middleware('entitlement:OTO4');
-    Route::get('coach-program', fn () => redirect()->route('bonus.coach-program'))->middleware('entitlement:OTO7');
-    Route::get('unlimited-traffic', fn () => redirect()->route('bonus.unlimited-traffic'))->middleware('entitlement:OTO8');
+        Route::get('upsell-unlimited', fn () => redirect()->route('bonus.upsell-unlimited'));
+        Route::get('market-agency-setup', fn () => redirect()->route('bonus.market-agency'));
+        Route::get('dfy-campaign', fn () => redirect()->route('bonus.dfy-campaign'));
+        Route::get('coach-program', fn () => redirect()->route('bonus.coach-program'));
+        Route::get('unlimited-traffic', fn () => redirect()->route('bonus.unlimited-traffic'));
+    });
+
+    Route::get('affiliate-campaign-vault', [BonusWebController::class, 'affiliateCampaignVault'])
+        ->middleware('entitlement:AffiliateCampaignVault')->name('addons.affiliate-campaign-vault');
+    Route::get('profit-multiplier', [BonusWebController::class, 'profitMultiplier'])
+        ->middleware('entitlement:ProfitMultiplier')->name('addons.profit-multiplier');
 });

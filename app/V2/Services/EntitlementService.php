@@ -7,7 +7,7 @@ use App\Models\User;
 class EntitlementService
 {
     /** @var list<string> */
-    public const ALL = ['FE', 'OTO1', 'OTO2', 'OTO3', 'OTO4', 'OTO5', 'OTO6', 'OTO7', 'OTO8', 'Bundle'];
+    public const ALL = ['FE', 'Bundle', 'Reseller', 'AffiliateCampaignVault', 'ProfitMultiplier'];
 
     public function isPlatformAdmin(User $user): bool
     {
@@ -22,7 +22,7 @@ class EntitlementService
 
     public function isReseller(User $user): bool
     {
-        return $this->hasAny($user, ['OTO5', 'OTO8', 'Bundle']) || $this->isPlatformAdmin($user);
+        return $this->hasAny($user, ['Reseller', 'Bundle']) || $this->isPlatformAdmin($user);
     }
 
     public function has(User $user, string $entitlement): bool

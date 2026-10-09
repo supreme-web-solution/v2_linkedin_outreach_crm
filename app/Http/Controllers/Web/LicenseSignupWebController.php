@@ -54,7 +54,7 @@ class LicenseSignupWebController extends Controller
 
     public function storeReseller(Request $request): RedirectResponse
     {
-        return $this->store($request, config('billing.bundles.reseller', ['FE', 'OTO5']), 'Reseller access activated.');
+        return $this->store($request, config('billing.bundles.reseller', ['FE', 'Reseller']), 'Reseller access activated.');
     }
 
     /**

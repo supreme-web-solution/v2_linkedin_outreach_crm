@@ -36,4 +36,23 @@ class BonusWebController extends Controller
     {
         return Inertia::render('bonus/UnlimitedTraffic');
     }
+
+    public function affiliateCampaignVault(): Response
+    {
+        return Inertia::render('addons/AffiliateCampaignVault', [
+            'signupUrl' => config('bonus.affilimachine_signup_url'),
+        ]);
+    }
+
+    public function profitMultiplier(): Response
+    {
+        $links = array_values(array_filter(
+            config('bonus.profit_multiplier_links', []),
+            fn (array $link) => ! empty($link['url'])
+        ));
+
+        return Inertia::render('addons/ProfitMultiplier', [
+            'links' => $links,
+        ]);
+    }
 }

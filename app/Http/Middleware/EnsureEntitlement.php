@@ -37,22 +37,6 @@ class EnsureEntitlement
      */
     private function expandEntitlement(string $entitlement): array
     {
-        if ($entitlement === 'OTO2') {
-            return ['OTO2', 'OTO8', 'Bundle'];
-        }
-
-        if (in_array($entitlement, ['OTO3', 'OTO4', 'OTO7'], true)) {
-            return [$entitlement, 'OTO8', 'Bundle'];
-        }
-
-        if ($entitlement === 'OTO5') {
-            return ['OTO5', 'OTO8', 'Bundle'];
-        }
-
-        if ($entitlement === 'OTO8') {
-            return ['OTO8', 'Bundle'];
-        }
-
-        return [$entitlement];
+        return array_values(array_unique([$entitlement, 'Bundle']));
     }
 }

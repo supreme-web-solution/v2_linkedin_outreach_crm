@@ -1,6 +1,6 @@
 # Weekly Prompt Expansion
 
-Generated: 2026-09-11 18:29:42
+Generated: 2026-10-09 06:59:57
 Window: last 7 day(s)
 Source: `ai_action_logs` where `tool = prompt_observer` and status indicates unknown/ambiguous/fallback.
 
@@ -8,7 +8,8 @@ Source: `ai_action_logs` where `tool = prompt_observer` and status indicates unk
 
 | # | Prompt | Count | Last seen | Statuses |
 |---:|---|---:|---|---|
-| 1 | hello what can you do | 1 | 2026-09-11T18:29:24+00:00 | unknown_pre_llm |
+| 1 | do it | 1 | 2026-10-09T06:59:57+00:00 | fallback_clarifier |
+| 2 | can you do this magic flow? | 1 | 2026-10-09T06:59:57+00:00 | unknown_pre_llm |
 
 ## Suggested weekly actions
 

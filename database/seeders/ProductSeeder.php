@@ -9,38 +9,27 @@ class ProductSeeder extends Seeder
 {
     public function run(): void
     {
-        $full = config('billing.bundles.full', [
-            'FE', 'OTO1', 'OTO2', 'OTO3', 'OTO4', 'OTO5', 'OTO6', 'OTO7', 'OTO8', 'Bundle',
-        ]);
+        $bundles = config('billing.bundles', []);
+        $products = config('billing.jvzoo_products', []);
 
-        $products = [
-            [
-                'product_id' => '433885',
-                'name' => 'FE Access',
-                'entitlements' => ['FE'],
-            ],
-            [
-                'product_id' => '434227',
-                'name' => 'Full Access',
-                'entitlements' => $full,
-            ],
-            [
-                'product_id' => '434229',
-                'name' => 'Full Access',
-                'entitlements' => $full,
-            ],
-            [
-                'product_id' => '433887',
-                'name' => 'Full Access',
-                'entitlements' => $full,
-            ],
-        ];
+        $productIds = [];
 
         foreach ($products as $product) {
+            $entitlements = isset($product['bundle'])
+                ? ($bundles[$product['bundle']] ?? [])
+                : ($product['entitlements'] ?? []);
+
             V2Product::query()->updateOrCreate(
-                ['product_id' => $product['product_id']],
-                $product
+                ['product_id' => (string) $product['product_id']],
+                [
+                    'name' => $product['name'],
+                    'entitlements' => array_values($entitlements),
+                ]
             );
+
+            $productIds[] = (string) $product['product_id'];
         }
+
+        V2Product::query()->whereNotIn('product_id', $productIds)->delete();
     }
 }

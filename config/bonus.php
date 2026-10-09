@@ -2,6 +2,13 @@
 
 return [
 
+    'affilimachine_signup_url' => env('AFFILIMACHINE_SIGNUP_URL', 'https://affilimachine.com/register'),
+
+    'profit_multiplier_links' => [
+        ['label' => env('PROFIT_MULTIPLIER_LINK_1_LABEL') ?: 'Profit Multiplier Resource 1', 'url' => env('PROFIT_MULTIPLIER_LINK_1_URL')],
+        ['label' => env('PROFIT_MULTIPLIER_LINK_2_LABEL') ?: 'Profit Multiplier Resource 2', 'url' => env('PROFIT_MULTIPLIER_LINK_2_URL')],
+    ],
+
     'dfy_campaign_links' => [
         ['label' => 'Javascript Commission Bot', 'url' => 'https://docs.google.com/document/d/1CG-d-ILUi44L5EtMp11kfHwiD8dTUdrBW_tIqnk2eIY/edit?usp=sharing'],
         ['label' => 'Cyclone', 'url' => 'https://docs.google.com/document/d/1j3sVThlkGWx1AzxG-YyZxIGk2BJ-Qcj6D1xfAWn3nSU/edit?usp=sharing'],

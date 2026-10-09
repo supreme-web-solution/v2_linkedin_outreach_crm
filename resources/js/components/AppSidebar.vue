@@ -6,6 +6,7 @@ import {
     Bot,
     Building2,
     Calendar,
+    ChartNoAxesCombined,
     FileText,
     GraduationCap,
     LayoutGrid,
@@ -24,6 +25,7 @@ import {
     UserCog,
     Users,
     Users2,
+    Vault,
 } from '@lucide/vue';
 import { computed } from 'vue';
 import AppLogo from '@/components/AppLogo.vue';
@@ -105,22 +107,27 @@ const audienceItems: NavItem[] = [
 ];
 
 const bonusNavItems = computed<NavItem[]>(() => {
+    if (!hasAny(['Bundle'])) return [];
+    return [
+        { title: 'Upsell Unlimited', href: '/bonus/upsell-unlimited', icon: Sparkles },
+        { title: 'DFY Agency Setup', href: '/bonus/market-agency-setup', icon: Building2 },
+        { title: 'DFY Campaign', href: '/bonus/dfy-campaign', icon: Megaphone },
+        { title: 'Coaching Program', href: '/bonus/coach-program', icon: GraduationCap },
+        { title: 'Unlimited Traffic', href: '/bonus/unlimited-traffic', icon: Radar },
+        { title: 'Team', href: '/team', icon: UserCog },
+    ];
+});
+
+const upgradeNavItems = computed<NavItem[]>(() => {
     const items: NavItem[] = [];
-    if (hasAny(['OTO2', 'OTO8', 'Bundle'])) {
-        items.push({ title: 'Upsell Unlimited', href: '/bonus/upsell-unlimited', icon: Sparkles });
+    if (isReseller.value) {
+        items.push({ title: 'Reseller', href: '/reseller/users', icon: Users });
     }
-    if (hasAny(['OTO3', 'OTO8', 'Bundle'])) {
-        items.push({ title: 'DFY Agency Setup', href: '/bonus/market-agency-setup', icon: Building2 });
+    if (hasAny(['AffiliateCampaignVault', 'Bundle'])) {
+        items.push({ title: 'Affiliate Campaign Vault', href: '/affiliate-campaign-vault', icon: Vault });
     }
-    if (hasAny(['OTO4', 'OTO8', 'Bundle'])) {
-        items.push({ title: 'DFY Campaign', href: '/bonus/dfy-campaign', icon: Megaphone });
-    }
-    if (hasAny(['OTO7', 'OTO8', 'Bundle'])) {
-        items.push({ title: 'Coaching Program', href: '/bonus/coach-program', icon: GraduationCap });
-    }
-    if (hasAny(['OTO8', 'Bundle'])) {
-        items.push({ title: 'Unlimited Traffic', href: '/bonus/unlimited-traffic', icon: Radar });
-        items.push({ title: 'Team', href: '/team', icon: UserCog });
+    if (hasAny(['ProfitMultiplier', 'Bundle'])) {
+        items.push({ title: 'Profit Multiplier', href: '/profit-multiplier', icon: ChartNoAxesCombined });
     }
     return items;
 });
@@ -129,9 +136,6 @@ const adminNavItems = computed<NavItem[]>(() => {
     const items: NavItem[] = [
         { title: 'Integrations', href: '/integrations', icon: Link2 },
     ];
-    if (isReseller.value) {
-        items.push({ title: 'Reseller', href: '/reseller/users', icon: Users });
-    }
     if (isPlatformAdmin.value) {
         items.push({ title: 'Users', href: '/admin/users', icon: Users });
         items.push({ title: 'Soci errors', href: '/admin/ai-errors', icon: AlertTriangle });
@@ -146,6 +150,10 @@ const navGroups = computed<NavGroup[]>(() => {
         { label: 'Content', items: contentItems },
         { label: 'Audience', items: audienceItems },
     ];
+
+    if (upgradeNavItems.value.length > 0) {
+        groups.push({ label: 'Upgrades', items: upgradeNavItems.value });
+    }
 
     if (bonusNavItems.value.length > 0) {
         groups.push({ label: 'Bonus', items: bonusNavItems.value });
