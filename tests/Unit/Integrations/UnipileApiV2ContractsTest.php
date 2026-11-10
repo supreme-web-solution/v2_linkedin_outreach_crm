@@ -28,23 +28,128 @@ class UnipileApiV2ContractsTest extends TestCase
     public function test_people_search_uses_v2_path_without_api_category(): void
     {
         Http::fake([
-            'unipile.test/v2/acc_li/linkedin/search/people' => Http::response(['items' => []], 200),
+            'unipile.test/v2/acc_li/linkedin/search/people*' => Http::response(['data' => []], 200),
         ]);
 
         app(UnipileProvider::class)->searchPeople(
-            ['keywords' => 'founder', 'limit' => 5],
+            ['keywords' => 'founder', 'title' => 'Founder', 'limit' => 5],
             ['account_id' => 'acc_li'],
         );
 
         Http::assertSent(function ($request) {
             $payload = $request->data();
 
-            return $request->url() === 'https://unipile.test/v2/acc_li/linkedin/search/people'
+            return str_starts_with($request->url(), 'https://unipile.test/v2/acc_li/linkedin/search/people')
                 && ($payload['keywords'] ?? null) === 'founder'
-                && array_key_exists('offset', $payload)
+                && ($payload['advanced_keywords']['title'] ?? null) === 'Founder'
+                && ! array_key_exists('title', $payload)
+                && ! array_key_exists('count', $payload)
+                && ! array_key_exists('offset', $payload)
+                && ! array_key_exists('limit', $payload)
                 && ! array_key_exists('api', $payload)
                 && ! array_key_exists('category', $payload)
-                && ! array_key_exists('cursor', $payload);
+                && ! array_key_exists('cursor', $payload)
+                && ! str_contains($request->url(), 'cursor=');
+        });
+    }
+
+    public function test_people_search_paginates_with_cursor_query(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/linkedin/search/people' => Http::sequence()
+                ->push([
+                    'data' => [
+                        ['id' => 'p1', 'display_name' => 'One'],
+                        ['id' => 'p2', 'display_name' => 'Two'],
+                    ],
+                    'next_cursor' => 'cur_2',
+                ], 200)
+                ->push([
+                    'data' => [
+                        ['id' => 'p3', 'display_name' => 'Three'],
+                    ],
+                ], 200),
+            'unipile.test/v2/acc_li/linkedin/search/people?*' => Http::response([
+                'data' => [
+                    ['id' => 'p3', 'display_name' => 'Three'],
+                ],
+            ], 200),
+        ]);
+
+        $result = app(UnipileProvider::class)->searchPeople(
+            ['keywords' => 'laravel developer', 'limit' => 3],
+            ['account_id' => 'acc_li'],
+        );
+
+        $items = UnipileProvider::extractListItems($result);
+        $this->assertCount(3, $items);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://unipile.test/v2/acc_li/linkedin/search/people'
+                && ($request->data()['keywords'] ?? null) === 'laravel developer';
+        });
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), 'cursor=cur_2')
+                && ($request->data()['keywords'] ?? null) === 'laravel developer'
+                && ! array_key_exists('offset', $request->data())
+                && ! array_key_exists('count', $request->data());
+        });
+    }
+
+    public function test_people_search_maps_legacy_network_depths_to_v2_integers(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/linkedin/search/people*' => Http::response(['data' => []], 200),
+        ]);
+
+        app(UnipileProvider::class)->searchPeople(
+            [
+                'keywords' => 'founder',
+                'network_depths' => ['F', 'S', 'O'],
+                'limit' => 5,
+            ],
+            ['account_id' => 'acc_li'],
+        );
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return ($payload['keywords'] ?? null) === 'founder'
+                && ($payload['network_distance'] ?? null) === [1, 2, 3]
+                && ! array_key_exists('network_depths', $payload);
+        });
+    }
+
+    public function test_posts_search_maps_from_company_and_uses_cursor_query(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/linkedin/search/posts*' => Http::response([
+                'data' => [['id' => 'post_1', 'social_id' => 'urn:li:activity:1']],
+                'next_cursor' => 'posts_cur_2',
+            ], 200),
+        ]);
+
+        app(UnipileProvider::class)->searchPosts(
+            [
+                'from_company' => ['12345'],
+                'count' => 10,
+                'cursor' => 'posts_cur_1',
+            ],
+            ['account_id' => 'acc_li'],
+        );
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return str_contains($request->url(), '/linkedin/search/posts')
+                && str_contains($request->url(), 'cursor=posts_cur_1')
+                && str_contains($request->url(), 'limit=10')
+                && ($payload['posted_by']['company'] ?? null) === ['12345']
+                && ! array_key_exists('from_company', $payload)
+                && ! array_key_exists('count', $payload)
+                && ! array_key_exists('cursor', $payload)
+                && ! array_key_exists('limit', $payload);
         });
     }
 
@@ -166,6 +271,96 @@ class UnipileApiV2ContractsTest extends TestCase
             return ($payload['users_ids'] ?? null) === 'ACoAAA'
                 && ($payload['specifics']['linkedin']['classic']['inmail'] ?? null) === true
                 && ! array_key_exists('linkedin', $payload);
+        });
+    }
+
+    public function test_start_chat_maps_options_linkedin_and_invitation_id(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/chats/send' => Http::response(['id' => 'chat_2'], 201),
+        ]);
+        Config::set('services.unipile.endpoints.start_chat', '/chats/send');
+
+        app(UnipileProvider::class)->startChat([
+            'account_id' => 'acc_li',
+            'users_ids' => ['ACoBBB'],
+            'text' => 'Hi',
+            'options' => [
+                'linkedin' => [
+                    'invitation_id' => 'req_legacy_1',
+                    'inmail' => true,
+                ],
+            ],
+        ]);
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+            $classic = $payload['specifics']['linkedin']['classic'] ?? [];
+
+            return ($payload['users_ids'] ?? null) === 'ACoBBB'
+                && ($classic['relation_request_id'] ?? null) === 'req_legacy_1'
+                && ($classic['inmail'] ?? null) === true
+                && ! array_key_exists('invitation_id', $classic)
+                && ! array_key_exists('options', $payload)
+                && ! array_key_exists('linkedin', $payload);
+        });
+    }
+
+    public function test_sales_nav_search_from_url_puts_limit_offset_in_query(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/linkedin/search*' => Http::response([
+                'data' => [
+                    ['id' => 'sn1', 'display_name' => 'SN One'],
+                ],
+            ], 200),
+        ]);
+        Config::set('services.unipile.endpoints.search', '/linkedin/search');
+
+        app(UnipileProvider::class)->searchFromUrl(
+            'https://www.linkedin.com/sales/search/people?query=(recentSearchParam:(id:1))',
+            'acc_li',
+            5,
+        );
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+            $url = $request->url();
+
+            return str_contains($url, '/linkedin/search')
+                && str_contains($url, 'limit=')
+                && str_contains($url, 'offset=0')
+                && ($payload['url'] ?? null) !== null
+                && ! array_key_exists('limit', $payload)
+                && ! array_key_exists('offset', $payload)
+                && ! array_key_exists('count', $payload);
+        });
+    }
+
+    public function test_list_chats_strips_owner_and_legacy_unread(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/chats*' => Http::response(['items' => []], 200),
+        ]);
+        Config::set('services.unipile.endpoints.list_chats', '/chats');
+
+        app(UnipileProvider::class)->listChats(
+            ['unread' => true, 'limit' => 10, 'owner_id' => 99, 'count' => 50],
+            ['account_id' => 'acc_li', 'organization_id' => 7],
+        );
+
+        Http::assertSent(function ($request) {
+            $query = $request->data();
+
+            return $request->method() === 'GET'
+                && str_starts_with($request->url(), 'https://unipile.test/v2/acc_li/chats')
+                && ($query['is_unread'] ?? null) === true
+                && ($query['limit'] ?? null) == 10
+                && ! array_key_exists('unread', $query)
+                && ! array_key_exists('owner_id', $query)
+                && ! array_key_exists('organization_id', $query)
+                && ! array_key_exists('count', $query)
+                && ! array_key_exists('account_id', $query);
         });
     }
 

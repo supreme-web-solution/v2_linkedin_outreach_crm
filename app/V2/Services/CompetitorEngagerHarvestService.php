@@ -631,12 +631,12 @@ class CompetitorEngagerHarvestService
         while (count($collected) < $maxScan) {
             $response = $provider->searchPosts(array_filter([
                 'from_company' => [$companyId],
-                'count' => min($pageSize, $maxScan - count($collected)),
+                'limit' => min($pageSize, $maxScan - count($collected)),
                 'cursor' => $cursor,
             ]), $context);
 
-            $items = Arr::get($response, 'items', []);
-            if (! is_array($items) || $items === []) {
+            $items = UnipileProvider::extractListItems($response);
+            if ($items === []) {
                 break;
             }
 
@@ -653,7 +653,7 @@ class CompetitorEngagerHarvestService
                 }
             }
 
-            $cursor = Arr::get($response, 'cursor');
+            $cursor = UnipileProvider::extractNextCursor($response);
             if (! is_string($cursor) || $cursor === '') {
                 break;
             }
@@ -741,8 +741,8 @@ class CompetitorEngagerHarvestService
                     '_quiet' => true,
                 ]), $context);
 
-                $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
-                if (! is_array($items) || $items === []) {
+                $items = UnipileProvider::extractListItems($response);
+                if ($items === []) {
                     break;
                 }
 
@@ -756,7 +756,7 @@ class CompetitorEngagerHarvestService
                     }
                 }
 
-                $cursor = Arr::get($response, 'cursor');
+                $cursor = UnipileProvider::extractNextCursor($response);
                 if (! is_string($cursor) || $cursor === '') {
                     break;
                 }
@@ -790,12 +790,12 @@ class CompetitorEngagerHarvestService
             try {
                 while (count($collected) < $maxScan) {
                     $response = $provider->searchPosts(array_filter(array_merge($filters, [
-                        'count' => min($pageSize, $maxScan - count($collected)),
+                        'limit' => min($pageSize, $maxScan - count($collected)),
                         'cursor' => $cursor,
                     ]), fn ($value) => $value !== null && $value !== '' && $value !== []), $context);
 
-                    $items = Arr::get($response, 'items', []);
-                    if (! is_array($items) || $items === []) {
+                    $items = UnipileProvider::extractListItems($response);
+                    if ($items === []) {
                         break;
                     }
 
@@ -809,7 +809,7 @@ class CompetitorEngagerHarvestService
                         }
                     }
 
-                    $cursor = Arr::get($response, 'cursor');
+                    $cursor = UnipileProvider::extractNextCursor($response);
                     if (! is_string($cursor) || $cursor === '') {
                         break;
                     }
