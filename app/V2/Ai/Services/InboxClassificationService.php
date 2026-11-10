@@ -50,6 +50,11 @@ class InboxClassificationService
             );
         }
 
+        // Reciprocal "how can I help you?" is easy for models to misread as buyer interest.
+        if ($this->looksLikeOfferedHelp($text)) {
+            return $this->offeredHelpPayload();
+        }
+
         $structured = $this->classifyWithLaravelAi($body);
         if ($structured !== null) {
             return $structured;
@@ -154,6 +159,10 @@ class InboxClassificationService
             );
         }
 
+        if ($this->looksLikeOfferedHelp($text)) {
+            return $this->offeredHelpPayload();
+        }
+
         if (preg_match('/\b(schedule|book|calendar|zoom|meeting|hop on|let\'s talk|lets talk|call me|set up a call|setup a call|chat tomorrow|book a demo|schedule a demo|demo call|pick a time)\b/i', $text)) {
             return $this->payload(
                 priority: 'hot',
@@ -200,7 +209,8 @@ class InboxClassificationService
             );
         }
 
-        if (preg_match('/\b(i\'d like|i would like|we\'d like|we would like|would be interested|am interested|want more|more predictable|sounds (useful|interesting)|that would be useful|how can you help|interested in|yes[,.]?\s*i (would|will)|yes please|definitely|would love|let\'s do it|lets do it)\b/i', $text)) {
+        // "how can you help" / "how can you help us" = buyer asking about our value (not reciprocal courtesy).
+        if (preg_match('/\b(i\'d like|i would like|we\'d like|we would like|would be interested|am interested|want more|more predictable|sounds (useful|interesting)|that would be useful|how can you help(?:\s+(?:me|us|my|our))?|interested in|yes[,.]?\s*i (would|will)|yes please|definitely|would love|let\'s do it|lets do it)\b/i', $text)) {
             return $this->payload(
                 priority: 'hot',
                 intent: 'interested',
@@ -294,6 +304,54 @@ class InboxClassificationService
             stage: 'early',
             recommendedAction: 'Review reply and decide next step.',
             evidence: ['neutral_tone'],
+        );
+    }
+
+    /**
+     * Prospect offering help / asking how they can help the sender (after outreach).
+     * Distinct from "how can you help me?" (buyer asking about our offer).
+     */
+    private function looksLikeOfferedHelp(string $text): bool
+    {
+        if (preg_match('/\bhow can you help(?:\s+(?:me|us|my|our))?\b/i', $text)) {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/\b('
+            .'how can i help(?:\s+you)?(?:\s+out)?'
+            .'|how may i help(?:\s+you)?'
+            .'|how (?:do|would) you (?:like|want) me to help'
+            .'|what can i (?:do|help) (?:for|with) you'
+            .'|what do you need from me'
+            .'|let me know how i can help'
+            .'|happy to help(?:\s+you)?'
+            .'|glad to help(?:\s+you)?'
+            .')\b/i',
+            $text,
+        );
+    }
+
+    /**
+     * @return array{
+     *     priority: string,
+     *     intent: string,
+     *     stage: string,
+     *     recommended_action: string,
+     *     evidence: list<string>,
+     *     buying_signal: string,
+     *     asset_preference: string|null
+     * }
+     */
+    private function offeredHelpPayload(): array
+    {
+        return $this->payload(
+            priority: 'needs_judgment',
+            intent: 'offered_help',
+            stage: 'engaged',
+            recommendedAction: 'Answer briefly what you help with (flip their question), then one soft next step — do not re-qualify.',
+            evidence: ['offered_help'],
+            buyingSignal: 'soft',
         );
     }
 

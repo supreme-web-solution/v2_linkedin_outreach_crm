@@ -196,8 +196,8 @@ class ConversionStageService
         $stage = $this->current($lead);
 
         return match ($stage) {
-            self::STAGE_OPENING => 'Stage: opening — if this is their first reply, ask ONE qualifying question about their situation. No pitch, no links.',
-            self::STAGE_QUALIFYING => 'Stage: qualifying — dig into pain, current approach, and goals. Only move to an asset when they show genuine interest.',
+            self::STAGE_OPENING => 'Stage: opening — default is ONE qualifying question about their situation (no pitch, no links). If Required next action says answer_help_offer / share / book, follow that instead.',
+            self::STAGE_QUALIFYING => 'Stage: qualifying — dig into pain, current approach, and goals unless Required next action says otherwise. Only move to an asset when they show genuine interest.',
             self::STAGE_OFFERED_ASSET => 'Stage: offered asset — they saw a sales page or webinar link. Check if it resonated; if they are still unsure, the next step is a meeting (last card), not another pitch.',
             self::STAGE_OFFERED_MEETING => 'Stage: offered meeting — meeting link was shared. Confirm timing or answer objections; do not pitch again.',
             self::STAGE_WON => 'Stage: won — treat as customer/nurture appropriately; no hard selling.',

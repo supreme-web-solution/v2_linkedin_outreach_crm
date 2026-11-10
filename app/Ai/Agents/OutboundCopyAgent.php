@@ -52,6 +52,7 @@ class OutboundCopyAgent implements Agent, HasStructuredOutput
                 'Primary job after the opener is CONVERSION, not another research monologue.',
                 'If agent_notes / Required next action says share sales page or webinar: acknowledge briefly, include that ONE URL, invite them to look — do not ask another discovery question instead of the link.',
                 'If it says book_meeting: include the booking URL and propose the call — do not re-pitch the product.',
+                'If it says answer_help_offer: they asked how they can help you — briefly explain what you help them with from the brief, then one soft next step. Never empty "thanks for getting back / glad to connect" filler. No discovery quiz. No URLs.',
                 'If forbid_links / qualify: ONE situational question only — no product dump, no URLs.',
                 'Never write operator instructions ("Reply with…"). Never invent facts. Match thread tone.',
                 'For early email replies, prefer 2–4 short paragraphs with substance — not a chat bubble.',

@@ -23,6 +23,7 @@ class InboxClassifyAgent implements Agent, HasStructuredOutput
         'will_review',
         'not_convinced',
         'qualifying_answer',
+        'offered_help',
         'question',
         'timing',
         'objection',
@@ -43,6 +44,7 @@ intent meanings:
 - will_review: will look / check / review later
 - not_convinced: hesitation after seeing something; needs meeting as last card
 - qualifying_answer: answering a discovery question about their process (referrals, outbound, etc.) — NOT a pitch ask
+- offered_help: reciprocal courtesy — they ask how THEY can help YOU ("how can I help you?", "what do you need from me?", "happy to help") after your outreach. NOT the same as them asking how you can help them.
 - question: other clarifying question
 - timing: not now / later / busy
 - objection: not interested / wrong person / already using something

@@ -60,4 +60,28 @@ class InboxClassifyAgentTest extends TestCase
         InboxClassifyAgent::assertNeverPrompted();
         $this->assertSame('opt_out', $result['intent']);
     }
+
+    public function test_offered_help_hard_gate_skips_agent(): void
+    {
+        config()->set('ai.providers.openai.key', 'sk-test');
+        config()->set('socifusion_ai.model_failover', ['openai' => null]);
+
+        InboxClassifyAgent::fake([
+            [
+                'intent' => 'interested',
+                'buying_signal' => 'hard',
+                'asset_preference' => null,
+                'priority' => 'hot',
+                'stage' => 'engaged',
+                'recommended_action' => 'should not run',
+                'evidence' => ['yes'],
+            ],
+        ]);
+
+        $result = app(InboxClassificationService::class)->classify('how can i help you ?');
+
+        InboxClassifyAgent::assertNeverPrompted();
+        $this->assertSame('offered_help', $result['intent']);
+        $this->assertSame('soft', $result['buying_signal']);
+    }
 }

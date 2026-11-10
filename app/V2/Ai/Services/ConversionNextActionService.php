@@ -16,6 +16,9 @@ class ConversionNextActionService
 
     public const ACTION_QUALIFY = 'qualify';
 
+    /** Prospect offered reciprocal help — answer with brief value, do not re-qualify. */
+    public const ACTION_ANSWER_HELP = 'answer_help_offer';
+
     public const ACTION_SHARE_SALES_PAGE = 'share_sales_page';
 
     public const ACTION_SHARE_WEBINAR = 'share_webinar';
@@ -152,6 +155,22 @@ class ConversionNextActionService
                 $buying,
                 tool: 'draft_reply',
                 guide: 'They want to talk, but no booking link is configured. Propose two concrete time windows. No sales page or webinar unless they ask.',
+            );
+        }
+
+        if ($intent === 'offered_help') {
+            return $this->result(
+                self::ACTION_ANSWER_HELP,
+                $stage,
+                $intent,
+                $buying,
+                tool: 'draft_reply',
+                forbidLinks: true,
+                guide: 'They asked how THEY can help YOU (reciprocal courtesy after your outreach) — not requesting a pitch dump. '
+                    .'Do NOT write empty filler like "Thanks for getting back to me" or "I\'d be glad to connect." '
+                    .'Flip the question: in 2–4 short sentences, explain what you help businesses like theirs with '
+                    .'(from the campaign / business brief). Then ONE soft next step (e.g. ask if that is relevant for them). '
+                    .'No discovery quiz about how they get clients. No links yet.',
             );
         }
 

@@ -93,6 +93,27 @@ class ConversionIntelligenceMatrixTest extends TestCase
         $won = ConversionStageService::STAGE_WON;
 
         return [
+            'reciprocal_how_can_i_help_you' => [
+                'stage' => $open, 'assets' => $full,
+                'inbound' => 'how can i help you ?',
+                'expect_intent' => 'offered_help',
+                'action' => ConversionNextActionService::ACTION_ANSWER_HELP,
+                'tool' => 'draft_reply', 'forbid_links' => true,
+            ],
+            'reciprocal_happy_to_help' => [
+                'stage' => $q, 'assets' => $full,
+                'inbound' => 'Happy to help — what do you need from me?',
+                'expect_intent' => 'offered_help',
+                'action' => ConversionNextActionService::ACTION_ANSWER_HELP,
+                'forbid_links' => true,
+            ],
+            'buyer_asks_how_you_can_help' => [
+                'stage' => $q, 'assets' => $full,
+                'inbound' => 'Interesting — how can you help us with outbound?',
+                'expect_intent' => 'interested',
+                'action' => ConversionNextActionService::ACTION_SHARE_SALES_PAGE,
+                'must_include_url' => true, 'asset_url' => $sales,
+            ],
             'agency_owner_referrals_first_reply' => [
                 'stage' => $q, 'assets' => $full,
                 'inbound' => 'Mostly referrals right now.',
