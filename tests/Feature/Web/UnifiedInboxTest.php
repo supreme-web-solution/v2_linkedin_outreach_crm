@@ -1403,6 +1403,54 @@ class UnifiedInboxTest extends TestCase
         $this->assertSame('replied', $lead->fresh()->status);
     }
 
+    public function test_email_inbound_accepts_unipile_v2_email_new_payload_and_existing_thread_without_lead(): void
+    {
+        $user = $this->userWithOrg();
+
+        V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'email',
+            'provider_chat_id' => 'prospect@example.com',
+            'status' => 'active',
+            'last_message_at' => now()->subHour(),
+            'meta' => [
+                'prospect_email' => 'prospect@example.com',
+                'email_subject' => 'Hello',
+            ],
+        ]);
+
+        app(\App\V2\Services\UnifiedInboxService::class)->handleInboundEmailWebhook($user->id, [
+            'id' => 'evt_email_1',
+            'type' => 'email.new',
+            'account_id' => 'acc_email_v2',
+            'payload' => [
+                'folder_id' => 'folder_inbox',
+                'email' => [
+                    'id' => 'email_v2_1',
+                    'from_attendee' => ['identifier' => 'prospect@example.com'],
+                    'to_attendees' => [['identifier' => 'me@company.com']],
+                    'subject' => 'Re: Hello',
+                    'body_plain' => 'Thanks, works for me.',
+                    'date' => now()->toIso8601String(),
+                ],
+            ],
+        ]);
+
+        $conversation = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->where('provider', 'email')
+            ->where('provider_chat_id', 'prospect@example.com')
+            ->first();
+
+        $this->assertNotNull($conversation);
+        $this->assertDatabaseHas('v2_messages', [
+            'conversation_id' => $conversation->id,
+            'direction' => 'inbound',
+            'body' => 'Thanks, works for me.',
+            'provider_message_id' => 'email_v2_1',
+        ]);
+    }
+
     public function test_inbox_index_includes_unread_count_per_platform(): void
     {
         $user = $this->userWithOrg();

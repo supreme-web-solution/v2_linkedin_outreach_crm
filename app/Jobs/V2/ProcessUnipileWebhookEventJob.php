@@ -50,12 +50,24 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
 
         $payload = is_array($event->payload) ? $event->payload : [];
         if ($this->shouldSkipDisabledChannel($payload)) {
+            \Illuminate\Support\Facades\Log::info('[Unipile webhook] skipped disabled channel', [
+                'event_id' => $event->event_id,
+                'event_type' => $event->event_type,
+                'provider' => Arr::get($payload, 'account_provider') ?? Arr::get($payload, 'provider'),
+            ]);
             $event->forceFill(['processed_at' => now()])->save();
 
             return;
         }
 
         $eventType = $event->event_type;
+        \Illuminate\Support\Facades\Log::info('[Unipile webhook] processing', [
+            'provider_event_id' => $event->id,
+            'event_id' => $event->event_id,
+            'event_type' => $eventType,
+            'user_id' => $event->user_id,
+            'account_id' => Arr::get($payload, 'account_id') ?? Arr::get($payload, 'data.account_id'),
+        ]);
         $knownEventTypes = [
             'message.received',
             'new_message',
@@ -693,10 +705,15 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
     {
         return trim((string) (
             Arr::get($payload, 'data.text')
+            ?? Arr::get($payload, 'payload.text')
             ?? Arr::get($payload, 'text')
             ?? Arr::get($payload, 'data.message')
+            ?? Arr::get($payload, 'payload.message')
             ?? Arr::get($payload, 'message')
+            ?? Arr::get($payload, 'data.body_plain')
+            ?? Arr::get($payload, 'payload.body_plain')
             ?? Arr::get($payload, 'data.body')
+            ?? Arr::get($payload, 'payload.body')
             ?? Arr::get($payload, 'body')
             ?? ''
         ));
@@ -707,7 +724,15 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
      */
     private function shouldSkipDisabledChannel(array $payload): bool
     {
-        $providerRaw = (string) (Arr::get($payload, 'data.provider') ?? Arr::get($payload, 'provider') ?? Arr::get($payload, 'data.account_type') ?? Arr::get($payload, 'account_type') ?? '');
+        $providerRaw = (string) (
+            Arr::get($payload, 'account_provider')
+            ?? Arr::get($payload, 'data.account_provider')
+            ?? Arr::get($payload, 'data.provider')
+            ?? Arr::get($payload, 'provider')
+            ?? Arr::get($payload, 'data.account_type')
+            ?? Arr::get($payload, 'account_type')
+            ?? ''
+        );
         if ($providerRaw === '') {
             return false;
         }
@@ -727,7 +752,10 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
     {
         $raw = Arr::get($payload, 'timestamp')
             ?? Arr::get($payload, 'data.timestamp')
+            ?? Arr::get($payload, 'payload.timestamp')
             ?? Arr::get($payload, 'data.date')
+            ?? Arr::get($payload, 'payload.date')
+            ?? Arr::get($payload, 'created_at')
             ?? Arr::get($payload, 'date');
 
         if ($raw !== null && $raw !== '') {

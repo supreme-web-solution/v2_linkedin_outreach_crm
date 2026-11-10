@@ -208,35 +208,51 @@ class UnipileMessageNormalizer
      */
     public function extractReactionEvent(array $payload): ?array
     {
+        $inner = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
         $messageId = trim((string) (
             Arr::get($payload, 'data.message_id')
+            ?? Arr::get($inner, 'message_id')
             ?? Arr::get($payload, 'message_id')
             ?? Arr::get($payload, 'data.referenced_message_id')
             ?? Arr::get($payload, 'referenced_message_id')
             ?? ''
         ));
 
-        $value = trim((string) (
-            Arr::get($payload, 'data.reaction')
-            ?? Arr::get($payload, 'reaction')
-            ?? ''
-        ));
+        $reaction = Arr::get($payload, 'data.reaction')
+            ?? Arr::get($inner, 'reaction')
+            ?? Arr::get($payload, 'reaction');
+
+        $value = '';
+        if (is_string($reaction)) {
+            $value = trim($reaction);
+        } elseif (is_array($reaction)) {
+            $value = trim((string) (
+                $reaction['value']
+                ?? $reaction['reaction']
+                ?? $reaction['emoji']
+                ?? ''
+            ));
+        }
 
         if ($messageId === '' || $value === '') {
             return null;
         }
 
-        $senderId = (string) (
+        $senderId = trim((string) (
             Arr::get($payload, 'data.reaction_sender.attendee_provider_id')
             ?? Arr::get($payload, 'reaction_sender.attendee_provider_id')
+            ?? Arr::get($inner, 'reaction.sender_id')
+            ?? Arr::get($inner, 'reaction.user_id')
+            ?? (is_array($reaction) ? ($reaction['sender_id'] ?? $reaction['user_id'] ?? null) : null)
             ?? Arr::get($payload, 'data.sender_id')
             ?? Arr::get($payload, 'sender_id')
             ?? ''
-        );
+        ));
 
         $isSender = (bool) (
             Arr::get($payload, 'data.reaction_sender.is_sender')
             ?? Arr::get($payload, 'reaction_sender.is_sender')
+            ?? (is_array($reaction) ? ($reaction['is_sender'] ?? null) : null)
             ?? Arr::get($payload, 'data.is_sender')
             ?? Arr::get($payload, 'is_sender')
             ?? false

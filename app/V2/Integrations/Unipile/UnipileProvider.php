@@ -716,6 +716,26 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         return $this->accountScopedRequest('GET', $this->endpoint('list_emails'), $accountId, $query);
     }
 
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    public function getEmail(string $emailId, array $context = []): array
+    {
+        $emailId = trim($emailId);
+        if ($emailId === '') {
+            throw new UnipileException('email_id is required.', 422);
+        }
+
+        $accountId = $this->resolveAccountId([], $context);
+
+        return $this->accountScopedRequest(
+            'GET',
+            $this->endpoint('list_emails').'/'.rawurlencode($emailId),
+            $accountId,
+        );
+    }
+
     public function listInvitations(array $context = []): array
     {
         $accountId = $this->resolveAccountId([], $context);
@@ -2419,11 +2439,17 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     public function parseEvent(array $payload): array
     {
         $inner = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
+        // message.new payload IS the Message object; email.new nests under payload.email.
+        $messageLike = $inner;
+        if (is_array($inner['email'] ?? null)) {
+            $messageLike = array_replace($inner, $inner['email']);
+        }
 
         $text = (string) (
-            Arr::get($inner, 'text')
-            ?? Arr::get($inner, 'body')
-            ?? Arr::get($inner, 'message')
+            Arr::get($messageLike, 'text')
+            ?? Arr::get($messageLike, 'body_plain')
+            ?? Arr::get($messageLike, 'body')
+            ?? Arr::get($messageLike, 'message')
             ?? Arr::get($payload, 'text')
             ?? Arr::get($payload, 'body')
             ?? Arr::get($payload, 'message')
@@ -2432,22 +2458,24 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             ?? ''
         );
         $chatId = (string) (
-            Arr::get($inner, 'chat_id')
-            ?? Arr::get($inner, 'chat_provider_id')
+            Arr::get($messageLike, 'chat_id')
+            ?? Arr::get($messageLike, 'chat_provider_id')
             ?? Arr::get($payload, 'chat_id')
             ?? Arr::get($payload, 'data.chat_id')
             ?? ''
         );
         $messageId = (string) (
-            Arr::get($inner, 'id')
-            ?? Arr::get($inner, 'provider_id')
-            ?? Arr::get($inner, 'message_id')
+            Arr::get($messageLike, 'id')
+            ?? Arr::get($messageLike, 'provider_id')
+            ?? Arr::get($messageLike, 'message_id')
+            ?? Arr::get($messageLike, 'email_id')
             ?? Arr::get($payload, 'message_id')
             ?? Arr::get($payload, 'data.message_id')
             ?? ''
         );
         $accountId = (string) (
             Arr::get($payload, 'account_id')
+            ?? Arr::get($messageLike, 'account_id')
             ?? Arr::get($inner, 'account_id')
             ?? Arr::get($payload, 'data.account_id')
             ?? ''
@@ -2455,10 +2483,29 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $accountProvider = (string) (
             Arr::get($payload, 'account_provider')
             ?? Arr::get($payload, 'account_type')
+            ?? Arr::get($messageLike, 'provider')
             ?? Arr::get($inner, 'provider')
             ?? Arr::get($payload, 'provider')
             ?? ''
         );
+
+        $dataExtras = array_filter([
+            'chat_id' => $chatId !== '' ? $chatId : null,
+            'text' => $text !== '' ? $text : null,
+            'message_id' => $messageId !== '' ? $messageId : null,
+            'account_id' => $accountId !== '' ? $accountId : null,
+            'account_provider' => $accountProvider !== '' ? $accountProvider : null,
+            'provider' => $accountProvider !== '' ? $accountProvider : null,
+            'is_sender' => Arr::get($messageLike, 'is_sender') ?? Arr::get($messageLike, 'is_from_me'),
+            'is_from_me' => Arr::get($messageLike, 'is_from_me') ?? Arr::get($messageLike, 'is_sender'),
+            'sender' => Arr::get($messageLike, 'sender'),
+            'attachments' => Arr::get($messageLike, 'attachments'),
+            'timestamp' => Arr::get($messageLike, 'timestamp')
+                ?? Arr::get($messageLike, 'date')
+                ?? Arr::get($payload, 'created_at'),
+            'reaction' => Arr::get($messageLike, 'reaction'),
+            'reaction_sender' => Arr::get($messageLike, 'reaction_sender') ?? Arr::get($messageLike, 'sender'),
+        ], fn ($v) => $v !== null && $v !== '');
 
         return array_merge($payload, [
             'account_id' => $accountId !== '' ? $accountId : ($payload['account_id'] ?? null),
@@ -2469,14 +2516,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'message_id' => $messageId !== '' ? $messageId : ($payload['message_id'] ?? null),
             'data' => array_merge(
                 is_array($payload['data'] ?? null) ? $payload['data'] : [],
-                array_filter([
-                    'chat_id' => $chatId !== '' ? $chatId : null,
-                    'text' => $text !== '' ? $text : null,
-                    'message_id' => $messageId !== '' ? $messageId : null,
-                    'account_id' => $accountId !== '' ? $accountId : null,
-                    'account_provider' => $accountProvider !== '' ? $accountProvider : null,
-                    'provider' => $accountProvider !== '' ? $accountProvider : null,
-                ], fn ($v) => $v !== null && $v !== '')
+                $messageLike,
+                $dataExtras,
             ),
         ]);
     }
@@ -2530,7 +2571,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     private function emailNewDirection(array $payload): string
     {
         $inner = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
-        $folders = Arr::get($inner, 'folders')
+        $email = is_array($inner['email'] ?? null) ? $inner['email'] : [];
+        $folders = Arr::get($email, 'folders')
+            ?? Arr::get($inner, 'folders')
             ?? Arr::get($payload, 'folders')
             ?? Arr::get($payload, 'data.folders')
             ?? [];
@@ -2553,6 +2596,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $role = strtoupper(trim((string) (
             Arr::get($inner, 'folder.role')
             ?? Arr::get($payload, 'folder.role')
+            ?? Arr::get($email, 'role')
             ?? Arr::get($inner, 'role')
             ?? ''
         )));

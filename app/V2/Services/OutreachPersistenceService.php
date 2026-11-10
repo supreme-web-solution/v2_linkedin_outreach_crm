@@ -438,13 +438,20 @@ class OutreachPersistenceService
 
     public function resolveUserIdFromUnipileAccount(string $accountId): ?int
     {
+        $accountId = trim($accountId);
+        if ($accountId === '') {
+            return null;
+        }
+
         $account = V2IntegrationAccount::query()
-            ->where('provider_account_id', $accountId)
-            ->orWhere('meta->unipile_account_id', $accountId)
+            ->where(function ($query) use ($accountId) {
+                $query->where('provider_account_id', $accountId)
+                    ->orWhere('meta->unipile_account_id', $accountId);
+            })
             ->orderByDesc('id')
             ->first();
 
-        return $account?->user_id;
+        return $account?->user_id ? (int) $account->user_id : null;
     }
 
     /**

@@ -346,6 +346,28 @@ class UnifiedInboxService
             return;
         }
 
+        if (! empty($emailItem['needs_body_fetch']) && ($emailItem['provider_message_id'] ?? '') !== '') {
+            $accountId = V2IntegrationAccount::activeUnipileAccountIdForProvider($userId, 'email');
+            if ($accountId) {
+                try {
+                    $full = app(UnipileProvider::class)->getEmail(
+                        (string) $emailItem['provider_message_id'],
+                        ['account_id' => $accountId],
+                    );
+                    $hydrated = $this->normalizeEmailWebhookItem(is_array($full) ? $full : []);
+                    if ($hydrated !== null) {
+                        $emailItem = $hydrated;
+                    }
+                } catch (\Throwable) {
+                    // Fall through; empty body is skipped below.
+                }
+            }
+        }
+
+        if (($emailItem['body'] ?? '') === '' && ($emailItem['attachments'] ?? []) === []) {
+            return;
+        }
+
         $this->importEmailForLead($userId, $emailItem, triggerReplyHandlers: true);
     }
 
@@ -381,6 +403,25 @@ class UnifiedInboxService
 
             $normalized = $this->normalizeEmailWebhookItem($item);
             if ($normalized === null) {
+                continue;
+            }
+
+            if (! empty($normalized['needs_body_fetch']) && ($normalized['provider_message_id'] ?? '') !== '') {
+                try {
+                    $full = app(UnipileProvider::class)->getEmail(
+                        (string) $normalized['provider_message_id'],
+                        ['account_id' => $accountId],
+                    );
+                    $hydrated = $this->normalizeEmailWebhookItem(is_array($full) ? $full : []);
+                    if ($hydrated !== null) {
+                        $normalized = $hydrated;
+                    }
+                } catch (\Throwable) {
+                    // Keep metadata-only row skipped below when body stays empty.
+                }
+            }
+
+            if (($normalized['body'] ?? '') === '' && ($normalized['attachments'] ?? []) === []) {
                 continue;
             }
 
@@ -441,12 +482,36 @@ class UnifiedInboxService
      */
     private function normalizeEmailWebhookItem(array $payload): ?array
     {
-        $inner = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
-        $role = strtolower((string) (Arr::get($inner, 'role') ?? Arr::get($payload, 'role') ?? ''));
-        $event = strtolower(str_replace('.', '_', (string) (Arr::get($payload, 'event') ?? '')));
+        $inner = $this->unwrapEmailPayload($payload);
+        $role = strtolower((string) (
+            Arr::get($inner, 'role')
+            ?? Arr::get($payload, 'role')
+            ?? Arr::get($payload, 'folder.role')
+            ?? Arr::get($payload, 'payload.folder.role')
+            ?? ''
+        ));
+        $event = strtolower(str_replace('.', '_', (string) (
+            Arr::get($payload, 'type')
+            ?? Arr::get($payload, 'event')
+            ?? ''
+        )));
 
-        if (in_array($role, ['outbox', 'sent'], true) || $event === 'mail_sent') {
+        if (in_array($role, ['outbox', 'sent'], true) || $event === 'mail_sent' || $event === 'email_sent') {
             return null;
+        }
+
+        // v2 folders are folder IDs (strings); keep object-role detection for older payloads.
+        $folders = Arr::get($inner, 'folders') ?? Arr::get($payload, 'folders') ?? [];
+        if (is_array($folders)) {
+            foreach ($folders as $folder) {
+                if (! is_array($folder)) {
+                    continue;
+                }
+                $folderRole = strtolower(trim((string) ($folder['role'] ?? '')));
+                if (in_array($folderRole, ['sent', 'outbox'], true)) {
+                    return null;
+                }
+            }
         }
 
         $fromEmail = $this->extractEmailAddress(
@@ -465,18 +530,18 @@ class UnifiedInboxService
         $body = trim(strip_tags((string) (
             Arr::get($inner, 'body_plain')
             ?? Arr::get($payload, 'body_plain')
+            ?? Arr::get($inner, 'plain_text')
+            ?? Arr::get($payload, 'plain_text')
             ?? Arr::get($inner, 'body')
             ?? Arr::get($payload, 'body')
+            ?? Arr::get($inner, 'html')
+            ?? Arr::get($payload, 'html')
             ?? ''
         )));
 
         $attachments = app(UnipileMessageNormalizer::class)->extractAttachments(
             is_array($inner) && $inner !== [] ? $inner : $payload
         );
-
-        if ($body === '' && $attachments === []) {
-            return null;
-        }
 
         // Prefer Unipile's stable email id. Never use provider_id (provider JSON blob) —
         // webhook vs listEmails disagree on that field and create duplicate bubbles.
@@ -485,12 +550,30 @@ class UnifiedInboxService
             ?? Arr::get($payload, 'email_id')
             ?? Arr::get($inner, 'id')
             ?? Arr::get($payload, 'id')
+            ?? Arr::get($payload, 'payload.email.id')
             ?? ''
         ));
 
         // Reject obvious provider JSON blobs if they slipped through as "id".
         if ($providerMessageId !== '' && (str_starts_with($providerMessageId, '{') || str_starts_with($providerMessageId, '['))) {
             $providerMessageId = '';
+        }
+
+        if ($body === '' && $attachments === []) {
+            return $providerMessageId !== ''
+                ? [
+                    'from_email' => $fromEmail,
+                    'to_emails' => $toEmails,
+                    'body' => '',
+                    'subject' => trim((string) (Arr::get($inner, 'subject') ?? Arr::get($payload, 'subject') ?? '')),
+                    'provider_message_id' => $providerMessageId,
+                    'received_at' => is_string(Arr::get($inner, 'date') ?? Arr::get($payload, 'date'))
+                        ? (string) (Arr::get($inner, 'date') ?? Arr::get($payload, 'date'))
+                        : null,
+                    'attachments' => [],
+                    'needs_body_fetch' => true,
+                ]
+                : null;
         }
 
         $subject = trim((string) (Arr::get($inner, 'subject') ?? Arr::get($payload, 'subject') ?? ''));
@@ -508,12 +591,54 @@ class UnifiedInboxService
     }
 
     /**
+     * Unipile v2 email.new nests the Email object under payload.email.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function unwrapEmailPayload(array $payload): array
+    {
+        foreach ([
+            Arr::get($payload, 'payload.email'),
+            Arr::get($payload, 'email'),
+            Arr::get($payload, 'data.email'),
+            Arr::get($payload, 'data'),
+            Arr::get($payload, 'payload'),
+        ] as $candidate) {
+            if (! is_array($candidate) || $candidate === []) {
+                continue;
+            }
+
+            // Prefer objects that look like Email records.
+            if (
+                isset($candidate['from_attendee'])
+                || isset($candidate['from'])
+                || isset($candidate['body'])
+                || isset($candidate['body_plain'])
+                || isset($candidate['subject'])
+                || isset($candidate['to_attendees'])
+                || isset($candidate['to'])
+            ) {
+                return $candidate;
+            }
+        }
+
+        return $payload;
+    }
+
+    /**
      * @param  array{from_email: string, to_emails: array<int, string>, body: string, subject: string, provider_message_id: string, received_at: string|null, attachments?: list<array<string, mixed>>}  $emailItem
      */
     private function importEmailForLead(int $userId, array $emailItem, bool $triggerReplyHandlers): void
     {
         $fromEmail = $emailItem['from_email'];
         if ($fromEmail === '') {
+            return;
+        }
+
+        $connectedMailbox = $this->connectedMailboxEmail($userId);
+        if ($connectedMailbox !== '' && $fromEmail === $connectedMailbox) {
+            // Outbound copy of our own send — not an inbound reply.
             return;
         }
 
@@ -527,39 +652,38 @@ class UnifiedInboxService
             }
         }
 
-        if (! $lead) {
-            return;
+        $prospectEmail = '';
+        if ($lead) {
+            $prospectEmail = strtolower(trim((string) ($lead->email ?? '')));
         }
-
-        $prospectEmail = strtolower(trim((string) ($lead->email ?? '')));
         if ($prospectEmail === '') {
-            $prospectEmail = $fromEmail !== '' && $fromEmail !== $this->connectedMailboxEmail($userId)
-                ? $fromEmail
-                : ($emailItem['to_emails'][0] ?? '');
+            $prospectEmail = $fromEmail;
         }
 
+        $prospectEmail = $this->emailThreadKey($prospectEmail);
         if ($prospectEmail === '') {
             return;
         }
 
-        $isInboundFromLead = $fromEmail === $prospectEmail;
-        if (! $isInboundFromLead) {
+        // Only import mail that came from the prospect (not our own outbound).
+        if ($fromEmail !== $prospectEmail) {
             return;
         }
 
-        $threadKey = $this->emailThreadKey($prospectEmail);
-        $campaign = $lead->campaign;
-        if (! $campaign) {
-            return;
-        }
+        $threadKey = $prospectEmail;
+        $campaign = $lead?->campaign;
 
-        $conversation = V2Conversation::query()->firstOrCreate(
-            [
+        $conversation = V2Conversation::query()
+            ->where('user_id', $userId)
+            ->where('provider', 'email')
+            ->where('provider_chat_id', $threadKey)
+            ->first();
+
+        if (! $conversation && $lead && $campaign) {
+            $conversation = V2Conversation::query()->create([
                 'user_id' => $userId,
                 'provider' => 'email',
                 'provider_chat_id' => $threadKey,
-            ],
-            [
                 'status' => 'active',
                 'last_message_at' => now(),
                 'meta' => $this->emailConversationMeta(
@@ -569,8 +693,13 @@ class UnifiedInboxService
                     $emailItem['subject'],
                     $emailItem['provider_message_id'],
                 ),
-            ],
-        );
+            ]);
+        }
+
+        if (! $conversation) {
+            // No outreach lead and no existing inbox thread for this address.
+            return;
+        }
 
         $meta = is_array($conversation->meta) ? $conversation->meta : [];
         $conversation->forceFill([
@@ -578,9 +707,11 @@ class UnifiedInboxService
             'status' => 'active',
             'meta' => array_merge($meta, array_filter([
                 'source' => 'unified_inbox',
-                'outreach_lead_id' => $lead->id,
-                'outreach_campaign_id' => $lead->outreach_campaign_id,
-                'prospect_name' => trim((string) ($lead->full_name ?? '')) ?: ($meta['prospect_name'] ?? null),
+                'outreach_lead_id' => $lead?->id ?? ($meta['outreach_lead_id'] ?? null),
+                'outreach_campaign_id' => $lead?->outreach_campaign_id ?? ($meta['outreach_campaign_id'] ?? null),
+                'prospect_name' => $lead
+                    ? (trim((string) ($lead->full_name ?? '')) ?: ($meta['prospect_name'] ?? null))
+                    : ($meta['prospect_name'] ?? null),
                 'prospect_email' => $threadKey,
                 'email_subject' => $emailItem['subject'] !== '' ? $emailItem['subject'] : ($meta['email_subject'] ?? null),
                 'last_email_provider_id' => $emailItem['provider_message_id'] !== ''
