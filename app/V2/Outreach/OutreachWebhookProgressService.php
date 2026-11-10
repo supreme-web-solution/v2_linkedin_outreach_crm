@@ -171,7 +171,11 @@ class OutreachWebhookProgressService
      */
     private function extractEmailFromPayload(array $payload): string
     {
-        $inner = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
+        $inner = is_array($payload['payload']['email'] ?? null)
+            ? $payload['payload']['email']
+            : (is_array($payload['data']['email'] ?? null)
+                ? $payload['data']['email']
+                : (is_array($payload['data'] ?? null) ? $payload['data'] : $payload));
 
         foreach (['from_attendee', 'from'] as $key) {
             $value = Arr::get($inner, $key) ?? Arr::get($payload, $key);

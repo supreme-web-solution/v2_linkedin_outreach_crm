@@ -1451,6 +1451,74 @@ class UnifiedInboxTest extends TestCase
         ]);
     }
 
+    public function test_email_inbound_hydrates_empty_v2_webhook_body_via_get_email(): void
+    {
+        $user = $this->userWithOrg();
+
+        \App\Models\V2IntegrationAccount::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'email',
+            'provider_account_id' => 'acc_email_v2',
+            'status' => 'active',
+            'meta' => ['unipile_account_id' => 'acc_email_v2', 'email' => 'me@company.com'],
+        ]);
+
+        V2Conversation::query()->create([
+            'user_id' => $user->id,
+            'provider' => 'email',
+            'provider_chat_id' => 'prospect@example.com',
+            'status' => 'active',
+            'last_message_at' => now()->subHour(),
+            'meta' => ['prospect_email' => 'prospect@example.com'],
+        ]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'unipile.test/v2/acc_email_v2/emails/email_v2_empty' => \Illuminate\Support\Facades\Http::response([
+                'id' => 'email_v2_empty',
+                'from_attendee' => ['identifier' => 'prospect@example.com'],
+                'to_attendees' => [['identifier' => 'me@company.com']],
+                'subject' => 'Re: Hello',
+                'body_plain' => 'Hydrated reply body',
+                'date' => now()->toIso8601String(),
+            ], 200),
+        ]);
+        \Illuminate\Support\Facades\Config::set('services.unipile.base_url', 'https://unipile.test/v2');
+        \Illuminate\Support\Facades\Config::set('services.unipile.api_key', 'test-key');
+        \Illuminate\Support\Facades\Config::set('services.unipile.mock', false);
+
+        app(\App\V2\Services\UnifiedInboxService::class)->handleInboundEmailWebhook($user->id, [
+            'id' => 'evt_email_empty',
+            'type' => 'email.new',
+            'account_id' => 'acc_email_v2',
+            'payload' => [
+                'folder_id' => 'folder_inbox',
+                'email' => [
+                    'id' => 'email_v2_empty',
+                    'from_attendee' => ['identifier' => 'prospect@example.com'],
+                    'to_attendees' => [['identifier' => 'me@company.com']],
+                    'subject' => 'Re: Hello',
+                    'body_plain' => '',
+                    'body' => '',
+                    'is_complete' => false,
+                ],
+            ],
+        ]);
+
+        $conversation = V2Conversation::query()
+            ->where('user_id', $user->id)
+            ->where('provider', 'email')
+            ->where('provider_chat_id', 'prospect@example.com')
+            ->first();
+
+        $this->assertNotNull($conversation);
+        $this->assertDatabaseHas('v2_messages', [
+            'conversation_id' => $conversation->id,
+            'direction' => 'inbound',
+            'body' => 'Hydrated reply body',
+            'provider_message_id' => 'email_v2_empty',
+        ]);
+    }
+
     public function test_inbox_index_includes_unread_count_per_platform(): void
     {
         $user = $this->userWithOrg();

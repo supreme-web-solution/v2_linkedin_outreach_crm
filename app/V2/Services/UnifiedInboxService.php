@@ -16,6 +16,7 @@ use App\V2\Outreach\OutreachSendProof;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class UnifiedInboxService
@@ -343,29 +344,54 @@ class UnifiedInboxService
     {
         $emailItem = $this->normalizeEmailWebhookItem($payload);
         if ($emailItem === null) {
+            Log::info('[Unipile webhook] email inbound skipped (normalize)', [
+                'user_id' => $userId,
+                'event_id' => Arr::get($payload, 'id'),
+            ]);
+
             return;
         }
 
-        if (! empty($emailItem['needs_body_fetch']) && ($emailItem['provider_message_id'] ?? '') !== '') {
+        // v2 webhook payloads are often metadata-only; always hydrate from Get Email when body is empty.
+        $emailId = $this->resolveUnipileEmailId($payload, $emailItem);
+        if (
+            ($emailItem['body'] ?? '') === ''
+            && ($emailItem['attachments'] ?? []) === []
+            && $emailId !== ''
+        ) {
             $accountId = V2IntegrationAccount::activeUnipileAccountIdForProvider($userId, 'email');
             if ($accountId) {
                 try {
-                    $full = app(UnipileProvider::class)->getEmail(
-                        (string) $emailItem['provider_message_id'],
-                        ['account_id' => $accountId],
-                    );
+                    $full = app(UnipileProvider::class)->getEmail($emailId, ['account_id' => $accountId]);
                     $hydrated = $this->normalizeEmailWebhookItem(is_array($full) ? $full : []);
                     if ($hydrated !== null) {
                         $emailItem = $hydrated;
+                        $emailItem['provider_message_id'] = $emailItem['provider_message_id'] !== ''
+                            ? $emailItem['provider_message_id']
+                            : $emailId;
                     }
-                } catch (\Throwable) {
-                    // Fall through; empty body is skipped below.
+                } catch (\Throwable $e) {
+                    Log::warning('[Unipile webhook] email body fetch failed', [
+                        'user_id' => $userId,
+                        'email_id' => $emailId,
+                        'error' => $e->getMessage(),
+                    ]);
                 }
             }
         }
 
         if (($emailItem['body'] ?? '') === '' && ($emailItem['attachments'] ?? []) === []) {
+            Log::info('[Unipile webhook] email inbound skipped (empty body)', [
+                'user_id' => $userId,
+                'from' => $emailItem['from_email'] ?? null,
+                'email_id' => $emailId !== '' ? $emailId : ($emailItem['provider_message_id'] ?? null),
+            ]);
+
             return;
+        }
+
+        if ($emailId !== '' && ($emailItem['provider_message_id'] ?? '') === '') {
+            $emailItem['provider_message_id'] = $emailId;
         }
 
         $this->importEmailForLead($userId, $emailItem, triggerReplyHandlers: true);
@@ -543,21 +569,18 @@ class UnifiedInboxService
             is_array($inner) && $inner !== [] ? $inner : $payload
         );
 
-        // Prefer Unipile's stable email id. Never use provider_id (provider JSON blob) —
-        // webhook vs listEmails disagree on that field and create duplicate bubbles.
-        $providerMessageId = trim((string) (
-            Arr::get($inner, 'email_id')
-            ?? Arr::get($payload, 'email_id')
-            ?? Arr::get($inner, 'id')
-            ?? Arr::get($payload, 'id')
-            ?? Arr::get($payload, 'payload.email.id')
-            ?? ''
-        ));
-
-        // Reject obvious provider JSON blobs if they slipped through as "id".
-        if ($providerMessageId !== '' && (str_starts_with($providerMessageId, '{') || str_starts_with($providerMessageId, '['))) {
-            $providerMessageId = '';
-        }
+        // Prefer Unipile's stable email id. Never use evt_* webhook ids or provider JSON blobs.
+        $providerMessageId = $this->resolveUnipileEmailId($payload, [
+            'provider_message_id' => trim((string) (
+                Arr::get($inner, 'email_id')
+                ?? Arr::get($inner, 'id')
+                ?? Arr::get($payload, 'email_id')
+                ?? Arr::get($payload, 'payload.email.id')
+                ?? Arr::get($payload, 'data.id')
+                ?? Arr::get($payload, 'message_id')
+                ?? ''
+            )),
+        ]);
 
         if ($body === '' && $attachments === []) {
             return $providerMessageId !== ''
@@ -627,12 +650,52 @@ class UnifiedInboxService
     }
 
     /**
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $emailItem
+     */
+    private function resolveUnipileEmailId(array $payload, array $emailItem = []): string
+    {
+        $candidates = [
+            $emailItem['provider_message_id'] ?? null,
+            Arr::get($payload, 'payload.email.id'),
+            Arr::get($payload, 'payload.email.email_id'),
+            Arr::get($payload, 'email.id'),
+            Arr::get($payload, 'email.email_id'),
+            Arr::get($payload, 'data.email.id'),
+            Arr::get($payload, 'data.id'),
+            Arr::get($payload, 'data.email_id'),
+            Arr::get($payload, 'email_id'),
+            Arr::get($payload, 'message_id'),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $id = trim((string) $candidate);
+            if ($id === '') {
+                continue;
+            }
+            // Webhook event ids look like evt_… and are not valid Get Email ids.
+            if (str_starts_with($id, 'evt_') || str_starts_with($id, '{') || str_starts_with($id, '[')) {
+                continue;
+            }
+
+            return $id;
+        }
+
+        return '';
+    }
+
+    /**
      * @param  array{from_email: string, to_emails: array<int, string>, body: string, subject: string, provider_message_id: string, received_at: string|null, attachments?: list<array<string, mixed>>}  $emailItem
      */
     private function importEmailForLead(int $userId, array $emailItem, bool $triggerReplyHandlers): void
     {
         $fromEmail = $emailItem['from_email'];
         if ($fromEmail === '') {
+            Log::info('[Unipile webhook] email import skipped (no from)', [
+                'user_id' => $userId,
+                'email_id' => $emailItem['provider_message_id'] ?? null,
+            ]);
+
             return;
         }
 
@@ -697,7 +760,13 @@ class UnifiedInboxService
         }
 
         if (! $conversation) {
-            // No outreach lead and no existing inbox thread for this address.
+            Log::info('[Unipile webhook] email import skipped (no thread/lead)', [
+                'user_id' => $userId,
+                'from' => $fromEmail,
+                'prospect' => $prospectEmail,
+                'email_id' => $emailItem['provider_message_id'] ?? null,
+            ]);
+
             return;
         }
 
