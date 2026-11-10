@@ -21,7 +21,10 @@ class UnipileHostedAuthV2Test extends TestCase
     public function test_create_hosted_auth_link_uses_v2_payload(): void
     {
         Http::fake([
-            'unipile.test/v2/auth/link' => Http::response(['url' => 'https://account.unipile.com/link/xyz'], 201),
+            'unipile.test/v2/auth/link' => Http::response([
+                'object' => 'HostedAuthLink',
+                'link' => 'https://account.unipile.com/link/xyz',
+            ], 201),
         ]);
 
         $provider = app(UnipileProvider::class);
@@ -34,6 +37,7 @@ class UnipileHostedAuthV2Test extends TestCase
         ]);
 
         $this->assertSame('https://account.unipile.com/link/xyz', $result['url']);
+        $this->assertSame('https://account.unipile.com/link/xyz', $result['link']);
 
         Http::assertSent(function ($request) {
             $payload = $request->data();
@@ -41,8 +45,11 @@ class UnipileHostedAuthV2Test extends TestCase
             return $request->url() === 'https://unipile.test/v2/auth/link'
                 && ($payload['providers'] ?? null) === 'linkedin'
                 && ($payload['redirect_uri'] ?? null) === 'https://app.test/integrations?connected=1'
+                && ($payload['state'] ?? null) === 'uid:42'
                 && ($payload['expires_on'] ?? null) !== null
                 && ! array_key_exists('api_url', $payload)
+                && ! array_key_exists('notify_url', $payload)
+                && ! array_key_exists('name', $payload)
                 && ! array_key_exists('type', $payload)
                 && ! array_key_exists('success_redirect_url', $payload);
         });

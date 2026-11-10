@@ -54,11 +54,18 @@ class HostedAuthLocationService
         ];
 
         if ($providerKey !== '') {
-            $config[$providerKey] = [
+            $providerConfig = [
                 'auto_proxy_config' => [
                     'country' => $country,
                 ],
             ];
+
+            // LinkedIn hosted auth defaults to credentials only; allow cookies too.
+            if ($providerKey === 'linkedin') {
+                $providerConfig['allow_methods'] = ['credentials', 'cookies'];
+            }
+
+            $config[$providerKey] = $providerConfig;
         }
 
         return $config;

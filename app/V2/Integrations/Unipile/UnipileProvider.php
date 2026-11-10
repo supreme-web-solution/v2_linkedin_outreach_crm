@@ -506,12 +506,6 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             ?? Arr::get($context, 'success_redirect_url')
             ?? config('app.url').'/integrations?connected=1'
         );
-        $organizationId = Arr::get($context, 'organization_id');
-        $notifyUrlBase = Arr::get($context, 'notify_url', config('app.url').'/unipile/callback');
-        $notifyUrl = (string) $notifyUrlBase;
-        if (! empty($organizationId) && ! str_contains($notifyUrl, 'organization_id=')) {
-            $notifyUrl .= (str_contains($notifyUrl, '?') ? '&' : '?').'organization_id='.(int) $organizationId;
-        }
 
         $reconnectAccount = trim((string) (
             Arr::get($context, 'account_id')
@@ -521,14 +515,17 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $type = strtolower((string) Arr::get($context, 'type', $reconnectAccount !== '' ? 'reconnect' : 'create'));
         $isReconnect = $type === 'reconnect' && $reconnectAccount !== '';
 
-        // v2: providers XOR account_id (reconnect). Never send both.
+        // Unipile v2 Create Auth Link is a strict anyOf:
+        // - create: providers + expires_on + redirect_uri (+ optional state/config)
+        // - reconnect: account_id + expires_on + redirect_uri (+ optional state/config)
+        // v1 fields like notify_url / name / success_redirect_url are rejected as additionalProperties.
         $payload = array_filter([
             'expires_on' => now()->utc()->addHours(2)->format('Y-m-d\TH:i:s.v\Z'),
             'redirect_uri' => $redirectUri,
-            'notify_url' => $notifyUrl !== '' ? $notifyUrl : null,
-            'name' => Arr::get($context, 'name'),
             'state' => Arr::get($context, 'state'),
             'config' => is_array(Arr::get($context, 'config')) ? Arr::get($context, 'config') : null,
+            'account_scope_id' => Arr::get($context, 'account_scope_id'),
+            'domain' => Arr::get($context, 'domain'),
         ], fn ($value) => $value !== null && $value !== []);
 
         if ($isReconnect) {
@@ -537,7 +534,16 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             $payload['providers'] = $this->normalizeHostedProviders(Arr::get($context, 'provider', 'linkedin'));
         }
 
-        return $this->request('POST', $this->endpoint('hosted_auth_link'), $payload);
+        $result = $this->request('POST', $this->endpoint('hosted_auth_link'), $payload);
+
+        // Normalize response so callers can keep reading `url`.
+        $link = (string) ($result['link'] ?? $result['url'] ?? $result['hosted_url'] ?? '');
+        if ($link !== '') {
+            $result['link'] = $link;
+            $result['url'] = $link;
+        }
+
+        return $result;
     }
 
     /**
