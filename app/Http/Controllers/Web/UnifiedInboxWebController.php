@@ -494,6 +494,8 @@ class UnifiedInboxWebController extends Controller
             ])
             : app(UnipileProvider::class)->downloadMessageAttachment($messageId, $attachmentId, [
                 'account_id' => $accountId,
+                // v2 attachment path is chat-scoped: /chats/{chat_id}/messages/.../attachments/...
+                'chat_id' => (string) $thread->provider_chat_id,
             ]);
 
         if (! $response->successful()) {

@@ -89,9 +89,30 @@ class UnipileLinkedInProviderIdTest extends TestCase
 
             $payload = $request->data();
 
-            return ($payload['users_ids'][0] ?? '') === '+447700900123'
+            return ($payload['users_ids'] ?? '') === '+447700900123'
                 && ! array_key_exists('attendees_ids', $payload)
                 && ! array_key_exists('account_id', $payload);
+        });
+    }
+
+    public function test_start_group_chat_keeps_users_ids_as_array(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_whatsapp/chats/send' => Http::response(['id' => 'chat_group'], 201),
+        ]);
+
+        app(UnipileProvider::class)->startChat([
+            'account_id' => 'acc_whatsapp',
+            'users_ids' => ['+447700900123', '+447700900999'],
+            'text' => 'Hello group',
+            'name' => 'Team',
+        ]);
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return ($payload['users_ids'] ?? null) === ['+447700900123', '+447700900999']
+                && ($payload['name'] ?? null) === 'Team';
         });
     }
 }

@@ -120,7 +120,7 @@ class EmailChannelExecutor implements ChannelExecutorInterface
             $plainBody = \App\V2\Ai\Support\EmailOutboundFormat::formatPlainBody($body);
             $htmlBody = \App\V2\Ai\Support\EmailOutboundFormat::toHtmlBody($plainBody);
             $response = $concrete->sendEmail([
-                'to' => [['identifier' => $email]],
+                'to' => [['email' => $email]],
                 'subject' => $subject,
                 'body' => $htmlBody !== '' ? $htmlBody : $plainBody,
             ], $context);

@@ -38,6 +38,8 @@ Use this alongside [08-dual-run-rollout-runbook.md](./08-dual-run-rollout-runboo
 - [ ] Extension API health (`/api/v2/health` if exposed)
 - [ ] Horizon dashboard reachable by platform admin (`/horizon`)
 - [ ] Send test webhook (Unipile) — check `v2_provider_events` processed
+- [ ] Inbox email reply send works (`to[].email`, threaded with `reply_to_provider_id`)
+- [ ] LinkedIn people search / invite send / withdraw still work on v2 paths
 - [ ] Launch a draft outreach or call flow in staging cohort first
 
 ## Workers & queues

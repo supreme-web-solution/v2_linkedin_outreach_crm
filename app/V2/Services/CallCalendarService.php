@@ -635,29 +635,31 @@ class CallCalendarService
             $description .= "\n\nCall Manager: {$bookingToken}";
         }
 
-        $startUtc = $start->copy()->utc();
-        $endUtc = $end->copy()->utc();
+        // Unipile v2 wants wall-clock date_time (no Z) + IANA timezone.
         $eventTimezone = $timezone !== '' ? $timezone : 'UTC';
+        $startLocal = $start->copy()->setTimezone($eventTimezone);
+        $endLocal = $end->copy()->setTimezone($eventTimezone);
 
         $body = [
             'title' => $title,
             'body' => $description,
             'start' => [
-                'date_time' => $startUtc->format('Y-m-d\TH:i:s.000\Z'),
-                'time_zone' => $eventTimezone,
+                'date_time' => $startLocal->format('Y-m-d\TH:i:s'),
+                'timezone' => $eventTimezone,
             ],
             'end' => [
-                'date_time' => $endUtc->format('Y-m-d\TH:i:s.000\Z'),
-                'time_zone' => $eventTimezone,
+                'date_time' => $endLocal->format('Y-m-d\TH:i:s'),
+                'timezone' => $eventTimezone,
             ],
-            'notify' => true,
+            // v2 notify is an enum, not a boolean.
+            'notify' => 'all',
         ];
 
         $attendeeEmail = $this->prospectEmailForCall($call);
         if ($attendeeEmail !== '') {
             $body['attendees'] = [[
                 'email' => $attendeeEmail,
-                'name' => $prospectName,
+                'display_name' => $prospectName,
             ]];
         }
 

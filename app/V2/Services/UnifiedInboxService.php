@@ -1635,7 +1635,7 @@ class UnifiedInboxService
         }
 
         $payload = [
-            'to' => [['identifier' => $toEmail]],
+            'to' => [['email' => $toEmail]],
             'subject' => $subject,
             'body' => $text !== ''
                 ? (\App\V2\Ai\Support\EmailOutboundFormat::toHtmlBody($text)
@@ -1646,7 +1646,8 @@ class UnifiedInboxService
 
         $replyTo = trim((string) ($meta['last_email_provider_id'] ?? ''));
         if ($replyTo !== '' && ! $this->isUnstableEmailProviderId($replyTo)) {
-            $payload['reply_to'] = $replyTo;
+            // Unipile v2: reply_to_provider_id threads the reply; reply_to is Reply-To header attendees.
+            $payload['reply_to_provider_id'] = $replyTo;
         }
 
         if ($attachment) {

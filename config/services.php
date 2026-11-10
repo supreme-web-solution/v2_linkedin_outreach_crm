@@ -196,7 +196,7 @@ return [
             'send_invitation'    => env('UNIPILE_ENDPOINT_SEND_INVITATION', '/users/me/relation-requests'),
             'list_invitations'   => env('UNIPILE_ENDPOINT_LIST_INVITATIONS', '/users/me/relation-requests'),
             'accept_invitation'  => env('UNIPILE_ENDPOINT_ACCEPT_INVITATION', '/users/me/relation-requests'),
-            'withdraw_invitation'=> env('UNIPILE_ENDPOINT_WITHDRAW_INVITATION', '/users/me/relation-requests/%s'),
+            'withdraw_invitation'=> env('UNIPILE_ENDPOINT_WITHDRAW_INVITATION', '/users/me/relation-requests/%s/cancel'),
             'profile_action'     => env('UNIPILE_ENDPOINT_PROFILE_ACTION', '/users/%s'),
             'start_chat'         => env('UNIPILE_ENDPOINT_START_CHAT', '/chats/send'),
             'list_chats'         => env('UNIPILE_ENDPOINT_LIST_CHATS', '/chats'),
@@ -208,6 +208,10 @@ return [
             'calendar_events'    => env('UNIPILE_ENDPOINT_CALENDAR_EVENTS', '/calendars/%s/events'),
             'calendar_event'     => env('UNIPILE_ENDPOINT_CALENDAR_EVENT', '/calendars/%s/events/%s'),
             'create_post'        => env('UNIPILE_ENDPOINT_CREATE_POST', '/posts'),
+            // Classic LinkedIn search splits by resource in v2 (api/category body fields removed).
+            'search_people'      => env('UNIPILE_ENDPOINT_SEARCH_PEOPLE', '/linkedin/search/people'),
+            'search_companies'   => env('UNIPILE_ENDPOINT_SEARCH_COMPANIES', '/linkedin/search/companies'),
+            'search_posts'       => env('UNIPILE_ENDPOINT_SEARCH_POSTS', '/linkedin/search/posts'),
         ],
     ],
 

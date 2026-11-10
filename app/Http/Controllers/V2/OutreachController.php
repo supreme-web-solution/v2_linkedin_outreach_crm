@@ -161,7 +161,7 @@ class OutreachController extends Controller
 
         $data = $request->validate([
             'invitation_id' => ['required', 'string'],
-            'shared_secret' => ['required', 'string'],
+            'shared_secret' => ['nullable', 'string'], // unused on Unipile v2
         ]);
         try {
             $providerKey = $this->providerManager->defaultProvider();
@@ -170,7 +170,6 @@ class OutreachController extends Controller
                 'reject',
                 [
                     'account_id' => $accountId,
-                    'shared_secret' => $data['shared_secret'],
                 ]
             );
 
@@ -191,7 +190,7 @@ class OutreachController extends Controller
 
         $data = $request->validate([
             'invitation_id' => ['required', 'string'],
-            'shared_secret' => ['required', 'string'],
+            'shared_secret' => ['nullable', 'string'], // unused on Unipile v2
         ]);
         try {
             $providerKey = $this->providerManager->defaultProvider();
@@ -200,7 +199,6 @@ class OutreachController extends Controller
                 'accept',
                 [
                     'account_id' => $accountId,
-                    'shared_secret' => $data['shared_secret'],
                 ]
             );
             return response()->json(['data' => $result, 'accepted' => true]);

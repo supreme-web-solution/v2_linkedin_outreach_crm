@@ -677,13 +677,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     {
         $accountId = $this->resolveAccountId($payload, $context);
         $files = (array) Arr::pull($payload, '_files', []);
-        $body = $this->withoutAccountId($payload);
-
-        // v2: body/html instead of body; attachments are JSON base64.
-        if (isset($body['body']) && ! isset($body['html']) && ! isset($body['plain_text'])) {
-            $body['html'] = $body['body'];
-            unset($body['body']);
-        }
+        $body = $this->normalizeEmailSendBody($this->withoutAccountId($payload));
 
         if ($files !== []) {
             $attachments = [];
@@ -725,8 +719,18 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     public function listInvitations(array $context = []): array
     {
         $accountId = $this->resolveAccountId([], $context);
+        $type = strtolower(trim((string) ($context['type'] ?? 'received')));
+        if (! in_array($type, ['sent', 'received'], true)) {
+            $type = 'received';
+        }
 
-        return $this->accountScopedRequest('GET', $this->endpoint('list_invitations'), $accountId);
+        // v2 requires type=sent|received.
+        return $this->accountScopedRequest(
+            'GET',
+            $this->endpoint('list_invitations'),
+            $accountId,
+            ['type' => $type],
+        );
     }
 
     public function acceptInvitation(string $invitationId, array $context = []): array
@@ -745,7 +749,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $accountId = $this->resolveAccountId([], $context);
         $endpoint = sprintf($this->endpoint('withdraw_invitation'), rawurlencode($invitationId));
 
-        return $this->accountScopedRequest('DELETE', $endpoint, $accountId);
+        // v2: POST /users/me/relation-requests/{request_id}/cancel (DELETE removed).
+        return $this->accountScopedRequest('POST', $endpoint, $accountId);
     }
 
     public function listAccounts(string $ownerId = ''): array
@@ -830,12 +835,15 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             );
         }
 
-        $payload = array_merge([
-            'api'      => 'classic',
-            'category' => 'people',
-        ], array_filter($apiFilters, fn ($v) => $v !== null && $v !== '' && $v !== []));
+        // v2: POST /linkedin/search/people — api/category body fields removed.
+        $payload = array_filter($apiFilters, fn ($v) => $v !== null && $v !== '' && $v !== []);
 
-        return $this->searchUntilLimit($accountId, $payload, $requestedLimit);
+        return $this->searchUntilLimit(
+            $accountId,
+            $payload,
+            $requestedLimit,
+            $this->endpoint('search_people'),
+        );
     }
 
     /**
@@ -972,23 +980,28 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'count' => $requestedLimit,
         ]);
 
-        return $this->searchUntilLimit($accountId, $payload, $requestedLimit);
+        // From-URL search stays on POST /linkedin/search.
+        return $this->searchUntilLimit($accountId, $payload, $requestedLimit, $this->endpoint('search'));
     }
 
     /**
-     * Some Unipile DSNs page people search responses in chunks (~10 by default),
-     * even when count is higher. Iterate until requested limit or no next cursor.
+     * Page LinkedIn search until the requested limit.
+     * v2 LinkedIn search uses offset (cursor removed).
      *
      * @param  array<string, mixed>  $basePayload
      * @return array<string, mixed>
      */
-    private function searchUntilLimit(string $accountId, array $basePayload, int $requestedLimit): array
-    {
+    private function searchUntilLimit(
+        string $accountId,
+        array $basePayload,
+        int $requestedLimit,
+        ?string $searchPath = null,
+    ): array {
+        $searchPath ??= $this->endpoint('search');
         $target = max(1, min(100, $requestedLimit));
         $allItems = [];
         $seenIds = [];
-        $seenCursors = [];
-        $cursor = null;
+        $offset = 0;
         $lastResponse = [];
         $maxPages = 12;
 
@@ -1000,23 +1013,20 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
 
             $payload = $basePayload;
             $payload['count'] = max(1, min(100, (int) ($payload['count'] ?? $remaining), $remaining));
+            $payload['offset'] = $offset;
+            unset($payload['cursor'], $payload['api'], $payload['category']);
 
-            if ($cursor) {
-                $payload['cursor'] = $cursor;
-            } else {
-                unset($payload['cursor']);
+            $response = $this->accountScopedRequest('POST', $searchPath, $accountId, $payload);
+            $lastResponse = $response;
+            $items = Arr::get($response, 'items', Arr::get($response, 'data.items', Arr::get($response, 'data', [])));
+            $items = is_array($items) ? array_values(array_filter($items, 'is_array')) : [];
+
+            if ($items === []) {
+                break;
             }
 
-            $response = $this->accountScopedRequest('POST', $this->endpoint('search'), $accountId, $payload);
-            $lastResponse = $response;
-            $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
-            $items = is_array($items) ? array_values($items) : [];
-
+            $pageAdded = 0;
             foreach ($items as $item) {
-                if (! is_array($item)) {
-                    continue;
-                }
-
                 $id = (string) (
                     Arr::get($item, 'provider_id')
                     ?? Arr::get($item, 'id')
@@ -1032,18 +1042,17 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 }
 
                 $allItems[] = $item;
+                $pageAdded++;
                 if (count($allItems) >= $target) {
                     break 2;
                 }
             }
 
-            $nextCursor = $this->extractSearchCursor($response);
-            if (! $nextCursor || isset($seenCursors[$nextCursor])) {
+            if ($pageAdded === 0) {
                 break;
             }
 
-            $seenCursors[$nextCursor] = true;
-            $cursor = $nextCursor;
+            $offset += count($items);
         }
 
         $allItems = array_slice($allItems, 0, $target);
@@ -1052,6 +1061,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             $lastResponse['items'] = $allItems;
         } elseif (isset($lastResponse['data']['items']) && is_array($lastResponse['data']['items'])) {
             $lastResponse['data']['items'] = $allItems;
+        } elseif (isset($lastResponse['data']) && is_array($lastResponse['data'])) {
+            $lastResponse['data'] = $allItems;
+            $lastResponse['items'] = $allItems;
         } else {
             $lastResponse['items'] = $allItems;
         }
@@ -1301,20 +1313,28 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $accountId = Arr::pull($context, 'account_id');
         Arr::forget($context, ['owner_id', 'organization_id']);
 
-        $payload = array_filter(array_merge([
-            'api'      => 'classic',
-            'category' => 'companies',
-        ], $filters), fn ($v) => $v !== null && $v !== '' && $v !== []);
+        $payload = array_filter($filters, fn ($v) => $v !== null && $v !== '' && $v !== []);
+        unset($payload['api'], $payload['category']);
+
+        if (! empty($payload['has_job_offers']) && ! isset($payload['has_job_postings'])) {
+            $payload['has_job_postings'] = (bool) $payload['has_job_offers'];
+            unset($payload['has_job_offers']);
+        }
 
         if (! $accountId) {
             $accountId = $this->resolveAccountId([], $context);
         }
 
-        return $this->accountScopedRequest('POST', $this->endpoint('search'), (string) $accountId, $payload);
+        return $this->accountScopedRequest(
+            'POST',
+            $this->endpoint('search_companies'),
+            (string) $accountId,
+            $payload,
+        );
     }
 
     /**
-     * LinkedIn content search — used for competitor company posts (category=posts).
+     * LinkedIn content search — used for competitor company posts.
      *
      * @param  array<string, mixed>  $filters
      * @param  array<string, mixed>  $context
@@ -1324,16 +1344,19 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $accountId = Arr::pull($context, 'account_id');
         Arr::forget($context, ['owner_id', 'organization_id']);
 
-        $payload = array_filter(array_merge([
-            'api'      => 'classic',
-            'category' => 'posts',
-        ], $filters), fn ($v) => $v !== null && $v !== '' && $v !== []);
+        $payload = array_filter($filters, fn ($v) => $v !== null && $v !== '' && $v !== []);
+        unset($payload['api'], $payload['category']);
 
         if (! $accountId) {
             $accountId = $this->resolveAccountId([], $context);
         }
 
-        return $this->accountScopedRequest('POST', $this->endpoint('search'), (string) $accountId, $payload);
+        return $this->accountScopedRequest(
+            'POST',
+            $this->endpoint('search_posts'),
+            (string) $accountId,
+            $payload,
+        );
     }
 
     public function sendInvitation(array $payload, array $context = []): array
@@ -1372,7 +1395,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'GET',
             $this->endpoint('list_invitations'),
             $accountId,
-            array_merge($filters, ['filter' => 'sent'])
+            // v2 requires query param type=sent|received (was filter).
+            array_merge($filters, ['type' => 'sent'])
         );
     }
 
@@ -1386,39 +1410,28 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'GET',
             $this->endpoint('list_invitations'),
             $accountId,
-            array_merge($filters, ['filter' => 'received'])
+            array_merge($filters, ['type' => 'received'])
         );
     }
 
     public function handleReceivedInvitation(string $invitationId, string $action, array $context = []): array
     {
         $accountId = (string) ($context['account_id'] ?? '');
-        $sharedSecret = (string) ($context['shared_secret'] ?? '');
 
         if ($accountId === '') {
             throw new UnipileException('account_id is required.');
         }
 
-        if ($sharedSecret === '') {
-            throw new UnipileException(
-                'shared_secret is required to handle LinkedIn invitations. Reload invitations and try again.',
-                422
-            );
-        }
-
-        $normalizedAction = match ($action) {
-            'reject', 'decline' => 'decline',
+        // v2: dedicated accept/cancel routes — shared_secret / action body removed.
+        $suffix = match ($action) {
+            'reject', 'decline', 'cancel' => 'cancel',
             default => 'accept',
         };
 
         return $this->accountScopedRequest(
             'POST',
-            $this->endpoint('list_invitations').'/'.rawurlencode($invitationId),
-            $accountId,
-            [
-                'shared_secret' => $sharedSecret,
-                'action' => $normalizedAction,
-            ]
+            $this->endpoint('list_invitations').'/'.rawurlencode($invitationId).'/'.$suffix,
+            $accountId
         );
     }
 
@@ -1430,7 +1443,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         return $this->accountScopedRequest(
-            'DELETE',
+            'POST',
             sprintf($this->endpoint('withdraw_invitation'), rawurlencode($invitationId)),
             $accountId
         );
@@ -1473,6 +1486,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $endpoint = sprintf($this->endpoint('send_message'), rawurlencode($chatId));
         $files = (array) Arr::pull($payload, '_files', []);
         $body = $this->withoutAccountId(array_merge($payload, Arr::except($context, ['owner_id', 'organization_id', 'account_id', '_unipile_account_id'])));
+        // v2 removed these v1 message fields.
+        Arr::forget($body, ['thread_id', 'typing_duration', 'voice_message', 'video_message', 'chat_id']);
 
         if ($files !== []) {
             $attachments = [];
@@ -1634,14 +1649,61 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             $userIds,
         ));
 
+        // v2: a single string starts a 1:1 chat; an array starts a group
+        // (even when the array has only one id).
+        $usersIdsPayload = count($userIds) === 1 ? $userIds[0] : $userIds;
+
+        $specifics = Arr::get($payload, 'specifics');
+        if (! is_array($specifics)) {
+            $specifics = [];
+        }
+        // Some LinkedIn guides still show options{}; Start a Chat expects specifics{}.
+        $legacyOptions = Arr::get($payload, 'options');
+        if (is_array($legacyOptions) && $legacyOptions !== []) {
+            $specifics = array_replace_recursive($specifics, $legacyOptions);
+        }
+        // v1 LinkedIn options lived under linkedin{}; v2 nests them under specifics.linkedin.
+        $legacyLinkedIn = Arr::get($payload, 'linkedin');
+        if (is_array($legacyLinkedIn) && $legacyLinkedIn !== []) {
+            $specifics['linkedin'] = array_replace_recursive(
+                is_array($specifics['linkedin'] ?? null) ? $specifics['linkedin'] : [],
+                $this->normalizeLegacyLinkedInChatOptions($legacyLinkedIn),
+            );
+        }
+
         $body = array_filter([
-            'users_ids' => $userIds,
+            'users_ids' => $usersIdsPayload,
             'text' => Arr::get($payload, 'text'),
             'name' => Arr::get($payload, 'name') ?? Arr::get($payload, 'subject'),
-            'specifics' => Arr::get($payload, 'specifics'),
+            'specifics' => $specifics !== [] ? $specifics : null,
         ], fn ($value) => $value !== null && $value !== '' && $value !== []);
 
         return $this->accountScopedRequest('POST', $this->endpoint('start_chat'), $accountId, $body);
+    }
+
+    /**
+     * @param  array<string, mixed>  $linkedin
+     * @return array<string, mixed>
+     */
+    private function normalizeLegacyLinkedInChatOptions(array $linkedin): array
+    {
+        $out = $linkedin;
+
+        if (isset($out['invitation_id']) && ! isset($out['relation_request_id'])) {
+            $out['relation_request_id'] = $out['invitation_id'];
+            unset($out['invitation_id']);
+        }
+        if (isset($out['topic']) && ! isset($out['company_topic'])) {
+            $out['company_topic'] = $out['topic'];
+            unset($out['topic']);
+        }
+
+        // Prefer classic nesting when callers still send flat LinkedIn chat options.
+        if (! isset($out['classic']) && ! isset($out['recruiter']) && ! isset($out['sales_navigator'])) {
+            return ['classic' => $out];
+        }
+
+        return $out;
     }
 
     public function markChatReadState(string $chatId, bool $isRead, array $context = []): array
@@ -1652,7 +1714,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'PATCH',
             $this->endpoint('list_chats').'/'.rawurlencode($chatId),
             $accountId,
-            ['read_status' => $isRead ? 'read' : 'unread']
+            // v2 Update Chat expects boolean read_status (true=read, false=unread).
+            ['read_status' => $isRead]
         );
     }
 
@@ -1664,11 +1727,15 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         $accountId = $this->resolveAccountId([], $context);
+        $sections = $this->normalizeProfileSections(
+            $context['with_sections'] ?? $context['linkedin_sections'] ?? null
+        );
         $query = array_filter([
-            'linkedin_sections' => $context['linkedin_sections'] ?? null,
+            'with_sections' => $sections,
             'notify' => $context['notify'] ?? null,
+            'variant' => $context['variant'] ?? null,
             '_quiet' => ! empty($context['_quiet']) ? true : null,
-        ], fn ($value) => $value !== null && $value !== '');
+        ], fn ($value) => $value !== null && $value !== '' && $value !== []);
 
         return $this->accountScopedRequest('GET', '/users/'.rawurlencode($identifier), $accountId, $query);
     }
@@ -1678,8 +1745,15 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $accountId = $this->resolveAccountId($filters, $context);
         $filters = $this->withoutAccountId(array_merge($filters, $context));
         Arr::forget($filters, ['owner_id', 'organization_id']);
+        $userId = trim((string) Arr::pull($filters, 'user_id', 'me')) ?: 'me';
 
-        return $this->accountScopedRequest('GET', '/users/relations', $accountId, $filters);
+        // v2: GET /users/{user_id}/relations (use me for the connected account).
+        return $this->accountScopedRequest(
+            'GET',
+            '/users/'.rawurlencode($userId).'/relations',
+            $accountId,
+            $filters,
+        );
     }
 
     public function listFollowers(array $filters = [], array $context = []): array
@@ -1687,8 +1761,14 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $accountId = $this->resolveAccountId($filters, $context);
         $filters = $this->withoutAccountId(array_merge($filters, $context));
         Arr::forget($filters, ['owner_id', 'organization_id']);
+        $userId = trim((string) Arr::pull($filters, 'user_id', 'me')) ?: 'me';
 
-        return $this->accountScopedRequest('GET', '/users/followers', $accountId, $filters);
+        return $this->accountScopedRequest(
+            'GET',
+            '/users/'.rawurlencode($userId).'/followers',
+            $accountId,
+            $filters,
+        );
     }
 
     /**
@@ -1698,18 +1778,20 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
      *     attachments?: list<array{path: string, filename?: string, mime?: string, field?: string}>,
      *     video_thumbnail?: array{path: string, filename?: string, mime?: string},
      *     repost?: string,
-     *     external_link?: string,
+     *     quoted_post_id?: string,
      *     as_organization?: string,
+     *     post_as?: string,
      * }  $options
      */
     public function createPost(string $accountId, string $content, array $options = []): array
     {
+        // v2 renames: repost→quoted_post_id, as_organization→post_as; external_link removed.
         $body = array_filter([
             'text' => $content,
-            'repost' => Arr::get($options, 'repost'),
-            'external_link' => Arr::get($options, 'external_link'),
-            'as_organization' => Arr::get($options, 'as_organization'),
-        ], fn ($v) => $v !== null && $v !== '');
+            'quoted_post_id' => Arr::get($options, 'quoted_post_id') ?? Arr::get($options, 'repost'),
+            'post_as' => Arr::get($options, 'post_as') ?? Arr::get($options, 'as_organization'),
+            'specifics' => Arr::get($options, 'specifics'),
+        ], fn ($v) => $v !== null && $v !== '' && $v !== []);
 
         $attachments = [];
         foreach ((array) Arr::get($options, 'attachments', []) as $attachment) {
@@ -1741,8 +1823,15 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $accountId = $this->resolveAccountId($filters, $context);
         $filters = $this->withoutAccountId(array_merge($filters, $context));
         Arr::forget($filters, ['owner_id', 'organization_id']);
+        $userId = trim((string) Arr::pull($filters, 'user_id', 'me')) ?: 'me';
 
-        return $this->accountScopedRequest('GET', $this->endpoint('create_post'), $accountId, $filters);
+        // v2 has no GET /posts list; list a user's posts instead.
+        return $this->accountScopedRequest(
+            'GET',
+            '/users/'.rawurlencode($userId).'/posts',
+            $accountId,
+            $filters,
+        );
     }
 
     public function listUserPosts(string $identifier, array $filters = [], array $context = []): array
@@ -1818,7 +1907,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         if ($action === 'endorse') {
             $profile = $this->getProfileByIdentifier($providerId, [
                 'account_id' => $accountId,
-                'linkedin_sections' => ['skills'],
+                'with_sections' => ['linkedin_skills'],
             ]);
             $skillId = $this->firstEndorseableSkillId($profile);
             if ($skillId === null) {
@@ -1827,7 +1916,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                     'profile_id' => $providerId,
                     'skills_seen' => $skillCount,
                     'network_distance' => Arr::get($profile, 'network_distance')
-                        ?? Arr::get($profile, 'provider_data.network_distance'),
+                        ?? Arr::get($profile, 'provider_data.network_distance')
+                        ?? Arr::get($profile, 'specifics.linkedin.network_distance'),
                 ]);
 
                 throw new UnipileException(
@@ -1838,13 +1928,16 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 );
             }
 
-            $result = $this->accountScopedRequest('POST', '/linkedin/profile/endorse', $accountId, [
-                'profile_id' => $providerId,
-                'skill_endorsement_id' => $skillId,
-            ]);
+            // v2: POST /linkedin/member/{member_id}/endorse-skill { skill_id }
+            $result = $this->accountScopedRequest(
+                'POST',
+                '/linkedin/member/'.rawurlencode($providerId).'/endorse-skill',
+                $accountId,
+                ['skill_id' => (string) $skillId],
+            );
             Log::info('[Unipile] Endorse succeeded', [
                 'profile_id' => $providerId,
-                'skill_endorsement_id' => $skillId,
+                'skill_id' => $skillId,
             ]);
 
             return $result;
@@ -1886,13 +1979,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             );
         }
 
-        return $this->accountScopedRequest(
-            'POST',
-            '/linkedin/user/'.rawurlencode($providerId),
-            $accountId,
-            array_filter([
-                'action' => $action,
-            ], fn ($value) => $value !== null && $value !== '')
+        throw new UnipileException(
+            "LinkedIn profile action [{$action}] is not supported on Unipile API v2.",
+            422
         );
     }
 
@@ -1911,8 +2000,9 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'limit' => 5,
         ], ['account_id' => $accountId]);
 
-        $posts = Arr::get($postsResponse, 'items', Arr::get($postsResponse, 'data.items', []));
-        if (! is_array($posts) || $posts === []) {
+        $posts = Arr::get($postsResponse, 'items', Arr::get($postsResponse, 'data.items', Arr::get($postsResponse, 'data', [])));
+        $posts = is_array($posts) ? array_values(array_filter($posts, 'is_array')) : [];
+        if ($posts === []) {
             throw new UnipileException('No recent LinkedIn posts found to like for this profile.', 422);
         }
 
@@ -2130,7 +2220,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     /**
      * @param array<string, mixed> $profile
      */
-    private function firstEndorseableSkillId(array $profile): ?int
+    private function firstEndorseableSkillId(array $profile): ?string
     {
         foreach ($this->extractProfileSkills($profile) as $skill) {
             if (! is_array($skill)) {
@@ -2144,19 +2234,59 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
 
             $endorsementId = Arr::get($skill, 'endorsement_id')
                 ?? Arr::get($skill, 'skill_endorsement_id')
+                ?? Arr::get($skill, 'skill_id')
+                ?? Arr::get($skill, 'id')
                 ?? Arr::get($skill, 'endorsementId');
 
             if ($endorsementId === null || $endorsementId === '' || $endorsementId === false) {
                 continue;
             }
 
-            $id = (int) $endorsementId;
-            if ($id > 0) {
+            $id = trim((string) $endorsementId);
+            if ($id !== '' && $id !== '0') {
                 return $id;
             }
         }
 
         return null;
+    }
+
+    /**
+     * Map v1 linkedin_sections aliases onto v2 with_sections values.
+     *
+     * @return list<string>|null
+     */
+    private function normalizeProfileSections(mixed $sections): ?array
+    {
+        if ($sections === null || $sections === '' || $sections === []) {
+            return null;
+        }
+
+        if ($sections === '*' || $sections === 'linkedin_*') {
+            return ['linkedin_*'];
+        }
+
+        if (! is_array($sections)) {
+            $sections = [$sections];
+        }
+
+        $normalized = [];
+        foreach ($sections as $section) {
+            $section = trim((string) $section);
+            if ($section === '' || $section === '*') {
+                $normalized[] = 'linkedin_*';
+                continue;
+            }
+            if (str_starts_with($section, 'linkedin_')) {
+                $normalized[] = $section;
+                continue;
+            }
+            $normalized[] = 'linkedin_'.$section;
+        }
+
+        $normalized = array_values(array_unique($normalized));
+
+        return $normalized !== [] ? $normalized : null;
     }
 
     /**
@@ -2172,6 +2302,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             Arr::get($profile, 'data.skills_preview'),
             Arr::get($profile, 'provider_data.skills'),
             Arr::get($profile, 'sections.skills'),
+            Arr::get($profile, 'specifics.linkedin.skills'),
+            Arr::get($profile, 'specifics.skills'),
         ];
 
         foreach ($candidates as $skills) {
@@ -2558,6 +2690,104 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     }
 
     /**
+     * Normalize outbound email payloads to Unipile API v2.
+     *
+     * @param  array<string, mixed>  $body
+     * @return array<string, mixed>
+     */
+    private function normalizeEmailSendBody(array $body): array
+    {
+        // v2: body removed — use html / plain_text.
+        if (isset($body['body']) && ! isset($body['html']) && ! isset($body['plain_text'])) {
+            $body['html'] = $body['body'];
+            unset($body['body']);
+        }
+
+        foreach (['to', 'cc', 'bcc'] as $field) {
+            if (isset($body[$field])) {
+                $body[$field] = $this->normalizeEmailAttendees($body[$field]);
+            }
+        }
+
+        if (isset($body['from'])) {
+            $normalizedFrom = $this->normalizeEmailAttendees([$body['from']]);
+            $body['from'] = $normalizedFrom[0] ?? $body['from'];
+        }
+
+        // v2: reply_to is Reply-To header attendees; conversation reply uses reply_to_provider_id.
+        $threadReplyId = trim((string) (
+            $body['reply_to_provider_id']
+            ?? $body['reply_to_message_id']
+            ?? ''
+        ));
+
+        if ($threadReplyId === '' && isset($body['reply_to']) && is_string($body['reply_to'])) {
+            $threadReplyId = trim($body['reply_to']);
+            unset($body['reply_to']);
+        }
+
+        if ($threadReplyId !== '') {
+            $body['reply_to_provider_id'] = $threadReplyId;
+            unset($body['reply_to_message_id']);
+        }
+
+        if (isset($body['reply_to'])) {
+            $body['reply_to'] = $this->normalizeEmailAttendees($body['reply_to']);
+            if ($body['reply_to'] === []) {
+                unset($body['reply_to']);
+            }
+        }
+
+        return $body;
+    }
+
+    /**
+     * @param  mixed  $attendees
+     * @return list<array{email: string, display_name?: string}>
+     */
+    private function normalizeEmailAttendees(mixed $attendees): array
+    {
+        if (! is_array($attendees)) {
+            $attendees = [$attendees];
+        }
+
+        $normalized = [];
+        foreach ($attendees as $attendee) {
+            if (is_string($attendee)) {
+                $email = trim($attendee);
+                if ($email !== '') {
+                    $normalized[] = ['email' => $email];
+                }
+                continue;
+            }
+
+            if (! is_array($attendee)) {
+                continue;
+            }
+
+            $email = trim((string) (
+                $attendee['email']
+                ?? $attendee['identifier']
+                ?? $attendee['address']
+                ?? ''
+            ));
+            if ($email === '') {
+                continue;
+            }
+
+            $row = ['email' => $email];
+            $displayName = trim((string) ($attendee['display_name'] ?? $attendee['name'] ?? ''));
+            if ($displayName !== '') {
+                $row['display_name'] = $displayName;
+            }
+
+            $normalized[] = $row;
+        }
+
+        return $normalized;
+    }
+
+    /**
      * v2 renamed start/end.time_zone → timezone.
      *
      * @param  array<string, mixed>  $body
@@ -2567,6 +2797,11 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     {
         $body = $this->withoutAccountId($body);
 
+        if (isset($body['name']) && ! isset($body['title'])) {
+            $body['title'] = $body['name'];
+            unset($body['name']);
+        }
+
         foreach (['start', 'end'] as $edge) {
             if (! is_array($body[$edge] ?? null)) {
                 continue;
@@ -2575,6 +2810,25 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 $body[$edge]['timezone'] = $body[$edge]['time_zone'];
                 unset($body[$edge]['time_zone']);
             }
+        }
+
+        // v2: notify is all|externalOnly|none (boolean true was a v1 leftover).
+        if (array_key_exists('notify', $body)) {
+            $notify = $body['notify'];
+            if (is_bool($notify)) {
+                $body['notify'] = $notify ? 'all' : 'none';
+            } elseif (is_string($notify)) {
+                $normalizedNotify = trim($notify);
+                $body['notify'] = in_array($normalizedNotify, ['all', 'externalOnly', 'none'], true)
+                    ? $normalizedNotify
+                    : 'none';
+            } else {
+                unset($body['notify']);
+            }
+        }
+
+        if (isset($body['attendees']) && is_array($body['attendees'])) {
+            $body['attendees'] = $this->normalizeEmailAttendees($body['attendees']);
         }
 
         return $body;

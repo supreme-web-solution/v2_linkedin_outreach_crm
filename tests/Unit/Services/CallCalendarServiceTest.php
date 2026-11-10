@@ -60,13 +60,19 @@ class CallCalendarServiceTest extends TestCase
         $unipile->shouldReceive('createCalendarEvent')
             ->once()
             ->with('uni_123', 'cal_primary', Mockery::on(function (array $body) {
+                $dateTime = (string) ($body['start']['date_time'] ?? '');
+
                 return ($body['title'] ?? '') === 'Call with Host User'
                     && is_array($body['start'] ?? null)
                     && is_array($body['end'] ?? null)
-                    && isset($body['start']['time_zone'])
-                    && str_ends_with((string) ($body['start']['date_time'] ?? ''), 'Z')
-                    && ($body['notify'] ?? false) === true
+                    && isset($body['start']['timezone'])
+                    && ! isset($body['start']['time_zone'])
+                    && $dateTime !== ''
+                    && ! str_ends_with($dateTime, 'Z')
+                    && ! str_contains($dateTime, '+')
+                    && ($body['notify'] ?? null) === 'all'
                     && ($body['attendees'][0]['email'] ?? '') === 'jane@example.com'
+                    && ($body['attendees'][0]['display_name'] ?? '') === 'Jane Doe'
                     && ($body['conference']['provider'] ?? '') === 'google_meet';
             }))
             ->andReturn([
@@ -244,8 +250,15 @@ class CallCalendarServiceTest extends TestCase
         $unipile->shouldReceive('updateCalendarEvent')
             ->once()
             ->with('uni_123', 'cal_primary', 'evt_existing', Mockery::on(function (array $body) use ($newStart) {
-                return ($body['notify'] ?? false) === true
-                    && ($body['start']['date_time'] ?? '') === $newStart->copy()->utc()->format('Y-m-d\TH:i:s.000\Z')
+                $timezone = (string) ($body['start']['timezone'] ?? config('app.timezone', 'UTC'));
+                $expectedLocal = $newStart->copy()->setTimezone($timezone)->format('Y-m-d\TH:i:s');
+                $dateTime = (string) ($body['start']['date_time'] ?? '');
+
+                return ($body['notify'] ?? null) === 'all'
+                    && $dateTime === $expectedLocal
+                    && ! str_ends_with($dateTime, 'Z')
+                    && isset($body['start']['timezone'])
+                    && ! isset($body['start']['time_zone'])
                     && ($body['attendees'][0]['email'] ?? '') === 'jane@example.com';
             }))
             ->andReturn([
