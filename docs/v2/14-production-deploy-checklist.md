@@ -13,7 +13,9 @@ Use this alongside [08-dual-run-rollout-runbook.md](./08-dual-run-rollout-runboo
 - [ ] Queue: Redis (`QUEUE_CONNECTION=redis`)
 - [ ] Cache/session: Redis recommended
 - [ ] Horizon configured and platform admin emails set (`billing.platform_admin_emails`)
-- [ ] Unipile webhook URL registered and secret verified
+- [ ] Unipile API v2 configured: `UNIPILE_BASE_URL=https://api.unipile.com/v2` + fresh `UNIPILE_API_KEY`
+- [ ] Unipile webhook URL registered (`/unipile/callback`) with v2 events (include `relation.new`) and secret verified
+- [ ] All channels re-linked in Integrations after any Unipile account/app recreation (old v1 account IDs will not work)
 - [ ] `OPENAI_API_KEY` set if AI features required
 - [ ] `OPS_SLACK_WEBHOOK_URL` set for ops alerts (optional but recommended)
 

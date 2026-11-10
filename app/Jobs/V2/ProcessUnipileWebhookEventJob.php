@@ -85,6 +85,8 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             'post.commented',
             'post.engagement',
             'post.shared',
+            'message.delivered',
+            'message.delete',
             'account.disconnected',
             'account.reconnected',
             'account.connected',
@@ -95,6 +97,8 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             'email.opened',
             'email.replied',
             'email.bounced',
+            'email.sent',
+            'email.clicked',
             'mail.opened',
             'mail.received',
             'mail.bounced',
@@ -384,7 +388,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             );
         }
 
-        if (in_array($eventType, ['email.opened', 'mail.opened', 'email.tracked.open', 'email.replied', 'mail.received', 'email.bounced', 'mail.bounced', 'email.failed'], true) && $event->user_id) {
+        if (in_array($eventType, ['email.opened', 'mail.opened', 'email.tracked.open', 'email.replied', 'mail.received', 'email.bounced', 'mail.bounced', 'email.failed', 'email.clicked', 'email.sent'], true) && $event->user_id) {
             app(\App\V2\Outreach\OutreachWebhookProgressService::class)
                 ->handleEmailTrackingEvent((int) $event->user_id, $eventType, $payload);
 
@@ -408,7 +412,15 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                 'account.error' => 'error',
             ];
             $accountId = (string) (Arr::get($payload, 'data.account_id') ?? Arr::get($payload, 'account_id') ?? '');
-            $providerRaw = (string) (Arr::get($payload, 'data.provider') ?? Arr::get($payload, 'provider') ?? 'LINKEDIN');
+            // Unipile v2 uses account_provider; v1 often used account_type / provider.
+            $providerRaw = (string) (
+                Arr::get($payload, 'account_provider')
+                ?? Arr::get($payload, 'data.account_provider')
+                ?? Arr::get($payload, 'account_type')
+                ?? Arr::get($payload, 'data.provider')
+                ?? Arr::get($payload, 'provider')
+                ?? 'LINKEDIN'
+            );
             $provider = OutreachChannelRegistry::integrationProviderForUnipileType($providerRaw)
                 ?? strtolower($providerRaw);
             $normalizedStatus = in_array($eventType, [
@@ -474,7 +486,7 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
             );
         }
 
-        if (in_array($eventType, ['event.created', 'calendar.event.created'], true) && $event->user_id) {
+        if (in_array($eventType, ['event.created', 'calendar.event.created', 'event.updated', 'calendar.event.updated'], true) && $event->user_id) {
             $handled = app(CallCalendarService::class)->handleInboundCalendarEvent((int) $event->user_id, $payload);
             $this->recordWebhookActivity(
                 (int) $event->user_id,

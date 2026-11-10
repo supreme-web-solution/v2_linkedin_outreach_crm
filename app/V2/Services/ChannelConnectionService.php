@@ -148,7 +148,8 @@ class ChannelConnectionService
             $this->providerManager->defaultProvider()
         )->getAccount($unipileAccountId);
 
-        $unipileType = strtoupper((string) ($accountData['type'] ?? ''));
+        // Unipile v2 uses `provider`; v1 used `type`.
+        $unipileType = (string) ($accountData['provider'] ?? $accountData['type'] ?? '');
 
         if ($channelKey === null || $channelKey === '') {
             $channelKey = OutreachChannelRegistry::channelKeyForUnipileType($unipileType);
@@ -161,7 +162,8 @@ class ChannelConnectionService
         $payload = array_merge($accountData, [
             'account_id' => $unipileAccountId,
             'id' => $unipileAccountId,
-            'type' => $unipileType,
+            'provider' => $unipileType,
+            'type' => strtoupper($unipileType),
             'email' => $this->extractEmailFromAccountPayload($accountData),
         ]);
 
@@ -176,7 +178,7 @@ class ChannelConnectionService
         }
 
         $unipileId = (string) ($payload['account_id'] ?? $payload['id'] ?? '');
-        $providerType = strtoupper((string) ($payload['type'] ?? $payload['provider'] ?? ''));
+        $providerType = strtoupper((string) ($payload['provider'] ?? $payload['type'] ?? ''));
         $email = $payload['email'] ?? $this->extractEmailFromAccountPayload($payload);
 
         $existing = V2IntegrationAccount::query()
@@ -279,6 +281,7 @@ class ChannelConnectionService
         }
 
         $context['type'] = 'reconnect';
+        $context['account_id'] = $unipileAccountId;
         $context['reconnect_account'] = $unipileAccountId;
 
         return $context;

@@ -93,7 +93,7 @@ class LinkedInConnectionService
 
             'state' => 'uid:'.$user->id,
 
-            'provider' => 'LINKEDIN',
+            'provider' => 'linkedin',
 
             'organization_id' => $orgId,
 
@@ -570,7 +570,7 @@ class LinkedInConnectionService
 
                 $result = $provider->reconnectAccount($unipileAccountId, array_merge([
 
-                    'provider' => 'LINKEDIN',
+                    'provider' => 'linkedin',
 
                     'access_token' => $liAt,
 
@@ -866,6 +866,7 @@ class LinkedInConnectionService
         }
 
         $context['type'] = 'reconnect';
+        $context['account_id'] = $unipileAccountId;
         $context['reconnect_account'] = $unipileAccountId;
 
         return $context;

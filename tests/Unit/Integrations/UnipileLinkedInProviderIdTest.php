@@ -13,7 +13,7 @@ class UnipileLinkedInProviderIdTest extends TestCase
     {
         parent::setUp();
 
-        Config::set('services.unipile.base_url', 'https://unipile.test/api/v1');
+        Config::set('services.unipile.base_url', 'https://unipile.test/v2');
         Config::set('services.unipile.api_key', 'test-key');
         Config::set('services.unipile.mock', false);
     }
@@ -21,12 +21,12 @@ class UnipileLinkedInProviderIdTest extends TestCase
     public function test_send_invitation_resolves_linkedin_vanity_slug_before_posting(): void
     {
         Http::fake([
-            'unipile.test/api/v1/users/eleazarnzerem*' => Http::response([
+            'unipile.test/v2/acc_linkedin/users/eleazarnzerem*' => Http::response([
                 'provider_id' => 'eleazarnzerem',
                 'public_identifier' => 'eleazarnzerem',
                 'member_urn' => 'urn:li:member:ACoAAResolved123',
             ], 200),
-            'unipile.test/api/v1/users/invite' => Http::response(['id' => 'inv_1'], 201),
+            'unipile.test/v2/acc_linkedin/users/me/relation-requests' => Http::response(['id' => 'inv_1'], 201),
         ]);
 
         $provider = app(UnipileProvider::class);
@@ -41,21 +41,22 @@ class UnipileLinkedInProviderIdTest extends TestCase
         Http::assertSentCount(2);
 
         Http::assertSent(function ($request) {
-            if ($request->url() !== 'https://unipile.test/api/v1/users/invite') {
+            if ($request->url() !== 'https://unipile.test/v2/acc_linkedin/users/me/relation-requests') {
                 return false;
             }
 
             $payload = $request->data();
 
-            return ($payload['provider_id'] ?? '') === 'ACoAAResolved123'
-                && ($payload['account_id'] ?? '') === 'acc_linkedin';
+            return ($payload['user_id'] ?? '') === 'ACoAAResolved123'
+                && ! array_key_exists('account_id', $payload)
+                && ! array_key_exists('provider_id', $payload);
         });
     }
 
     public function test_resolve_provider_id_extracts_member_id_from_member_urn(): void
     {
         Http::fake([
-            'unipile.test/api/v1/users/jane-doe*' => Http::response([
+            'unipile.test/v2/acc_linkedin/users/jane-doe*' => Http::response([
                 'provider_id' => 'jane-doe',
                 'public_identifier' => 'jane-doe',
                 'member_urn' => 'urn:li:fsd_profile:ACoAAJane456',
@@ -68,10 +69,10 @@ class UnipileLinkedInProviderIdTest extends TestCase
         $this->assertSame('ACoAAJane456', $resolved['provider_id']);
     }
 
-    public function test_start_chat_leaves_whatsapp_phone_numbers_untouched(): void
+    public function test_start_chat_uses_users_ids_on_chats_send(): void
     {
         Http::fake([
-            'unipile.test/api/v1/chats*' => Http::response(['id' => 'chat_1'], 201),
+            'unipile.test/v2/acc_whatsapp/chats/send' => Http::response(['id' => 'chat_1'], 201),
         ]);
 
         $provider = app(UnipileProvider::class);
@@ -82,13 +83,15 @@ class UnipileLinkedInProviderIdTest extends TestCase
         ]);
 
         Http::assertSent(function ($request) {
-            if (! str_contains($request->url(), '/chats')) {
+            if ($request->url() !== 'https://unipile.test/v2/acc_whatsapp/chats/send') {
                 return false;
             }
 
             $payload = $request->data();
 
-            return ($payload['attendees_ids'][0] ?? '') === '+447700900123';
+            return ($payload['users_ids'][0] ?? '') === '+447700900123'
+                && ! array_key_exists('attendees_ids', $payload)
+                && ! array_key_exists('account_id', $payload);
         });
     }
 }

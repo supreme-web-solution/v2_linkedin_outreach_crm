@@ -27,7 +27,7 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
     public function test_harvest_stores_reactors_and_commenters_from_company_posts(): void
     {
         config([
-            'services.unipile.base_url' => 'https://unipile.test/api/v1',
+            'services.unipile.base_url' => 'https://unipile.test/v2',
             'services.unipile.api_key' => 'test-key',
             'services.unipile.mock' => false,
             'services.competitor_followers.company_posts_limit' => 1,
@@ -40,7 +40,7 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
         ]);
 
         Http::fake([
-            'unipile.test/api/v1/linkedin/search*' => function ($request) {
+            'unipile.test/v2/*/linkedin/search*' => function ($request) {
                 $payload = $request->data();
                 if (($payload['category'] ?? '') === 'companies') {
                     return Http::response([
@@ -61,7 +61,7 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
                     ]],
                 ]);
             },
-            'unipile.test/api/v1/posts/urn%3Ali%3Aactivity%3A111/reactions*' => Http::response([
+            'unipile.test/v2/*/posts/urn%3Ali%3Aactivity%3A111/reactions*' => Http::response([
                 'items' => [[
                     'author' => [
                         'id' => 'ACoAAA111',
@@ -85,7 +85,7 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
                     ],
                 ]],
             ]),
-            'unipile.test/api/v1/posts/urn%3Ali%3Aactivity%3A111/comments*' => Http::response([
+            'unipile.test/v2/*/posts/urn%3Ali%3Aactivity%3A111/comments*' => Http::response([
                 'items' => [[
                     // Name lives on string `author`; profile fields on author_details.
                     'author_details' => [
@@ -176,17 +176,17 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
     public function test_resolve_company_falls_back_to_direct_profile_when_search_is_empty(): void
     {
         config([
-            'services.unipile.base_url' => 'https://unipile.test/api/v1',
+            'services.unipile.base_url' => 'https://unipile.test/v2',
             'services.unipile.api_key' => 'test-key',
             'services.unipile.mock' => false,
         ]);
 
         Http::fake([
-            'unipile.test/api/v1/linkedin/search*' => Http::response([
+            'unipile.test/v2/*/linkedin/search*' => Http::response([
                 'items' => [],
                 'paging' => ['total_count' => 0],
             ]),
-            'unipile.test/api/v1/linkedin/company/microsoft*' => Http::response([
+            'unipile.test/v2/*/linkedin/company/microsoft*' => Http::response([
                 'object' => 'CompanyProfile',
                 'id' => '1035',
                 'name' => 'Microsoft',
@@ -211,25 +211,25 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
     public function test_resolve_person_falls_back_to_people_search_when_profile_lookup_404s(): void
     {
         config([
-            'services.unipile.base_url' => 'https://unipile.test/api/v1',
+            'services.unipile.base_url' => 'https://unipile.test/v2',
             'services.unipile.api_key' => 'test-key',
             'services.unipile.mock' => false,
         ]);
 
         Http::fake([
-            'unipile.test/api/v1/users/*' => Http::response([
+            'unipile.test/v2/*/users/*' => Http::response([
                 'status' => 404,
                 'type' => 'errors/resource_not_found',
                 'title' => 'Resource not found.',
                 'detail' => 'The requested resource were not found.Account not found.',
             ], 404),
-            'unipile.test/api/v1/linkedin/search/parameters*' => Http::response([
+            'unipile.test/v2/*/linkedin/search/parameters*' => Http::response([
                 'items' => [[
                     'id' => 'ACoAAA888',
                     'title' => 'Eleazar Nzerem',
                 ]],
             ]),
-            'unipile.test/api/v1/linkedin/search*' => Http::response([
+            'unipile.test/v2/*/linkedin/search*' => Http::response([
                 'items' => [],
             ]),
         ]);
@@ -267,7 +267,7 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
     public function test_harvest_stores_reactors_from_person_posts(): void
     {
         config([
-            'services.unipile.base_url' => 'https://unipile.test/api/v1',
+            'services.unipile.base_url' => 'https://unipile.test/v2',
             'services.unipile.api_key' => 'test-key',
             'services.unipile.mock' => false,
             'services.competitor_followers.company_posts_limit' => 1,

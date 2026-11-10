@@ -19,15 +19,15 @@ class UnipileGetProfileByIdentifierTest extends TestCase
     {
         parent::setUp();
 
-        Config::set('services.unipile.base_url', 'https://unipile.test/api/v1');
+        Config::set('services.unipile.base_url', 'https://unipile.test/v2');
         Config::set('services.unipile.api_key', 'test-key');
         Config::set('services.unipile.mock', false);
     }
 
-    public function test_get_profile_sends_account_id_and_strips_campaign_context(): void
+    public function test_get_profile_uses_account_path_and_strips_campaign_context(): void
     {
         Http::fake([
-            'unipile.test/api/v1/users/*' => Http::response([
+            'unipile.test/v2/En0ys8zQREmwHvrLV8I7SA/users/*' => Http::response([
                 'provider_id' => 'ACoAADt-s1EBpDjmzFwFx9B_5hMPPM5mxjZGzn0',
                 'network_distance' => 'FIRST_DEGREE',
             ], 200),
@@ -44,13 +44,11 @@ class UnipileGetProfileByIdentifierTest extends TestCase
         ]);
 
         Http::assertSent(function ($request) {
-            if (! str_contains($request->url(), '/users/ACoAADt-s1EBpDjmzFwFx9B_5hMPPM5mxjZGzn0')) {
-                return false;
-            }
+            $url = $request->url();
+            parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
 
-            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
-
-            return ($query['account_id'] ?? null) === 'En0ys8zQREmwHvrLV8I7SA'
+            return str_contains($url, '/En0ys8zQREmwHvrLV8I7SA/users/ACoAADt-s1EBpDjmzFwFx9B_5hMPPM5mxjZGzn0')
+                && ! array_key_exists('account_id', $query)
                 && ! array_key_exists('owner_id', $query)
                 && ! array_key_exists('campaign_id', $query)
                 && ! array_key_exists('campaign_lead_id', $query);
@@ -70,7 +68,7 @@ class UnipileGetProfileByIdentifierTest extends TestCase
         ]);
 
         Http::fake([
-            'unipile.test/api/v1/users/*' => Http::response([
+            'unipile.test/v2/acc_from_owner/users/*' => Http::response([
                 'provider_id' => 'ACoAAResolved',
             ], 200),
         ]);
@@ -82,10 +80,7 @@ class UnipileGetProfileByIdentifierTest extends TestCase
         ]);
 
         Http::assertSent(function ($request) {
-            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
-
-            return str_contains($request->url(), '/users/ACoAAResolved')
-                && ($query['account_id'] ?? null) === 'acc_from_owner';
+            return str_contains($request->url(), '/acc_from_owner/users/ACoAAResolved');
         });
     }
 

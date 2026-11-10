@@ -10,14 +10,14 @@ use Tests\TestCase;
 
 class UnipileCreatePostTest extends TestCase
 {
-    public function test_create_post_uses_multipart_form_data(): void
+    public function test_create_post_uses_json_account_scoped_path(): void
     {
-        Config::set('services.unipile.base_url', 'https://unipile.test/api/v1');
+        Config::set('services.unipile.base_url', 'https://unipile.test/v2');
         Config::set('services.unipile.api_key', 'test-key');
         Config::set('services.unipile.mock', false);
 
         Http::fake([
-            'unipile.test/api/v1/posts' => Http::response(['id' => 'post_123'], 201),
+            'unipile.test/v2/acc_123/posts' => Http::response(['id' => 'post_123'], 201),
         ]);
 
         $provider = app(UnipileProvider::class);
@@ -26,20 +26,17 @@ class UnipileCreatePostTest extends TestCase
         $this->assertSame('post_123', $result['id']);
 
         Http::assertSent(function ($request) {
-            $contentType = (string) $request->header('Content-Type')[0];
+            $payload = $request->data();
 
-            return $request->url() === 'https://unipile.test/api/v1/posts'
-                && str_contains($contentType, 'multipart/form-data')
-                && str_contains((string) $request->body(), 'name="account_id"')
-                && str_contains((string) $request->body(), 'acc_123')
-                && str_contains((string) $request->body(), 'name="text"')
-                && str_contains((string) $request->body(), 'Hello LinkedIn');
+            return $request->url() === 'https://unipile.test/v2/acc_123/posts'
+                && ($payload['text'] ?? null) === 'Hello LinkedIn'
+                && ! array_key_exists('account_id', $payload);
         });
     }
 
-    public function test_create_post_attaches_image_files(): void
+    public function test_create_post_encodes_attachments_as_base64_json(): void
     {
-        Config::set('services.unipile.base_url', 'https://unipile.test/api/v1');
+        Config::set('services.unipile.base_url', 'https://unipile.test/v2');
         Config::set('services.unipile.api_key', 'test-key');
         Config::set('services.unipile.mock', false);
 
@@ -48,7 +45,7 @@ class UnipileCreatePostTest extends TestCase
         $absolutePath = Storage::disk('public')->path('content-images/test.jpg');
 
         Http::fake([
-            'unipile.test/api/v1/posts' => Http::response(['id' => 'post_456'], 201),
+            'unipile.test/v2/acc_123/posts' => Http::response(['id' => 'post_456'], 201),
         ]);
 
         $provider = app(UnipileProvider::class);
@@ -61,11 +58,13 @@ class UnipileCreatePostTest extends TestCase
         ]);
 
         Http::assertSent(function ($request) {
-            $body = (string) $request->body();
+            $payload = $request->data();
+            $attachment = $payload['attachments'][0] ?? null;
 
-            return str_contains($body, 'name="attachments"')
-                && str_contains($body, 'filename="test.jpg"')
-                && str_contains($body, 'fake-image-bytes');
+            return is_array($attachment)
+                && ($attachment['filename'] ?? null) === 'test.jpg'
+                && ($attachment['content_type'] ?? null) === 'image/jpeg'
+                && ($attachment['data'] ?? null) === base64_encode('fake-image-bytes');
         });
     }
 }

@@ -151,7 +151,7 @@ class IntegrationAccountController extends Controller
             Log::error('[Connect] Cookie connection failed', ['error' => $e->getMessage()]);
             $hint = $e instanceof UnipileException
                 ? ($e->context['hint'] ?? null)
-                : 'Check: (1) UNIPILE_BASE_URL is set in .env to your Unipile DSN URL, (2) UNIPILE_API_KEY is correct, (3) Your li_at cookie is fresh.';
+                : 'Check: (1) UNIPILE_BASE_URL=https://api.unipile.com/v2, (2) UNIPILE_API_KEY is a fresh Access Token, (3) Your li_at cookie is fresh.';
 
             return response()->json([
                 'message' => $e->getMessage(),
@@ -230,7 +230,7 @@ class IntegrationAccountController extends Controller
 
             return response()->json([
                 'message' => $message,
-                'hint'    => 'Check: (1) UNIPILE_BASE_URL is set in .env to your Unipile DSN URL (from Unipile Dashboard → Settings → API), (2) UNIPILE_API_KEY is correct.',
+                'hint'    => 'Check: (1) UNIPILE_BASE_URL=https://api.unipile.com/v2, (2) UNIPILE_API_KEY is a fresh Access Token from Unipile Dashboard → Settings → API.',
             ], 422);
         }
 

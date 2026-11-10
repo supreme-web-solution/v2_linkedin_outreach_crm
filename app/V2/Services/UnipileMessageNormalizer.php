@@ -27,6 +27,7 @@ class UnipileMessageNormalizer
         $text = trim((string) ($item['text'] ?? ''));
 
         if ($this->isTruthy($item['hidden'] ?? false)
+            || $this->isTruthy($item['is_hidden'] ?? false)
             || $this->isTruthy($item['is_event'] ?? false)
             || in_array((int) ($item['event_type'] ?? 0), [1, 2], true)) {
             return $this->buildReactionFromItem($item);
@@ -119,13 +120,13 @@ class UnipileMessageNormalizer
                 ?? ''
             )) ?: null,
             'target_provider_message_id' => $this->extractReactionTargetMessageId($item),
-            'is_sender' => $this->isTruthy($item['is_sender'] ?? false),
+            'is_sender' => $this->isTruthy($item['is_sender'] ?? $item['is_from_me'] ?? false),
         ];
     }
 
     private function isTruthy(mixed $value): bool
     {
-        return $value === true || $value === 1 || $value === '1';
+        return $value === true || $value === 1 || $value === '1' || $value === 'true';
     }
 
     /**
@@ -149,7 +150,12 @@ class UnipileMessageNormalizer
                 continue;
             }
 
-            $mime = trim((string) ($attachment['mimetype'] ?? $attachment['mime'] ?? ''));
+            $mime = trim((string) (
+                $attachment['mimetype']
+                ?? $attachment['content_type']
+                ?? $attachment['mime']
+                ?? ''
+            ));
 
             $attachments[] = [
                 'id' => $id,
@@ -186,7 +192,9 @@ class UnipileMessageNormalizer
 
             $reactions[] = [
                 'value' => $value,
-                'sender_id' => isset($reaction['sender_id']) ? (string) $reaction['sender_id'] : null,
+                'sender_id' => isset($reaction['sender_id'])
+                    ? (string) $reaction['sender_id']
+                    : (isset($reaction['user_id']) ? (string) $reaction['user_id'] : null),
                 'is_sender' => (bool) ($reaction['is_sender'] ?? false),
             ];
         }
@@ -296,7 +304,7 @@ class UnipileMessageNormalizer
         }
 
         $type = (string) ($attachment['type'] ?? '');
-        $mime = (string) ($attachment['mimetype'] ?? $attachment['mime'] ?? '');
+        $mime = (string) ($attachment['mimetype'] ?? $attachment['content_type'] ?? $attachment['mime'] ?? '');
 
         return match (true) {
             str_starts_with($mime, 'image/') => 'image.'.($mime === 'image/png' ? 'png' : 'jpg'),
@@ -307,5 +315,38 @@ class UnipileMessageNormalizer
             $type === 'audio' => 'audio.mp3',
             default => 'file',
         };
+    }
+
+    /**
+     * Normalize a Unipile chat/message item so callers can keep reading v1-style keys.
+     *
+     * @param  array<string, mixed>  $item
+     * @return array<string, mixed>
+     */
+    public function normalizeMessageItem(array $item): array
+    {
+        $id = trim((string) ($item['id'] ?? $item['provider_id'] ?? ''));
+        $chatId = trim((string) ($item['chat_id'] ?? $item['chat_provider_id'] ?? ''));
+        $text = (string) ($item['text'] ?? $item['body'] ?? '');
+        $senderId = trim((string) (
+            $item['sender_id']
+            ?? $item['sender_attendee_id']
+            ?? Arr::get($item, 'sender.attendee_provider_id')
+            ?? Arr::get($item, 'sender.user_id')
+            ?? ''
+        ));
+
+        return array_merge($item, array_filter([
+            'id' => $id !== '' ? $id : null,
+            'provider_id' => $id !== '' ? $id : (isset($item['provider_id']) ? $item['provider_id'] : null),
+            'chat_id' => $chatId !== '' ? $chatId : null,
+            'text' => $text !== '' ? $text : null,
+            'sender_id' => $senderId !== '' ? $senderId : null,
+            'hidden' => $item['hidden'] ?? $item['is_hidden'] ?? null,
+            'seen' => $item['seen'] ?? $item['is_seen'] ?? null,
+            'deleted' => $item['deleted'] ?? $item['is_deleted'] ?? null,
+            'edited' => $item['edited'] ?? $item['is_edited'] ?? null,
+            'delivered' => $item['delivered'] ?? $item['is_delivered'] ?? null,
+        ], fn ($v) => $v !== null));
     }
 }

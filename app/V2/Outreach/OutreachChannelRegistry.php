@@ -12,57 +12,58 @@ class OutreachChannelRegistry
         return [
             'linkedin' => [
                 'label' => 'LinkedIn',
-                'unipile_hosted_provider' => 'LINKEDIN',
-                'unipile_providers' => ['LINKEDIN'],
+                // Unipile v2 hosted auth expects lowercase provider names.
+                'unipile_hosted_provider' => 'linkedin',
+                'unipile_providers' => ['LINKEDIN', 'linkedin'],
                 'integration_provider' => 'linkedin',
                 'color' => '#2563eb',
             ],
             'email' => [
                 'label' => 'Email',
-                'unipile_hosted_provider' => '*:MAILING',
-                'unipile_providers' => ['GOOGLE_OAUTH', 'OUTLOOK', 'MAIL', 'ICLOUD'],
+                'unipile_hosted_provider' => '*:EMAILS',
+                'unipile_providers' => ['GOOGLE_OAUTH', 'OUTLOOK', 'MAIL', 'ICLOUD', 'google', 'outlook', 'imap'],
                 'integration_provider' => 'email',
                 'color' => '#059669',
             ],
             'whatsapp' => [
                 'label' => 'WhatsApp',
-                'unipile_hosted_provider' => 'WHATSAPP',
-                'unipile_providers' => ['WHATSAPP'],
+                'unipile_hosted_provider' => 'whatsapp',
+                'unipile_providers' => ['WHATSAPP', 'whatsapp'],
                 'integration_provider' => 'whatsapp',
                 'color' => '#25D366',
             ],
             'instagram' => [
                 'label' => 'Instagram',
-                'unipile_hosted_provider' => 'INSTAGRAM',
-                'unipile_providers' => ['INSTAGRAM'],
+                'unipile_hosted_provider' => 'instagram',
+                'unipile_providers' => ['INSTAGRAM', 'instagram'],
                 'integration_provider' => 'instagram',
                 'color' => '#E1306C',
             ],
             'telegram' => [
                 'label' => 'Telegram',
-                'unipile_hosted_provider' => 'TELEGRAM',
-                'unipile_providers' => ['TELEGRAM'],
+                'unipile_hosted_provider' => 'telegram',
+                'unipile_providers' => ['TELEGRAM', 'telegram'],
                 'integration_provider' => 'telegram',
                 'color' => '#0088cc',
             ],
             'twitter' => [
                 'label' => 'X (Twitter)',
-                'unipile_hosted_provider' => 'TWITTER',
-                'unipile_providers' => ['TWITTER'],
+                'unipile_hosted_provider' => 'twitter',
+                'unipile_providers' => ['TWITTER', 'twitter'],
                 'integration_provider' => 'twitter',
                 'color' => '#0f1419',
             ],
             'google_calendar' => [
                 'label' => 'Google Calendar',
-                'unipile_hosted_provider' => 'GOOGLE',
-                'unipile_providers' => ['GOOGLE_OAUTH', 'GOOGLE'],
+                'unipile_hosted_provider' => 'google',
+                'unipile_providers' => ['GOOGLE_OAUTH', 'GOOGLE', 'google'],
                 'integration_provider' => 'google_calendar',
                 'color' => '#4285F4',
             ],
             'outlook_calendar' => [
                 'label' => 'Outlook Calendar',
-                'unipile_hosted_provider' => 'OUTLOOK',
-                'unipile_providers' => ['OUTLOOK', 'MICROSOFT'],
+                'unipile_hosted_provider' => 'outlook',
+                'unipile_providers' => ['OUTLOOK', 'MICROSOFT', 'outlook'],
                 'integration_provider' => 'outlook_calendar',
                 'color' => '#0078D4',
             ],
@@ -366,12 +367,21 @@ class OutreachChannelRegistry
 
     public static function channelKeyForUnipileType(string $type): ?string
     {
-        $type = strtoupper($type);
+        $raw = trim($type);
+        if ($raw === '') {
+            return null;
+        }
+
+        $upper = strtoupper($raw);
+        $lower = strtolower($raw);
 
         foreach (self::allChannels() as $key => $meta) {
             $providers = $meta['unipile_providers'] ?? [];
-            if (in_array($type, $providers, true)) {
-                return $key;
+            foreach ($providers as $provider) {
+                $candidate = (string) $provider;
+                if ($candidate === $raw || strtoupper($candidate) === $upper || strtolower($candidate) === $lower) {
+                    return $key;
+                }
             }
         }
 
