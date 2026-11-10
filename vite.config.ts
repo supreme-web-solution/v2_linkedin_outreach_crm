@@ -5,6 +5,7 @@ import vue from '@vitejs/plugin-vue';
 import laravel from 'laravel-vite-plugin';
 import { bunny } from 'laravel-vite-plugin/fonts';
 import { defineConfig } from 'vite';
+import { lucideThinBarrel } from './vite-plugin-lucide-thin';
 
 export default defineConfig({
     server: {
@@ -18,6 +19,7 @@ export default defineConfig({
         },
     },
     plugins: [
+        lucideThinBarrel(),
         laravel({
             input: ['resources/css/app.css', 'resources/js/app.ts'],
             refresh: true,
