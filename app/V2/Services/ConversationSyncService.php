@@ -139,6 +139,12 @@ class ConversationSyncService
                 'conversation_id' => $match->id,
             ]);
 
+            app(InboxConversationResolverService::class)->retargetApprovalConversationIds(
+                $userId,
+                (int) $orphan->id,
+                (int) $match->id,
+            );
+
             $orphan->delete();
         }
     }

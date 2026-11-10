@@ -4,8 +4,8 @@ namespace App\V2\Ai\Services;
 
 use App\Models\AiActionApproval;
 use App\Models\User;
-use App\Models\V2Conversation;
 use App\Models\V2OutreachCampaign;
+use App\V2\Services\InboxConversationResolverService;
 use App\V2\Services\UnifiedInboxReplyService;
 
 class ExecuteSalesPlanFromPlanService
@@ -98,10 +98,19 @@ class ExecuteSalesPlanFromPlanService
         }
 
         try {
-            $conversation = V2Conversation::query()
-                ->where('user_id', $user->id)
-                ->whereKey($conversationId)
-                ->firstOrFail();
+            $conversation = app(InboxConversationResolverService::class)->findForUser(
+                $user,
+                conversationId: $conversationId > 0 ? $conversationId : null,
+                email: isset($action['prospect_email']) ? (string) $action['prospect_email'] : null,
+                prospectName: isset($action['prospect_name']) ? (string) $action['prospect_name'] : null,
+                providerChatId: isset($action['provider_chat_id']) ? (string) $action['provider_chat_id'] : null,
+                provider: isset($action['channel']) ? (string) $action['channel'] : null,
+                unifiedInboxOnly: false,
+            );
+
+            if (! $conversation) {
+                throw new \RuntimeException('Inbox conversation not found for this follow-up.');
+            }
 
             $sent = app(UnifiedInboxReplyService::class)->sendApprovedReply($user, $conversation, $draft);
 

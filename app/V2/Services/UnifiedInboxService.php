@@ -1252,7 +1252,7 @@ class UnifiedInboxService
 
     private function ensureLinkedForSend(User $user, V2Conversation $conversation, string $accountId): V2Conversation
     {
-        $conversation = $conversation->fresh();
+        $conversation = $conversation->fresh() ?? $conversation;
         $provider = (string) $conversation->provider;
 
         if ($provider === 'email') {
@@ -1264,7 +1264,7 @@ class UnifiedInboxService
         if ($chatId === '') {
             $this->handleMissingProviderChat($conversation, $accountId);
 
-            return $conversation->fresh();
+            return $conversation->fresh() ?? $conversation;
         }
 
         try {
@@ -1276,13 +1276,13 @@ class UnifiedInboxService
         } catch (UnipileException $exception) {
             if ($exception->statusCode === 404 || OutreachUserErrorMapper::isStaleProviderChatError($exception)) {
                 $this->invalidateProviderChatId($conversation, $chatId, 'provider_chat_missing');
-                $this->handleMissingProviderChat($conversation->fresh(), $accountId);
+                $this->handleMissingProviderChat($conversation->fresh() ?? $conversation, $accountId);
             }
         } catch (\Throwable) {
             // Transient probe failure — let the send attempt surface a clearer error.
         }
 
-        return $conversation->fresh();
+        return $conversation->fresh() ?? $conversation;
     }
 
     private function conversationHasSendTarget(V2Conversation $conversation, string $provider): bool

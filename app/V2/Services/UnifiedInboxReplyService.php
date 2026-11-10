@@ -135,9 +135,16 @@ class UnifiedInboxReplyService
                 'dossier_fact' => null,
             ];
 
+        $prospectEmail = trim((string) (Arr::get($meta, 'prospect_email') ?: ($lead?->email ?? '')));
+        if ($prospectEmail === '' && filter_var((string) $conversation->provider_chat_id, FILTER_VALIDATE_EMAIL)) {
+            $prospectEmail = (string) $conversation->provider_chat_id;
+        }
+
         return [
             'draft' => $draft,
             'prospect_name' => $prospectName !== '' ? $prospectName : 'Prospect',
+            'prospect_email' => $prospectEmail !== '' ? $prospectEmail : null,
+            'provider_chat_id' => $conversation->provider_chat_id,
             'channel' => (string) $conversation->provider,
             'channel_label' => OutreachChannelRegistry::channelLabel((string) $conversation->provider),
             'inbound_preview' => InboundMessagePresenter::previewWithUrls($inboundBody, 180),

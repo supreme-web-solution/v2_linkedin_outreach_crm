@@ -202,7 +202,9 @@ class SalesManagerPlanBuilderService
             $actions[] = [
                 'type' => 'draft_reply',
                 'conversation_id' => $conversationId,
+                'provider_chat_id' => $draft['provider_chat_id'] ?? null,
                 'prospect_name' => $draft['prospect_name'],
+                'prospect_email' => $draft['prospect_email'] ?? null,
                 'channel' => $draft['channel'],
                 'channel_label' => $draft['channel_label'],
                 'inbound_preview' => Str::limit($draft['inbound_preview'], 200, '…'),

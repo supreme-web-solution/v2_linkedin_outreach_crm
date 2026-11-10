@@ -5,8 +5,8 @@ namespace App\V2\Ai\Services;
 use App\Models\AiActionApproval;
 use App\Models\User;
 use App\Models\V2Call;
-use App\Models\V2Conversation;
 use App\V2\Ai\Support\RecipientFacingCopyGuard;
+use App\V2\Services\InboxConversationResolverService;
 use App\V2\Services\UnifiedInboxReplyService;
 
 class BookMeetingFromPlanService
@@ -27,12 +27,11 @@ class BookMeetingFromPlanService
         }
 
         $payload = $approval->payload ?? [];
-        $conversationId = (int) ($payload['conversation_id'] ?? 0);
         $draft = trim((string) ($payload['draft_text'] ?? ''));
         $callId = (int) ($payload['call_id'] ?? 0);
 
-        if ($conversationId <= 0 || $draft === '') {
-            throw new \InvalidArgumentException('Missing conversation or booking message.');
+        if ($draft === '') {
+            throw new \InvalidArgumentException('Missing booking message.');
         }
 
         $draft = RecipientFacingCopyGuard::prepareOutbound($draft, [
@@ -41,10 +40,8 @@ class BookMeetingFromPlanService
         ]);
         RecipientFacingCopyGuard::assertSendable($draft);
 
-        $conversation = V2Conversation::query()
-            ->where('user_id', $user->id)
-            ->whereKey($conversationId)
-            ->firstOrFail();
+        $conversation = app(InboxConversationResolverService::class)
+            ->resolveForApproval($approval, $user);
 
         $sent = app(UnifiedInboxReplyService::class)->sendApprovedReply($user, $conversation, $draft);
 

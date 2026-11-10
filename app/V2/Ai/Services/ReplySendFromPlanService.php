@@ -4,8 +4,8 @@ namespace App\V2\Ai\Services;
 
 use App\Models\AiActionApproval;
 use App\Models\User;
-use App\Models\V2Conversation;
 use App\V2\Ai\Support\RecipientFacingCopyGuard;
+use App\V2\Services\InboxConversationResolverService;
 use App\V2\Services\UnifiedInboxReplyService;
 
 class ReplySendFromPlanService
@@ -25,11 +25,10 @@ class ReplySendFromPlanService
         }
 
         $payload = $approval->payload ?? [];
-        $conversationId = (int) ($payload['conversation_id'] ?? 0);
         $draft = trim((string) ($payload['draft_text'] ?? $payload['draft'] ?? ''));
 
-        if ($conversationId <= 0 || $draft === '') {
-            throw new \InvalidArgumentException('Missing conversation or draft text in reply plan.');
+        if ($draft === '') {
+            throw new \InvalidArgumentException('Missing draft text in reply plan.');
         }
 
         $draft = RecipientFacingCopyGuard::prepareOutbound($draft, [
@@ -38,10 +37,16 @@ class ReplySendFromPlanService
         ]);
         RecipientFacingCopyGuard::assertSendable($draft);
 
-        $conversation = V2Conversation::query()
-            ->where('user_id', $user->id)
-            ->whereKey($conversationId)
-            ->firstOrFail();
+        $conversation = app(InboxConversationResolverService::class)
+            ->resolveForApproval($approval, $user);
+
+        // Keep payload pointed at the live thread if it was remapped after reconnect.
+        if ((int) ($payload['conversation_id'] ?? 0) !== (int) $conversation->id) {
+            $payload['conversation_id'] = $conversation->id;
+            $payload['provider_chat_id'] = $conversation->provider_chat_id;
+            $payload['inbox_url'] = url('/inbox/'.$conversation->provider.'/'.$conversation->id);
+            $approval->update(['payload' => $payload]);
+        }
 
         $sent = app(UnifiedInboxReplyService::class)->sendApprovedReply($user, $conversation, $draft);
 
