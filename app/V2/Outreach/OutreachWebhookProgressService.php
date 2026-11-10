@@ -177,26 +177,18 @@ class OutreachWebhookProgressService
                 ? $payload['data']['email']
                 : (is_array($payload['data'] ?? null) ? $payload['data'] : $payload));
 
-        foreach (['from_attendee', 'from'] as $key) {
+        foreach (['from', 'from_attendee', 'from_attendees'] as $key) {
             $value = Arr::get($inner, $key) ?? Arr::get($payload, $key);
-            if (is_array($value)) {
-                $nested = trim((string) ($value['identifier'] ?? $value['email'] ?? $value['address'] ?? ''));
-                if ($nested !== '' && filter_var($nested, FILTER_VALIDATE_EMAIL)) {
-                    return strtolower($nested);
-                }
+            $resolved = $this->firstEmailFromAttendeeValue($value);
+            if ($resolved !== '') {
+                return $resolved;
             }
         }
 
-        foreach (['from', 'to', 'email', 'recipient', 'sender'] as $key) {
-            $value = Arr::get($inner, $key);
-            if (is_string($value) && filter_var($value, FILTER_VALIDATE_EMAIL)) {
-                return strtolower(trim($value));
-            }
-            if (is_array($value)) {
-                $nested = trim((string) ($value['email'] ?? $value['address'] ?? ''));
-                if ($nested !== '' && filter_var($nested, FILTER_VALIDATE_EMAIL)) {
-                    return strtolower($nested);
-                }
+        foreach (['to', 'to_attendees', 'email', 'recipient', 'sender'] as $key) {
+            $resolved = $this->firstEmailFromAttendeeValue(Arr::get($inner, $key));
+            if ($resolved !== '') {
+                return $resolved;
             }
         }
 
@@ -204,6 +196,32 @@ class OutreachWebhookProgressService
             $value = trim((string) (Arr::get($inner, $key) ?? Arr::get($payload, $key) ?? ''));
             if ($value !== '' && filter_var($value, FILTER_VALIDATE_EMAIL)) {
                 return strtolower($value);
+            }
+        }
+
+        return '';
+    }
+
+    private function firstEmailFromAttendeeValue(mixed $value): string
+    {
+        if (is_string($value) && filter_var($value, FILTER_VALIDATE_EMAIL)) {
+            return strtolower(trim($value));
+        }
+
+        if (! is_array($value)) {
+            return '';
+        }
+
+        if (isset($value['email']) || isset($value['identifier']) || isset($value['address'])) {
+            $nested = trim((string) ($value['email'] ?? $value['identifier'] ?? $value['address'] ?? ''));
+
+            return ($nested !== '' && filter_var($nested, FILTER_VALIDATE_EMAIL)) ? strtolower($nested) : '';
+        }
+
+        foreach ($value as $item) {
+            $nested = $this->firstEmailFromAttendeeValue($item);
+            if ($nested !== '') {
+                return $nested;
             }
         }
 
@@ -386,25 +404,37 @@ class OutreachWebhookProgressService
     private function extractProfileId(array $payload): string
     {
         $inner = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
+        // v2 relation.new payload is a User Relation object; nested user holds ids.
+        $nestedPayload = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
 
         foreach ([
+            // v2 User / User Relation
+            'user.id',
+            'user.public_identifier',
+            'user_id',
+            'public_identifier',
+            // v1 leftovers
             'user_provider_id',
             'user_public_identifier',
             'profile_id',
             'invitee_id',
             'provider_id',
-            'public_identifier',
             'linkedin_id',
         ] as $key) {
-            $value = trim((string) (Arr::get($inner, $key) ?? Arr::get($payload, $key) ?? ''));
-            if ($value !== '') {
-                return $value;
+            foreach ([$inner, $nestedPayload, $payload] as $source) {
+                $value = trim((string) (Arr::get($source, $key) ?? ''));
+                if ($value !== '') {
+                    return $value;
+                }
             }
         }
 
-        $profile = Arr::get($inner, 'profile');
-        if (is_array($profile)) {
-            foreach (['provider_id', 'public_identifier', 'id'] as $key) {
+        foreach (['user', 'profile'] as $nestedKey) {
+            $profile = Arr::get($inner, $nestedKey) ?? Arr::get($nestedPayload, $nestedKey);
+            if (! is_array($profile)) {
+                continue;
+            }
+            foreach (['id', 'public_identifier', 'provider_id'] as $key) {
                 $value = trim((string) ($profile[$key] ?? ''));
                 if ($value !== '') {
                     return $value;

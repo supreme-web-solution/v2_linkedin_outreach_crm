@@ -123,26 +123,36 @@ class CampaignWebhookProgressService
     private function extractProfileId(array $payload): string
     {
         $inner = is_array($payload['data'] ?? null) ? $payload['data'] : $payload;
+        // v2 relation.new payload is a User Relation object; nested user holds ids.
+        $nestedPayload = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
 
-        // Unipile new_relation payload uses user_provider_id / user_public_identifier.
         foreach ([
+            'user.id',
+            'user.public_identifier',
+            'user_id',
+            'public_identifier',
+            // v1 leftovers
             'user_provider_id',
             'user_public_identifier',
             'profile_id',
             'invitee_id',
             'provider_id',
-            'public_identifier',
             'linkedin_id',
         ] as $key) {
-            $value = trim((string) (Arr::get($inner, $key) ?? Arr::get($payload, $key) ?? ''));
-            if ($value !== '') {
-                return $value;
+            foreach ([$inner, $nestedPayload, $payload] as $source) {
+                $value = trim((string) (Arr::get($source, $key) ?? ''));
+                if ($value !== '') {
+                    return $value;
+                }
             }
         }
 
-        $profile = Arr::get($inner, 'profile');
-        if (is_array($profile)) {
-            foreach (['provider_id', 'public_identifier', 'id'] as $key) {
+        foreach (['user', 'profile'] as $nestedKey) {
+            $profile = Arr::get($inner, $nestedKey) ?? Arr::get($nestedPayload, $nestedKey);
+            if (! is_array($profile)) {
+                continue;
+            }
+            foreach (['id', 'public_identifier', 'provider_id'] as $key) {
                 $value = trim((string) ($profile[$key] ?? ''));
                 if ($value !== '') {
                     return $value;

@@ -79,6 +79,30 @@ class UnipileSendEmailV2Test extends TestCase
         });
     }
 
+    public function test_send_email_string_reply_to_email_stays_header_not_thread_id(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_email_3/emails/send' => Http::response([
+                'object' => 'EmailSent',
+                'id' => 'em_3',
+            ], 200),
+        ]);
+
+        app(UnipileProvider::class)->sendEmail([
+            'to' => [['email' => 'lead@example.com']],
+            'subject' => 'Hello',
+            'plain_text' => 'Hi',
+            'reply_to' => 'support@example.com',
+        ], ['account_id' => 'acc_email_3']);
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return ($payload['reply_to'][0]['email'] ?? null) === 'support@example.com'
+                && ! array_key_exists('reply_to_provider_id', $payload);
+        });
+    }
+
     public function test_mark_chat_read_state_sends_boolean_read_status(): void
     {
         Http::fake([

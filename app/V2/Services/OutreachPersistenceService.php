@@ -509,6 +509,8 @@ class OutreachPersistenceService
         $ids = [];
 
         foreach ([
+            Arr::get($payload, 'data.participants'),
+            Arr::get($payload, 'participants'),
             Arr::get($payload, 'data.attendees'),
             Arr::get($payload, 'attendees'),
         ] as $group) {
@@ -523,10 +525,14 @@ class OutreachPersistenceService
                 }
 
                 if (is_array($attendee)) {
-                    $id = (string) (Arr::get($attendee, 'provider_id')
+                    $id = (string) (
+                        Arr::get($attendee, 'user.id')
+                        ?? Arr::get($attendee, 'user_id')
+                        ?? Arr::get($attendee, 'provider_id')
                         ?? Arr::get($attendee, 'id')
                         ?? Arr::get($attendee, 'attendee_provider_id')
-                        ?? '');
+                        ?? ''
+                    );
                     if ($id !== '') {
                         $ids[] = $id;
                     }
@@ -534,9 +540,15 @@ class OutreachPersistenceService
             }
         }
 
+        // v2 Message: sender_id. v2 Chat: user_id / user.id. v1 leftovers last.
         foreach ([
             Arr::get($payload, 'data.sender_id'),
             Arr::get($payload, 'sender_id'),
+            Arr::get($payload, 'payload.sender_id'),
+            Arr::get($payload, 'data.user_id'),
+            Arr::get($payload, 'user_id'),
+            Arr::get($payload, 'data.user.id'),
+            Arr::get($payload, 'user.id'),
             Arr::get($payload, 'data.sender.provider_id'),
             Arr::get($payload, 'sender.provider_id'),
             Arr::get($payload, 'data.sender.attendee_provider_id'),

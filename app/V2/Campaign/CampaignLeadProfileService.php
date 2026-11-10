@@ -247,6 +247,8 @@ class CampaignLeadProfileService
     {
         return Arr::get($profile, 'network_distance')
             ?? Arr::get($profile, 'provider_data.network_distance')
+            ?? Arr::get($profile, 'specifics.linkedin.network_distance')
+            ?? Arr::get($profile, 'specifics.network_distance')
             ?? Arr::get($profile, 'distance')
             ?? Arr::get($profile, 'member_distance')
             ?? Arr::get($profile, 'networkDistance');
@@ -311,11 +313,8 @@ class CampaignLeadProfileService
                 return false;
             }
 
-            $items = Arr::get($response, 'items');
-            if (! is_array($items) || $items === []) {
-                $items = Arr::get($response, 'data.items', []);
-            }
-            if (! is_array($items) || $items === []) {
+            $items = UnipileProvider::extractListItems($response);
+            if ($items === []) {
                 return false;
             }
 
@@ -323,7 +322,11 @@ class CampaignLeadProfileService
                 if (! is_array($item)) {
                     continue;
                 }
+                // v2 User Relation: nested user.id / user.public_identifier.
                 $candidates = [
+                    Arr::get($item, 'user.id'),
+                    Arr::get($item, 'user.public_identifier'),
+                    Arr::get($item, 'user_id'),
                     Arr::get($item, 'provider_id'),
                     Arr::get($item, 'user_provider_id'),
                     Arr::get($item, 'id'),
@@ -338,8 +341,8 @@ class CampaignLeadProfileService
                 }
             }
 
-            $cursor = Arr::get($response, 'cursor') ?? Arr::get($response, 'data.cursor');
-            if (! is_string($cursor) || $cursor === '') {
+            $cursor = UnipileProvider::extractNextCursor($response);
+            if ($cursor === null) {
                 break;
             }
         }
@@ -369,20 +372,19 @@ class CampaignLeadProfileService
             return null;
         }
 
-        $items = Arr::get($response, 'items');
-        if (! is_array($items) || $items === []) {
-            $items = Arr::get($response, 'data.items', []);
-        }
-        if (! is_array($items)) {
-            return null;
-        }
+        // v2 list envelope is often { data: [...] }. Missing this falsely clears invites.
+        $items = UnipileProvider::extractListItems($response);
 
         $needles = array_values(array_filter([$providerId, $publicId]));
         foreach ($items as $item) {
             if (! is_array($item)) {
                 continue;
             }
+            // v2 RelationRequest: user.id / user.public_identifier (sent invites).
             $candidates = [
+                Arr::get($item, 'user.id'),
+                Arr::get($item, 'user.public_identifier'),
+                Arr::get($item, 'user_id'),
                 Arr::get($item, 'invited_user_id'),
                 Arr::get($item, 'provider_id'),
                 Arr::get($item, 'invitee_id'),
@@ -408,6 +410,8 @@ class CampaignLeadProfileService
         $candidates = [
             Arr::get($profile, 'network_distance'),
             Arr::get($profile, 'provider_data.network_distance'),
+            Arr::get($profile, 'specifics.linkedin.network_distance'),
+            Arr::get($profile, 'specifics.network_distance'),
             Arr::get($profile, 'distance'),
             Arr::get($profile, 'member_distance'),
             // Stored import distance — may be stale; checkLiveConnection prefers a fresh fetch.

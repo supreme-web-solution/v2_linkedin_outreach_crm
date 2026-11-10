@@ -40,10 +40,9 @@ class ConversationSyncService
                 ]
             );
 
-            $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
-            if (!is_array($items)) {
-                $items = [];
-            }
+            $items = \App\V2\Integrations\Unipile\UnipileProvider::extractListItems(
+                is_array($response) ? $response : []
+            );
 
             $synced = 0;
             foreach ($items as $chat) {
@@ -75,7 +74,10 @@ class ConversationSyncService
                     ])
                 );
 
-                $lastAt = Arr::get($chat, 'last_message_at')
+                // v2 Chat: last_message_timestamp (v1 was timestamp).
+                $lastAt = Arr::get($chat, 'last_message_timestamp')
+                    ?? Arr::get($chat, 'last_message_at')
+                    ?? Arr::get($chat, 'last_message.timestamp')
                     ?? Arr::get($chat, 'timestamp')
                     ?? Arr::get($chat, 'updated_at');
                 if ($lastAt) {
@@ -177,10 +179,23 @@ class ConversationSyncService
     {
         $ids = [];
 
+        // Unipile v2 Chat 1:1: user_id + user.id. Groups: participants[].user.id.
+        // Attendees API / attendees[] were removed in v2.
         foreach ([
+            Arr::get($chat, 'user_id'),
+            Arr::get($chat, 'user.id'),
+            Arr::get($chat, 'user.public_identifier'),
+        ] as $single) {
+            $value = trim((string) ($single ?? ''));
+            if ($value !== '') {
+                $ids[] = $value;
+            }
+        }
+
+        foreach ([
+            Arr::get($chat, 'participants'),
             Arr::get($chat, 'attendees'),
             Arr::get($chat, 'attendee_ids'),
-            Arr::get($chat, 'participants'),
         ] as $group) {
             if (!is_array($group)) {
                 continue;
@@ -196,11 +211,16 @@ class ConversationSyncService
                     continue;
                 }
 
-                $id = (string) (Arr::get($attendee, 'provider_id')
+                $id = (string) (
+                    Arr::get($attendee, 'user.id')
+                    ?? Arr::get($attendee, 'user_id')
+                    ?? Arr::get($attendee, 'provider_id')
                     ?? Arr::get($attendee, 'id')
                     ?? Arr::get($attendee, 'attendee_provider_id')
                     ?? Arr::get($attendee, 'public_identifier')
-                    ?? '');
+                    ?? Arr::get($attendee, 'user.public_identifier')
+                    ?? ''
+                );
                 if ($id !== '') {
                     $ids[] = $id;
                 }
@@ -215,17 +235,40 @@ class ConversationSyncService
      */
     private function extractProspectName(array $chat): ?string
     {
-        foreach (Arr::get($chat, 'attendees', []) as $attendee) {
-            if (!is_array($attendee)) {
+        foreach ([
+            Arr::get($chat, 'user.display_name'),
+            Arr::get($chat, 'user.first_name'),
+            Arr::get($chat, 'name'),
+        ] as $direct) {
+            $name = trim((string) ($direct ?? ''));
+            if ($name !== '') {
+                return $name;
+            }
+        }
+
+        foreach ([
+            Arr::get($chat, 'participants', []),
+            Arr::get($chat, 'attendees', []),
+        ] as $group) {
+            if (! is_array($group)) {
                 continue;
             }
 
-            $name = trim((string) (Arr::get($attendee, 'display_name')
-                ?? Arr::get($attendee, 'name')
-                ?? Arr::get($attendee, 'full_name')
-                ?? ''));
-            if ($name !== '') {
-                return $name;
+            foreach ($group as $attendee) {
+                if (! is_array($attendee)) {
+                    continue;
+                }
+
+                $name = trim((string) (
+                    Arr::get($attendee, 'user.display_name')
+                    ?? Arr::get($attendee, 'display_name')
+                    ?? Arr::get($attendee, 'name')
+                    ?? Arr::get($attendee, 'full_name')
+                    ?? ''
+                ));
+                if ($name !== '') {
+                    return $name;
+                }
             }
         }
 

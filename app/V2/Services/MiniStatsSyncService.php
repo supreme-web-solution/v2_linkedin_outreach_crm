@@ -7,6 +7,7 @@ use App\Models\V2IntegrationAccount;
 use App\Models\V2MiniStat;
 use App\Models\V2UserActivity;
 use App\V2\Integrations\ProviderManager;
+use App\V2\Integrations\Unipile\UnipileProvider;
 
 class MiniStatsSyncService
 {
@@ -96,8 +97,9 @@ class MiniStatsSyncService
             'limit' => 100,
         ]);
 
-        $items = is_array($result['items'] ?? null) ? $result['items'] : [];
-        $cursor = is_string($result['cursor'] ?? null) && $result['cursor'] !== '' ? $result['cursor'] : null;
+        $payload = is_array($result) ? $result : [];
+        $items = UnipileProvider::extractListItems($payload);
+        $cursor = UnipileProvider::extractNextCursor($payload);
 
         return [count($items), $cursor !== null];
     }
@@ -112,8 +114,9 @@ class MiniStatsSyncService
             'limit' => 100,
         ]);
 
-        $items = is_array($result['items'] ?? null) ? $result['items'] : [];
-        $cursor = is_string($result['cursor'] ?? null) && $result['cursor'] !== '' ? $result['cursor'] : null;
+        $payload = is_array($result) ? $result : [];
+        $items = UnipileProvider::extractListItems($payload);
+        $cursor = UnipileProvider::extractNextCursor($payload);
 
         return [count($items), $cursor !== null];
     }

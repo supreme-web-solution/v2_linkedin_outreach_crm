@@ -1092,30 +1092,79 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     }
 
     /**
+     * Normalize Unipile list envelopes to a plain list of rows.
+     *
+     * v2 commonly returns `{ data: [...] , next_cursor }` (data is the list).
+     * Some routes still use `{ items: [...] }` or `{ data: { items: [...] } }`.
+     *
+     * @param  array<string, mixed>  $response
+     * @return list<mixed>
+     */
+    public static function extractListItems(array $response): array
+    {
+        foreach (['items', 'data.items'] as $path) {
+            $candidate = Arr::get($response, $path);
+            if (is_array($candidate) && self::isListPayload($candidate)) {
+                return array_values($candidate);
+            }
+        }
+
+        $data = $response['data'] ?? null;
+        if (is_array($data) && self::isListPayload($data)) {
+            return array_values($data);
+        }
+
+        return [];
+    }
+
+    /**
      * @param  array<string, mixed>  $response
      */
-    private function extractSearchCursor(array $response): ?string
+    public static function extractNextCursor(array $response): ?string
     {
-        $candidates = [
-            Arr::get($response, 'next_cursor'),
-            Arr::get($response, 'cursor'),
-            Arr::get($response, 'next'),
-            Arr::get($response, 'paging.next_cursor'),
-            Arr::get($response, 'paging.cursor'),
-            Arr::get($response, 'pagination.next_cursor'),
-            Arr::get($response, 'pagination.cursor'),
-            Arr::get($response, 'data.next_cursor'),
-            Arr::get($response, 'data.cursor'),
-        ];
-
-        foreach ($candidates as $candidate) {
-            $value = trim((string) $candidate);
+        foreach ([
+            'next_cursor',
+            'cursor',
+            'next',
+            'paging.next_cursor',
+            'paging.cursor',
+            'pagination.next_cursor',
+            'pagination.cursor',
+            'data.next_cursor',
+            'data.cursor',
+        ] as $path) {
+            $value = trim((string) (Arr::get($response, $path) ?? ''));
             if ($value !== '') {
                 return $value;
             }
         }
 
         return null;
+    }
+
+    /**
+     * @param  array<mixed>  $candidate
+     */
+    private static function isListPayload(array $candidate): bool
+    {
+        if ($candidate === []) {
+            return true;
+        }
+
+        // Associative object payloads are not list pages.
+        if (! array_is_list($candidate)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  array<string, mixed>  $response
+     */
+    private function extractSearchCursor(array $response): ?string
+    {
+        return self::extractNextCursor($response);
     }
 
     /**
@@ -2445,18 +2494,25 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             $messageLike = array_replace($inner, $inner['email']);
         }
 
-        $text = (string) (
-            Arr::get($messageLike, 'text')
-            ?? Arr::get($messageLike, 'body_plain')
-            ?? Arr::get($messageLike, 'body')
-            ?? Arr::get($messageLike, 'message')
-            ?? Arr::get($payload, 'text')
-            ?? Arr::get($payload, 'body')
-            ?? Arr::get($payload, 'message')
-            ?? Arr::get($payload, 'data.text')
-            ?? Arr::get($payload, 'data.message')
-            ?? ''
-        );
+        // Prefer plain text over HTML body (Email.body is often HTML).
+        // Empty strings must not block later candidates (?? only skips null).
+        $text = $this->firstNonEmptyString([
+            Arr::get($messageLike, 'text'),
+            Arr::get($messageLike, 'body_plain'),
+            Arr::get($messageLike, 'plain_text'),
+            Arr::get($payload, 'text'),
+            Arr::get($payload, 'data.text'),
+            Arr::get($payload, 'data.body_plain'),
+            Arr::get($payload, 'data.plain_text'),
+            Arr::get($messageLike, 'message'),
+            Arr::get($payload, 'message'),
+            Arr::get($payload, 'data.message'),
+            $this->plainTextFromMaybeHtml(
+                Arr::get($messageLike, 'body')
+                ?? Arr::get($payload, 'body')
+                ?? Arr::get($payload, 'data.body')
+            ),
+        ]);
         $chatId = (string) (
             Arr::get($messageLike, 'chat_id')
             ?? Arr::get($messageLike, 'chat_provider_id')
@@ -2489,6 +2545,13 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             ?? ''
         );
 
+        $senderId = (string) (
+            Arr::get($messageLike, 'sender_id')
+            ?? Arr::get($messageLike, 'user_id')
+            ?? Arr::get($messageLike, 'sender.attendee_provider_id')
+            ?? ''
+        );
+
         $dataExtras = array_filter([
             'chat_id' => $chatId !== '' ? $chatId : null,
             'text' => $text !== '' ? $text : null,
@@ -2496,8 +2559,11 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'account_id' => $accountId !== '' ? $accountId : null,
             'account_provider' => $accountProvider !== '' ? $accountProvider : null,
             'provider' => $accountProvider !== '' ? $accountProvider : null,
+            // v2 Message: sender_id + is_sender (no nested sender / attendees).
+            'sender_id' => $senderId !== '' ? $senderId : null,
             'is_sender' => Arr::get($messageLike, 'is_sender') ?? Arr::get($messageLike, 'is_from_me'),
             'is_from_me' => Arr::get($messageLike, 'is_from_me') ?? Arr::get($messageLike, 'is_sender'),
+            'is_hidden' => Arr::get($messageLike, 'is_hidden') ?? Arr::get($messageLike, 'hidden'),
             'sender' => Arr::get($messageLike, 'sender'),
             'attachments' => Arr::get($messageLike, 'attachments'),
             'timestamp' => Arr::get($messageLike, 'timestamp')
@@ -2505,6 +2571,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 ?? Arr::get($payload, 'created_at'),
             'reaction' => Arr::get($messageLike, 'reaction'),
             'reaction_sender' => Arr::get($messageLike, 'reaction_sender') ?? Arr::get($messageLike, 'sender'),
+            'folder_id' => Arr::get($inner, 'folder_id') ?? Arr::get($messageLike, 'folder_id'),
         ], fn ($v) => $v !== null && $v !== '');
 
         return array_merge($payload, [
@@ -2566,6 +2633,11 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     /**
      * Unipile v2 replaced mail_received/mail_sent with email.new + folder role.
      *
+     * Docs: email.new payload is `{ folder_id, email }`. Email.folders is an array of
+     * Folder *IDs* (strings), not Folder objects — role lives on Get a Folder.
+     * Without a folder lookup on the webhook hot path, treat "from equals account mailbox"
+     * as SENT (account_name is typically the connected email for Google/Outlook/IMAP).
+     *
      * @param  array<string, mixed>  $payload
      */
     private function emailNewDirection(array $payload): string
@@ -2580,14 +2652,24 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
 
         if (is_array($folders)) {
             foreach ($folders as $folder) {
-                if (! is_array($folder)) {
+                // Expanded Folder object (rare) or legacy shape.
+                if (is_array($folder)) {
+                    $role = strtoupper(trim((string) ($folder['role'] ?? $folder['name'] ?? '')));
+                    if ($role === 'SENT') {
+                        return 'email.sent';
+                    }
+                    if ($role === 'INBOX') {
+                        return 'mail.received';
+                    }
                     continue;
                 }
-                $role = strtoupper(trim((string) ($folder['role'] ?? '')));
-                if ($role === 'SENT') {
+
+                // Plain role / name string (not a provider folder id).
+                $token = strtoupper(trim((string) $folder));
+                if (in_array($token, ['SENT', 'SENTITEMS', 'OUTBOX'], true)) {
                     return 'email.sent';
                 }
-                if ($role === 'INBOX') {
+                if ($token === 'INBOX') {
                     return 'mail.received';
                 }
             }
@@ -2605,8 +2687,95 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             return 'email.sent';
         }
 
+        // v2 folders are opaque IDs — infer SENT when From matches the connected mailbox.
+        if ($this->emailFromMatchesAccountMailbox($payload, $email !== [] ? $email : $inner)) {
+            return 'email.sent';
+        }
+
         // Default to inbound so replies still land in the inbox when folder metadata is missing.
         return 'mail.received';
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $email
+     */
+    private function emailFromMatchesAccountMailbox(array $payload, array $email): bool
+    {
+        $mailbox = strtolower(trim((string) (
+            Arr::get($payload, 'account_name')
+            ?? Arr::get($payload, 'account.email')
+            ?? Arr::get($payload, 'account_info.email')
+            ?? Arr::get($payload, 'data.account_name')
+            ?? ''
+        )));
+
+        if ($mailbox === '' || ! str_contains($mailbox, '@')) {
+            return false;
+        }
+
+        $from = Arr::get($email, 'from')
+            ?? Arr::get($email, 'from_attendee')
+            ?? Arr::get($payload, 'from')
+            ?? [];
+
+        $candidates = [];
+        if (is_string($from)) {
+            $candidates[] = $from;
+        } elseif (is_array($from)) {
+            if (isset($from['email']) || isset($from['identifier'])) {
+                $candidates[] = (string) ($from['email'] ?? $from['identifier'] ?? '');
+            } else {
+                foreach ($from as $row) {
+                    if (is_string($row)) {
+                        $candidates[] = $row;
+                        continue;
+                    }
+                    if (is_array($row)) {
+                        $candidates[] = (string) ($row['email'] ?? $row['identifier'] ?? '');
+                    }
+                }
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            if (strtolower(trim($candidate)) === $mailbox) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function plainTextFromMaybeHtml(mixed $value): ?string
+    {
+        $raw = trim((string) ($value ?? ''));
+        if ($raw === '') {
+            return null;
+        }
+
+        if (! str_contains($raw, '<')) {
+            return $raw;
+        }
+
+        $plain = trim(html_entity_decode(strip_tags($raw), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+        return $plain !== '' ? $plain : $raw;
+    }
+
+    /**
+     * @param  list<mixed>  $candidates
+     */
+    private function firstNonEmptyString(array $candidates): string
+    {
+        foreach ($candidates as $candidate) {
+            $value = trim((string) ($candidate ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     private function messageNewDirection(array $payload): string
@@ -2626,12 +2795,16 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     public function isFromAccountOwner(array $payload): bool
     {
         $inner = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
-        $fromMe = Arr::get($inner, 'is_from_me')
+        $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+
+        // v2 Message: is_sender is the documented owner flag for LinkedIn/WA/IG/Telegram/FB.
+        $fromMe = Arr::get($inner, 'is_sender')
+            ?? Arr::get($data, 'is_sender')
+            ?? Arr::get($payload, 'is_sender')
+            ?? Arr::get($inner, 'is_from_me')
             ?? Arr::get($inner, 'from_me')
-            ?? Arr::get($inner, 'is_sender')
             ?? Arr::get($payload, 'is_from_me')
-            ?? Arr::get($payload, 'from_me')
-            ?? Arr::get($payload, 'is_sender');
+            ?? Arr::get($payload, 'from_me');
 
         if ($fromMe === true || $fromMe === 1 || $fromMe === 'true' || $fromMe === '1') {
             return true;
@@ -2647,13 +2820,17 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             return true;
         }
 
+        // v1 webhook leftover: account_info.user_id === sender.attendee_provider_id
         $accountUserId = (string) (
             Arr::get($payload, 'account_info.user_id')
             ?? Arr::get($inner, 'account_info.user_id')
             ?? ''
         );
         $senderProviderId = (string) (
-            Arr::get($payload, 'sender.attendee_provider_id')
+            Arr::get($inner, 'sender_id')
+            ?? Arr::get($data, 'sender_id')
+            ?? Arr::get($payload, 'sender_id')
+            ?? Arr::get($payload, 'sender.attendee_provider_id')
             ?? Arr::get($inner, 'sender.attendee_provider_id')
             ?? ''
         );
@@ -2742,8 +2919,14 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     private function normalizeEmailSendBody(array $body): array
     {
         // v2: body removed — use html / plain_text.
-        if (isset($body['body']) && ! isset($body['html']) && ! isset($body['plain_text'])) {
-            $body['html'] = $body['body'];
+        if (isset($body['body'])) {
+            if (! isset($body['html']) && ! isset($body['plain_text'])) {
+                $body['html'] = $body['body'];
+            } elseif (! isset($body['html']) && is_string($body['body']) && str_contains($body['body'], '<')) {
+                $body['html'] = $body['body'];
+            } elseif (! isset($body['plain_text'])) {
+                $body['plain_text'] = $body['body'];
+            }
             unset($body['body']);
         }
 
@@ -2766,8 +2949,16 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         ));
 
         if ($threadReplyId === '' && isset($body['reply_to']) && is_string($body['reply_to'])) {
-            $threadReplyId = trim($body['reply_to']);
-            unset($body['reply_to']);
+            $replyToString = trim($body['reply_to']);
+            // An email address is a Reply-To header, not a provider message id.
+            if ($replyToString !== '' && str_contains($replyToString, '@')) {
+                $body['reply_to'] = [['email' => $replyToString]];
+            } elseif ($replyToString !== '') {
+                $threadReplyId = $replyToString;
+                unset($body['reply_to']);
+            } else {
+                unset($body['reply_to']);
+            }
         }
 
         if ($threadReplyId !== '') {

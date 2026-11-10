@@ -238,23 +238,26 @@ class UnipileMessageNormalizer
             return null;
         }
 
+        // v2 message.reaction.new: reaction is { value, sender_id, is_sender }.
+        // v1 used reaction_sender.attendee_provider_id.
         $senderId = trim((string) (
-            Arr::get($payload, 'data.reaction_sender.attendee_provider_id')
-            ?? Arr::get($payload, 'reaction_sender.attendee_provider_id')
+            (is_array($reaction) ? ($reaction['sender_id'] ?? $reaction['user_id'] ?? null) : null)
             ?? Arr::get($inner, 'reaction.sender_id')
             ?? Arr::get($inner, 'reaction.user_id')
-            ?? (is_array($reaction) ? ($reaction['sender_id'] ?? $reaction['user_id'] ?? null) : null)
             ?? Arr::get($payload, 'data.sender_id')
             ?? Arr::get($payload, 'sender_id')
+            ?? Arr::get($payload, 'data.reaction_sender.attendee_provider_id')
+            ?? Arr::get($payload, 'reaction_sender.attendee_provider_id')
             ?? ''
         ));
 
         $isSender = (bool) (
-            Arr::get($payload, 'data.reaction_sender.is_sender')
-            ?? Arr::get($payload, 'reaction_sender.is_sender')
-            ?? (is_array($reaction) ? ($reaction['is_sender'] ?? null) : null)
+            (is_array($reaction) ? ($reaction['is_sender'] ?? null) : null)
+            ?? Arr::get($inner, 'reaction.is_sender')
             ?? Arr::get($payload, 'data.is_sender')
             ?? Arr::get($payload, 'is_sender')
+            ?? Arr::get($payload, 'data.reaction_sender.is_sender')
+            ?? Arr::get($payload, 'reaction_sender.is_sender')
             ?? false
         );
 

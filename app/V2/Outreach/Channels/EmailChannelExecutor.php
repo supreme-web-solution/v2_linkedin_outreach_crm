@@ -119,10 +119,12 @@ class EmailChannelExecutor implements ChannelExecutorInterface
             $subject = \App\V2\Ai\Support\EmailOutboundFormat::normalizeSubject($subject);
             $plainBody = \App\V2\Ai\Support\EmailOutboundFormat::formatPlainBody($body);
             $htmlBody = \App\V2\Ai\Support\EmailOutboundFormat::toHtmlBody($plainBody);
+            // Unipile v2 Send Email: html + plain_text (body was removed).
             $response = $concrete->sendEmail([
                 'to' => [['email' => $email]],
                 'subject' => $subject,
-                'body' => $htmlBody !== '' ? $htmlBody : $plainBody,
+                'html' => $htmlBody !== '' ? $htmlBody : null,
+                'plain_text' => $plainBody,
             ], $context);
 
             $responseArray = is_array($response) ? $response : [];

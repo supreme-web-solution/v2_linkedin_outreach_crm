@@ -658,6 +658,8 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
         foreach ([
             Arr::get($payload, 'data.attendees'),
             Arr::get($payload, 'attendees'),
+            Arr::get($payload, 'data.participants'),
+            Arr::get($payload, 'participants'),
             Arr::get($conversation->meta ?? [], 'attendee_ids'),
         ] as $group) {
             if (!is_array($group)) {
@@ -671,7 +673,9 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
                 }
 
                 if (is_array($attendee)) {
-                    $id = (string) (Arr::get($attendee, 'provider_id')
+                    $id = (string) (Arr::get($attendee, 'user.id')
+                        ?? Arr::get($attendee, 'user_id')
+                        ?? Arr::get($attendee, 'provider_id')
                         ?? Arr::get($attendee, 'id')
                         ?? Arr::get($attendee, 'attendee_provider_id')
                         ?? '');
@@ -683,8 +687,14 @@ class ProcessUnipileWebhookEventJob implements ShouldQueue
         }
 
         foreach ([
+            // v2 Message / Chat
             Arr::get($payload, 'data.sender_id'),
             Arr::get($payload, 'sender_id'),
+            Arr::get($payload, 'data.user_id'),
+            Arr::get($payload, 'user_id'),
+            Arr::get($payload, 'data.user.id'),
+            Arr::get($payload, 'user.id'),
+            // v1 leftovers
             Arr::get($payload, 'data.sender.provider_id'),
             Arr::get($payload, 'sender.provider_id'),
             Arr::get($payload, 'data.sender.attendee_provider_id'),

@@ -88,6 +88,8 @@ class OutreachReplyProbeService
 
         $distance = Arr::get($profile, 'network_distance')
             ?? Arr::get($profile, 'provider_data.network_distance')
+            ?? Arr::get($profile, 'specifics.linkedin.network_distance')
+            ?? Arr::get($profile, 'specifics.network_distance')
             ?? Arr::get($profile, 'distance');
         $normalized = strtolower(trim((string) $distance));
         $connected = in_array($normalized, ['1', '1st', 'first', 'distance_1', 'dist_1', 'first_degree'], true)
@@ -231,11 +233,10 @@ class OutreachReplyProbeService
             return false;
         }
 
-        $items = Arr::get($response, 'items');
-        if (! is_array($items) || $items === []) {
-            $items = Arr::get($response, 'data.items', []);
-        }
-        if (! is_array($items)) {
+        $items = \App\V2\Integrations\Unipile\UnipileProvider::extractListItems(
+            is_array($response) ? $response : []
+        );
+        if ($items === []) {
             return false;
         }
 

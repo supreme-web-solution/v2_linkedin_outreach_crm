@@ -413,14 +413,7 @@ class UnifiedInboxService
             return;
         }
 
-        $items = Arr::get($response, 'items');
-        if (! is_array($items) || $items === []) {
-            $items = Arr::get($response, 'data.items', []);
-        }
-
-        if (! is_array($items)) {
-            return;
-        }
+        $items = UnipileProvider::extractListItems($response);
 
         foreach ($items as $item) {
             if (! is_array($item)) {
@@ -530,6 +523,13 @@ class UnifiedInboxService
         $folders = Arr::get($inner, 'folders') ?? Arr::get($payload, 'folders') ?? [];
         if (is_array($folders)) {
             foreach ($folders as $folder) {
+                if (is_string($folder)) {
+                    $token = strtoupper(trim($folder));
+                    if (in_array($token, ['SENT', 'SENTITEMS', 'OUTBOX'], true)) {
+                        return null;
+                    }
+                    continue;
+                }
                 if (! is_array($folder)) {
                     continue;
                 }
@@ -540,17 +540,36 @@ class UnifiedInboxService
             }
         }
 
-        $fromEmail = $this->extractEmailAddress(
-            Arr::get($inner, 'from_attendee')
-            ?? Arr::get($payload, 'from_attendee')
-            ?? Arr::get($inner, 'from')
+        // v2 Email object: from/to are arrays of {email, display_name}.
+        // v1 compatibility: from_attendee / to_attendees with identifier.
+        $fromEmails = $this->extractEmailAddresses(
+            Arr::get($inner, 'from')
             ?? Arr::get($payload, 'from')
+            ?? Arr::get($inner, 'from_attendee')
+            ?? Arr::get($payload, 'from_attendee')
+            ?? Arr::get($inner, 'from_attendees')
+            ?? Arr::get($payload, 'from_attendees')
         );
+
+        // When folders are opaque IDs, skip own-mailbox outbound (From == account_name).
+        $accountMailbox = strtolower(trim((string) (
+            Arr::get($payload, 'account_name')
+            ?? Arr::get($payload, 'data.account_name')
+            ?? ''
+        )));
+        if ($accountMailbox !== '' && str_contains($accountMailbox, '@')) {
+            foreach ($fromEmails as $fromEmail) {
+                if (strtolower(trim($fromEmail)) === $accountMailbox) {
+                    return null;
+                }
+            }
+        }
+        $fromEmail = $fromEmails[0] ?? '';
         $toEmails = $this->extractEmailAddresses(
-            Arr::get($inner, 'to_attendees')
-            ?? Arr::get($payload, 'to_attendees')
-            ?? Arr::get($inner, 'to')
+            Arr::get($inner, 'to')
             ?? Arr::get($payload, 'to')
+            ?? Arr::get($inner, 'to_attendees')
+            ?? Arr::get($payload, 'to_attendees')
         );
 
         $body = trim(strip_tags((string) (
@@ -948,16 +967,29 @@ class UnifiedInboxService
             return strtolower(trim($value));
         }
 
-        if (is_array($value)) {
-            $email = trim((string) (
-                Arr::get($value, 'identifier')
-                ?? Arr::get($value, 'email')
-                ?? Arr::get($value, 'address')
-                ?? ''
-            ));
+        if (! is_array($value)) {
+            return '';
+        }
 
-            if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                return strtolower($email);
+        // Single attendee object: {email} or legacy {identifier}.
+        $email = trim((string) (
+            Arr::get($value, 'email')
+            ?? Arr::get($value, 'identifier')
+            ?? Arr::get($value, 'address')
+            ?? ''
+        ));
+
+        if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return strtolower($email);
+        }
+
+        // v2 from/to can be a list: [{email: "..."}].
+        if (array_is_list($value) || isset($value[0])) {
+            foreach ($value as $item) {
+                $nested = $this->extractEmailAddress($item);
+                if ($nested !== '') {
+                    return $nested;
+                }
             }
         }
 
@@ -970,6 +1002,13 @@ class UnifiedInboxService
     private function extractEmailAddresses(mixed $value): array
     {
         if (! is_array($value)) {
+            $single = $this->extractEmailAddress($value);
+
+            return $single !== '' ? [$single] : [];
+        }
+
+        // Single attendee object rather than a list.
+        if (isset($value['email']) || isset($value['identifier']) || isset($value['address'])) {
             $single = $this->extractEmailAddress($value);
 
             return $single !== '' ? [$single] : [];
@@ -1046,12 +1085,9 @@ class UnifiedInboxService
             return;
         }
 
-        $items = Arr::get($response, 'items');
-        if (! is_array($items) || $items === []) {
-            $items = Arr::get($response, 'data.items', []);
-        }
+        $items = UnipileProvider::extractListItems($response);
 
-        if (! is_array($items) || $items === []) {
+        if ($items === []) {
             return;
         }
 
@@ -1064,6 +1100,9 @@ class UnifiedInboxService
             if (! is_array($item)) {
                 continue;
             }
+
+            // Normalize v2 Message fields (is_hidden, sender_id, id) before ingest.
+            $item = $normalizer->normalizeMessageItem($item);
 
             $reactionEvent = $normalizer->resolveReactionEvent($item);
             if ($reactionEvent !== null) {
@@ -1087,7 +1126,9 @@ class UnifiedInboxService
             }
 
             $providerMessageId = trim((string) ($item['id'] ?? $item['message_id'] ?? ''));
+            // v2 Message uses is_sender; keep is_from_me/from_me as legacy aliases.
             $isOutbound = $this->isTruthy($item['is_sender'] ?? false)
+                || $this->isTruthy($item['is_from_me'] ?? false)
                 || $this->isTruthy($item['from_me'] ?? false);
             $direction = $isOutbound ? 'outbound' : 'inbound';
 
@@ -1834,15 +1875,20 @@ class UnifiedInboxService
             $subject = 'Re: '.$subject;
         }
 
-        $payload = [
+        $plainText = $text !== ''
+            ? (\App\V2\Ai\Support\EmailOutboundFormat::formatPlainBody($text) ?: $text)
+            : ($attachment ? ' ' : '');
+        $html = $text !== ''
+            ? (\App\V2\Ai\Support\EmailOutboundFormat::toHtmlBody($text) ?: null)
+            : null;
+
+        // Unipile v2 Send Email: html + plain_text (body was removed).
+        $payload = array_filter([
             'to' => [['email' => $toEmail]],
             'subject' => $subject,
-            'body' => $text !== ''
-                ? (\App\V2\Ai\Support\EmailOutboundFormat::toHtmlBody($text)
-                    ?: \App\V2\Ai\Support\EmailOutboundFormat::formatPlainBody($text)
-                    ?: $text)
-                : ($attachment ? ' ' : ''),
-        ];
+            'plain_text' => $plainText,
+            'html' => $html,
+        ], fn ($v) => $v !== null && $v !== '');
 
         $replyTo = trim((string) ($meta['last_email_provider_id'] ?? ''));
         if ($replyTo !== '' && ! $this->isUnstableEmailProviderId($replyTo)) {
@@ -1927,13 +1973,17 @@ class UnifiedInboxService
      */
     private function resolveProviderFromPayload(array $payload): ?string
     {
+        // Unipile v2 Event object uses account_provider (not account_type).
+        // Message/Chat objects expose provider. Keep account_type as v1 fallback only.
         $providerRaw = (string) (
-            Arr::get($payload, 'data.account_type')
-            ?? Arr::get($payload, 'account_type')
+            Arr::get($payload, 'account_provider')
+            ?? Arr::get($payload, 'data.account_provider')
             ?? Arr::get($payload, 'data.provider')
             ?? Arr::get($payload, 'provider')
             ?? Arr::get($payload, 'data.account.provider')
             ?? Arr::get($payload, 'account.provider')
+            ?? Arr::get($payload, 'data.account_type')
+            ?? Arr::get($payload, 'account_type')
             ?? ''
         );
 
@@ -1941,7 +1991,7 @@ class UnifiedInboxService
             $mapped = OutreachChannelRegistry::integrationProviderForUnipileType($providerRaw)
                 ?? strtolower($providerRaw);
 
-            if ($mapped !== '' && $mapped !== 'linkedin') {
+            if ($mapped !== '') {
                 return $mapped;
             }
         }
@@ -1959,8 +2009,8 @@ class UnifiedInboxService
                 ->orderByDesc('id')
                 ->first();
 
-            $provider = (string) ($account?->provider ?? '');
-            if ($provider !== '' && $provider !== 'linkedin') {
+            $provider = trim((string) ($account?->provider ?? ''));
+            if ($provider !== '') {
                 return $provider;
             }
         }
@@ -2013,10 +2063,14 @@ class UnifiedInboxService
         }
 
         $senderName = trim((string) (
-            Arr::get($payload, 'data.sender.display_name')
+            Arr::get($payload, 'data.user.display_name')
+            ?? Arr::get($payload, 'user.display_name')
+            ?? Arr::get($payload, 'data.sender.display_name')
             ?? Arr::get($payload, 'sender.display_name')
             ?? Arr::get($payload, 'data.sender.name')
             ?? Arr::get($payload, 'sender.name')
+            ?? Arr::get($payload, 'data.sender.attendee_name')
+            ?? Arr::get($payload, 'sender.attendee_name')
             ?? ''
         ));
 
@@ -2082,13 +2136,22 @@ class UnifiedInboxService
             return $fromLead;
         }
 
+        // Unipile v2 Message has no sender object; 1:1 Chat exposes user.display_name.
+        // v1 webhooks used sender.attendee_name / attendees[].display_name.
         foreach ([
+            Arr::get($payload, 'data.user.display_name'),
+            Arr::get($payload, 'user.display_name'),
+            Arr::get($payload, 'data.user.first_name'),
             Arr::get($payload, 'data.sender.display_name'),
             Arr::get($payload, 'sender.display_name'),
             Arr::get($payload, 'data.sender.name'),
             Arr::get($payload, 'sender.name'),
+            Arr::get($payload, 'data.sender.attendee_name'),
+            Arr::get($payload, 'sender.attendee_name'),
             Arr::get($payload, 'data.attendees.0.display_name'),
             Arr::get($payload, 'attendees.0.display_name'),
+            Arr::get($payload, 'data.participants.0.user.display_name'),
+            Arr::get($payload, 'participants.0.user.display_name'),
         ] as $name) {
             $value = trim((string) ($name ?? ''));
             if ($value !== '') {
@@ -2100,6 +2163,13 @@ class UnifiedInboxService
     }
 
     /**
+     * Collect provider user IDs from a webhook/API payload.
+     *
+     * Unipile v2 Message: `sender_id` only (no attendees[]).
+     * Unipile v2 Chat (1:1): `user_id` + nested `user.id`.
+     * Unipile v2 group Chat: `participants[].user.id`.
+     * v1 leftovers: attendees[] / sender.attendee_provider_id.
+     *
      * @param  array<string, mixed>  $payload
      * @return array<int, string>
      */
@@ -2110,6 +2180,8 @@ class UnifiedInboxService
         foreach ([
             Arr::get($payload, 'data.attendees'),
             Arr::get($payload, 'attendees'),
+            Arr::get($payload, 'data.participants'),
+            Arr::get($payload, 'participants'),
         ] as $group) {
             if (!is_array($group)) {
                 continue;
@@ -2123,7 +2195,9 @@ class UnifiedInboxService
 
                 if (is_array($attendee)) {
                     $id = (string) (
-                        Arr::get($attendee, 'provider_id')
+                        Arr::get($attendee, 'user.id')
+                        ?? Arr::get($attendee, 'user_id')
+                        ?? Arr::get($attendee, 'provider_id')
                         ?? Arr::get($attendee, 'id')
                         ?? Arr::get($attendee, 'attendee_provider_id')
                         ?? ''
@@ -2136,8 +2210,16 @@ class UnifiedInboxService
         }
 
         foreach ([
+            // v2 Message / Chat fields first
             Arr::get($payload, 'data.sender_id'),
             Arr::get($payload, 'sender_id'),
+            Arr::get($payload, 'data.user_id'),
+            Arr::get($payload, 'user_id'),
+            Arr::get($payload, 'data.user.id'),
+            Arr::get($payload, 'user.id'),
+            Arr::get($payload, 'data.user.public_identifier'),
+            Arr::get($payload, 'user.public_identifier'),
+            // v1 webhook leftovers
             Arr::get($payload, 'data.sender.provider_id'),
             Arr::get($payload, 'sender.provider_id'),
             Arr::get($payload, 'data.sender.attendee_provider_id'),
@@ -2265,10 +2347,7 @@ class UnifiedInboxService
             return null;
         }
 
-        $items = Arr::get($response, 'items', Arr::get($response, 'data.items', []));
-        if (! is_array($items)) {
-            return null;
-        }
+        $items = UnipileProvider::extractListItems($response);
 
         $targets = array_map('strval', $attendeeIds);
         $directMatch = null;
@@ -2287,22 +2366,15 @@ class UnifiedInboxService
                 continue;
             }
 
-            $chatAttendees = Arr::get($chat, 'attendees', Arr::get($chat, 'attendee_ids', []));
-            if (! is_array($chatAttendees)) {
+            // v2 Chat 1:1: user_id / user.id. Groups: participants[].user.id.
+            // v1 leftovers: attendees[] / attendee_ids.
+            $chatAttendeeIds = $this->extractChatParticipantIds($chat);
+            if ($chatAttendeeIds === []) {
                 continue;
             }
 
             $matchedTargets = [];
-            foreach ($chatAttendees as $att) {
-                $aid = is_array($att)
-                    ? (string) (
-                        Arr::get($att, 'provider_id')
-                        ?? Arr::get($att, 'attendee_provider_id')
-                        ?? Arr::get($att, 'id')
-                        ?? ''
-                    )
-                    : (string) $att;
-
+            foreach ($chatAttendeeIds as $aid) {
                 if ($aid !== '' && in_array($aid, $targets, true)) {
                     $matchedTargets[] = $aid;
                 }
@@ -2692,9 +2764,22 @@ class UnifiedInboxService
             }
         }
 
-        $attendees = Arr::get($payload, 'data.attendees', Arr::get($payload, 'attendees', []));
+        $participants = Arr::get(
+            $payload,
+            'data.participants',
+            Arr::get($payload, 'participants', Arr::get($payload, 'data.attendees', Arr::get($payload, 'attendees', [])))
+        );
         $maxDirectAttendees = in_array($provider, ['whatsapp', 'telegram', 'twitter', 'instagram'], true) ? 2 : 3;
-        if (is_array($attendees) && count($attendees) > $maxDirectAttendees) {
+        if (is_array($participants) && count($participants) > $maxDirectAttendees) {
+            return true;
+        }
+
+        $participantsCount = (int) (
+            Arr::get($payload, 'data.participants_count')
+            ?? Arr::get($payload, 'participants_count')
+            ?? 0
+        );
+        if ($participantsCount > $maxDirectAttendees) {
             return true;
         }
 
@@ -2741,9 +2826,14 @@ class UnifiedInboxService
             return true;
         }
 
-        $attendees = Arr::get($chat, 'attendees', Arr::get($chat, 'attendee_ids', []));
+        $participants = Arr::get($chat, 'participants', Arr::get($chat, 'attendees', Arr::get($chat, 'attendee_ids', [])));
         $maxDirectAttendees = in_array($provider, ['whatsapp', 'telegram', 'twitter', 'instagram'], true) ? 2 : 3;
-        if (is_array($attendees) && count($attendees) > $maxDirectAttendees) {
+        if (is_array($participants) && count($participants) > $maxDirectAttendees) {
+            return true;
+        }
+
+        $participantsCount = (int) ($chat['participants_count'] ?? 0);
+        if ($participantsCount > $maxDirectAttendees) {
             return true;
         }
 
@@ -2751,17 +2841,25 @@ class UnifiedInboxService
     }
 
     /**
+     * Unipile v2 Message uses top-level `sender_id` (provider user id).
+     * v1 webhooks nested it under `sender.attendee_provider_id`.
+     *
      * @param  array<string, mixed>  $payload
      */
     private function extractSenderId(array $payload): string
     {
         foreach ([
+            Arr::get($payload, 'data.sender_id'),
+            Arr::get($payload, 'sender_id'),
+            Arr::get($payload, 'payload.sender_id'),
+            Arr::get($payload, 'data.user_id'),
+            Arr::get($payload, 'user_id'),
+            Arr::get($payload, 'data.user.id'),
+            Arr::get($payload, 'user.id'),
             Arr::get($payload, 'data.sender.provider_id'),
             Arr::get($payload, 'sender.provider_id'),
             Arr::get($payload, 'data.sender.attendee_provider_id'),
             Arr::get($payload, 'sender.attendee_provider_id'),
-            Arr::get($payload, 'data.sender_id'),
-            Arr::get($payload, 'sender_id'),
         ] as $id) {
             $value = trim((string) ($id ?? ''));
             if ($value !== '') {
@@ -2770,6 +2868,61 @@ class UnifiedInboxService
         }
 
         return '';
+    }
+
+    /**
+     * @param  array<string, mixed>  $chat
+     * @return list<string>
+     */
+    private function extractChatParticipantIds(array $chat): array
+    {
+        $ids = [];
+
+        foreach ([
+            Arr::get($chat, 'user_id'),
+            Arr::get($chat, 'user.id'),
+            Arr::get($chat, 'user.public_identifier'),
+        ] as $single) {
+            $value = trim((string) ($single ?? ''));
+            if ($value !== '') {
+                $ids[] = $value;
+            }
+        }
+
+        foreach ([
+            Arr::get($chat, 'participants'),
+            Arr::get($chat, 'attendees'),
+            Arr::get($chat, 'attendee_ids'),
+        ] as $group) {
+            if (! is_array($group)) {
+                continue;
+            }
+
+            foreach ($group as $att) {
+                if (is_string($att) && $att !== '') {
+                    $ids[] = $att;
+                    continue;
+                }
+
+                if (! is_array($att)) {
+                    continue;
+                }
+
+                $aid = trim((string) (
+                    Arr::get($att, 'user.id')
+                    ?? Arr::get($att, 'user_id')
+                    ?? Arr::get($att, 'provider_id')
+                    ?? Arr::get($att, 'attendee_provider_id')
+                    ?? Arr::get($att, 'id')
+                    ?? ''
+                ));
+                if ($aid !== '') {
+                    $ids[] = $aid;
+                }
+            }
+        }
+
+        return array_values(array_unique($ids));
     }
 
     private function invalidateProviderChatId(V2Conversation $conversation, string $invalidChatId, string $reason): void

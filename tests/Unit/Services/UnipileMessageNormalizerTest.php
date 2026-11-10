@@ -62,6 +62,48 @@ class UnipileMessageNormalizerTest extends TestCase
         $normalizer = new UnipileMessageNormalizer();
 
         $this->assertTrue($normalizer->shouldSkipAsChatMessage(['hidden' => 1, 'text' => '👍']));
+        $this->assertTrue($normalizer->shouldSkipAsChatMessage(['is_hidden' => true, 'text' => '👍']));
         $this->assertTrue($normalizer->shouldSkipAsChatMessage(['is_event' => '1', 'event_type' => 2, 'text' => '👍']));
+    }
+
+    public function test_normalize_message_item_prefers_v2_fields(): void
+    {
+        $normalizer = new UnipileMessageNormalizer();
+        $normalized = $normalizer->normalizeMessageItem([
+            'id' => 'msg_provider_1',
+            'chat_id' => 'chat_provider_1',
+            'text' => 'Hello',
+            'sender_id' => 'ACoAAProspect',
+            'is_hidden' => true,
+            'is_seen' => true,
+        ]);
+
+        $this->assertSame('msg_provider_1', $normalized['id']);
+        $this->assertSame('chat_provider_1', $normalized['chat_id']);
+        $this->assertSame('ACoAAProspect', $normalized['sender_id']);
+        $this->assertTrue((bool) $normalized['hidden']);
+        $this->assertTrue((bool) $normalized['seen']);
+    }
+
+    public function test_extract_reaction_event_reads_v2_reaction_object(): void
+    {
+        $normalizer = new UnipileMessageNormalizer();
+        $parsed = $normalizer->extractReactionEvent([
+            'type' => 'message.reaction.new',
+            'payload' => [
+                'chat_id' => 'chat_1',
+                'message_id' => 'msg_1',
+                'reaction' => [
+                    'value' => '👍',
+                    'sender_id' => 'ig_user_9',
+                    'is_sender' => false,
+                ],
+            ],
+        ]);
+
+        $this->assertSame('msg_1', $parsed['message_id']);
+        $this->assertSame('👍', $parsed['value']);
+        $this->assertSame('ig_user_9', $parsed['sender_id']);
+        $this->assertFalse($parsed['is_sender']);
     }
 }

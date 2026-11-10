@@ -659,19 +659,21 @@ class UnifiedInboxTest extends TestCase
             'provider' => 'unipile',
             'event_id' => 'evt_ig_repair_1',
             'event_type' => 'message.received',
+            // Unipile v2 message.new shape: account_provider + Message{sender_id,is_sender,text,chat_id}.
             'payload' => [
-                'account_type' => 'INSTAGRAM',
+                'account_provider' => 'INSTAGRAM',
                 'account_id' => 'ig_acc_repair',
                 'chat_id' => 'mL8AUZfhUqSAPVay8-oANA',
                 'is_sender' => false,
+                'sender_id' => '17849467217951661',
                 'message_id' => '4b5AQAVZUwSOunSECh3azA',
                 'text' => 'How can i help you?',
-                'attendees' => [[
-                    'attendee_provider_id' => '17849467217951661',
-                ]],
                 'data' => [
+                    'account_provider' => 'INSTAGRAM',
                     'chat_id' => 'mL8AUZfhUqSAPVay8-oANA',
                     'message_id' => '4b5AQAVZUwSOunSECh3azA',
+                    'sender_id' => '17849467217951661',
+                    'is_sender' => false,
                     'text' => 'How can i help you?',
                 ],
             ],
@@ -1427,8 +1429,9 @@ class UnifiedInboxTest extends TestCase
                 'folder_id' => 'folder_inbox',
                 'email' => [
                     'id' => 'email_v2_1',
-                    'from_attendee' => ['identifier' => 'prospect@example.com'],
-                    'to_attendees' => [['identifier' => 'me@company.com']],
+                    // Unipile v2 Email object uses from/to arrays with email keys.
+                    'from' => [['email' => 'prospect@example.com', 'display_name' => 'Prospect']],
+                    'to' => [['email' => 'me@company.com']],
                     'subject' => 'Re: Hello',
                     'body_plain' => 'Thanks, works for me.',
                     'date' => now()->toIso8601String(),
@@ -1475,8 +1478,8 @@ class UnifiedInboxTest extends TestCase
         \Illuminate\Support\Facades\Http::fake([
             'unipile.test/v2/acc_email_v2/emails/email_v2_empty' => \Illuminate\Support\Facades\Http::response([
                 'id' => 'email_v2_empty',
-                'from_attendee' => ['identifier' => 'prospect@example.com'],
-                'to_attendees' => [['identifier' => 'me@company.com']],
+                'from' => [['email' => 'prospect@example.com']],
+                'to' => [['email' => 'me@company.com']],
                 'subject' => 'Re: Hello',
                 'body_plain' => 'Hydrated reply body',
                 'date' => now()->toIso8601String(),
@@ -1494,8 +1497,8 @@ class UnifiedInboxTest extends TestCase
                 'folder_id' => 'folder_inbox',
                 'email' => [
                     'id' => 'email_v2_empty',
-                    'from_attendee' => ['identifier' => 'prospect@example.com'],
-                    'to_attendees' => [['identifier' => 'me@company.com']],
+                    'from' => [['email' => 'prospect@example.com']],
+                    'to' => [['email' => 'me@company.com']],
                     'subject' => 'Re: Hello',
                     'body_plain' => '',
                     'body' => '',
