@@ -68,8 +68,17 @@ function hitSearch(string $baseUrl, string $token, int $orgId, array $body, stri
     echo "HTTP {$status}\n";
 
     if ($status >= 200 && $status < 300) {
-        $items = $data['data']['items'] ?? [];
-        $count = is_array($items) ? count($items) : 0;
+        // Prefer API list envelopes: items, data.items, or v2 list-shaped data.
+        $items = $data['items'] ?? null;
+        if (! is_array($items)) {
+            $nested = $data['data']['items'] ?? null;
+            $items = is_array($nested) ? $nested : null;
+        }
+        if (! is_array($items)) {
+            $dataList = $data['data'] ?? null;
+            $items = (is_array($dataList) && array_is_list($dataList)) ? $dataList : [];
+        }
+        $count = count($items);
         $stored = $data['stored_count'] ?? '?';
         $audience = $data['audience_name'] ?? ($data['meta']['audience_name'] ?? '?');
         echo "OK · items={$count} · stored={$stored} · audience=\"{$audience}\"\n";

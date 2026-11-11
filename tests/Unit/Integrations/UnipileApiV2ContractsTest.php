@@ -254,7 +254,7 @@ class UnipileApiV2ContractsTest extends TestCase
     public function test_start_chat_maps_legacy_linkedin_into_specifics(): void
     {
         Http::fake([
-            'unipile.test/v2/acc_li/chats/send' => Http::response(['id' => 'chat_1'], 201),
+            'unipile.test/v2/acc_li/inboxes/CLASSIC_PRIMARY/chat' => Http::response(['id' => 'chat_1'], 201),
         ]);
         Config::set('services.unipile.endpoints.start_chat', '/chats/send');
 
@@ -268,7 +268,8 @@ class UnipileApiV2ContractsTest extends TestCase
         Http::assertSent(function ($request) {
             $payload = $request->data();
 
-            return ($payload['users_ids'] ?? null) === 'ACoAAA'
+            return $request->url() === 'https://unipile.test/v2/acc_li/inboxes/CLASSIC_PRIMARY/chat'
+                && ($payload['users_ids'] ?? null) === 'ACoAAA'
                 && ($payload['specifics']['linkedin']['classic']['inmail'] ?? null) === true
                 && ! array_key_exists('linkedin', $payload);
         });
@@ -277,7 +278,7 @@ class UnipileApiV2ContractsTest extends TestCase
     public function test_start_chat_maps_options_linkedin_and_invitation_id(): void
     {
         Http::fake([
-            'unipile.test/v2/acc_li/chats/send' => Http::response(['id' => 'chat_2'], 201),
+            'unipile.test/v2/acc_li/inboxes/CLASSIC_PRIMARY/chat' => Http::response(['id' => 'chat_2'], 201),
         ]);
         Config::set('services.unipile.endpoints.start_chat', '/chats/send');
 
@@ -297,7 +298,8 @@ class UnipileApiV2ContractsTest extends TestCase
             $payload = $request->data();
             $classic = $payload['specifics']['linkedin']['classic'] ?? [];
 
-            return ($payload['users_ids'] ?? null) === 'ACoBBB'
+            return $request->url() === 'https://unipile.test/v2/acc_li/inboxes/CLASSIC_PRIMARY/chat'
+                && ($payload['users_ids'] ?? null) === 'ACoBBB'
                 && ($classic['relation_request_id'] ?? null) === 'req_legacy_1'
                 && ($classic['inmail'] ?? null) === true
                 && ! array_key_exists('invitation_id', $classic)
@@ -306,16 +308,35 @@ class UnipileApiV2ContractsTest extends TestCase
         });
     }
 
+    public function test_start_chat_keeps_generic_path_for_whatsapp(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_wa/chats/send' => Http::response(['id' => 'chat_wa'], 201),
+        ]);
+        Config::set('services.unipile.endpoints.start_chat', '/chats/send');
+
+        app(UnipileProvider::class)->startChat([
+            'account_id' => 'acc_wa',
+            'users_ids' => ['15551234567@s.whatsapp.net'],
+            'text' => 'Hello',
+            'provider' => 'WHATSAPP',
+        ]);
+
+        Http::assertSent(function ($request) {
+            return $request->url() === 'https://unipile.test/v2/acc_wa/chats/send'
+                && ($request->data()['users_ids'] ?? null) === '15551234567@s.whatsapp.net';
+        });
+    }
+
     public function test_sales_nav_search_from_url_puts_limit_offset_in_query(): void
     {
         Http::fake([
-            'unipile.test/v2/acc_li/linkedin/search*' => Http::response([
+            'unipile.test/v2/acc_li/linkedin/sales-navigator/search*' => Http::response([
                 'data' => [
                     ['id' => 'sn1', 'display_name' => 'SN One'],
                 ],
             ], 200),
         ]);
-        Config::set('services.unipile.endpoints.search', '/linkedin/search');
 
         app(UnipileProvider::class)->searchFromUrl(
             'https://www.linkedin.com/sales/search/people?query=(recentSearchParam:(id:1))',
@@ -327,13 +348,38 @@ class UnipileApiV2ContractsTest extends TestCase
             $payload = $request->data();
             $url = $request->url();
 
-            return str_contains($url, '/linkedin/search')
+            return str_contains($url, '/linkedin/sales-navigator/search')
+                && ! str_contains($url, '/linkedin/search?')
+                && ! str_ends_with(parse_url($url, PHP_URL_PATH) ?? '', '/linkedin/search')
                 && str_contains($url, 'limit=')
                 && str_contains($url, 'offset=0')
                 && ($payload['url'] ?? null) !== null
                 && ! array_key_exists('limit', $payload)
                 && ! array_key_exists('offset', $payload)
                 && ! array_key_exists('count', $payload);
+        });
+    }
+
+    public function test_recruiter_search_from_url_uses_recruiter_path(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/linkedin/recruiter/search*' => Http::response([
+                'data' => [
+                    ['id' => 'r1', 'display_name' => 'Rec One'],
+                ],
+            ], 200),
+        ]);
+
+        app(UnipileProvider::class)->searchFromUrl(
+            'https://www.linkedin.com/talent/search?searchHistoryId=1',
+            'acc_li',
+            5,
+        );
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), '/linkedin/recruiter/search')
+                && str_contains($request->url(), 'offset=0')
+                && ($request->data()['url'] ?? null) !== null;
         });
     }
 
@@ -376,6 +422,78 @@ class UnipileApiV2ContractsTest extends TestCase
             return $request->method() === 'GET'
                 && str_starts_with($request->url(), 'https://unipile.test/v2/acc_li/users/me/posts');
         });
+    }
+
+    public function test_classic_search_parameters_reads_v2_data_envelope(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/linkedin/search/parameters*' => Http::response([
+                'data' => [
+                    ['object' => 'SearchParameter', 'id' => '102571732', 'name' => 'San Francisco Bay Area'],
+                ],
+            ], 200),
+        ]);
+
+        $rows = app(UnipileProvider::class)->listClassicSearchParameters(
+            'acc_li',
+            'CONNECTIONS',
+            'San Francisco',
+            5,
+        );
+
+        $this->assertSame([
+            ['id' => '102571732', 'label' => 'San Francisco Bay Area'],
+        ], $rows);
+
+        Http::assertSent(function ($request) {
+            return $request->method() === 'GET'
+                && str_contains($request->url(), '/linkedin/search/parameters')
+                && str_contains($request->url(), 'type=RELATION')
+                && str_contains($request->url(), 'keywords=San%20Francisco');
+        });
+    }
+
+    public function test_follow_and_unfollow_use_v2_user_routes(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/users/me/follow/ACoFollow' => Http::response([
+                'object' => 'UserFollowed',
+            ], 200),
+            'unipile.test/v2/acc_li/users/me/unfollow/ACoFollow' => Http::response([
+                'object' => 'UserUnfollowed',
+            ], 200),
+        ]);
+
+        $provider = app(UnipileProvider::class);
+        $provider->performLinkedinProfileAction('follow', [
+            'account_id' => 'acc_li',
+            'provider_id' => 'ACoFollow',
+        ]);
+        $provider->performLinkedinProfileAction('unfollow', [
+            'account_id' => 'acc_li',
+            'provider_id' => 'ACoFollow',
+        ]);
+
+        Http::assertSent(function ($request) {
+            return $request->method() === 'POST'
+                && $request->url() === 'https://unipile.test/v2/acc_li/users/me/follow/ACoFollow';
+        });
+        Http::assertSent(function ($request) {
+            return $request->method() === 'POST'
+                && $request->url() === 'https://unipile.test/v2/acc_li/users/me/unfollow/ACoFollow';
+        });
+    }
+
+    public function test_profile_contact_extractors_read_v2_root_fields(): void
+    {
+        $provider = app(UnipileProvider::class);
+
+        $this->assertSame('lead@example.com', $provider->extractProfileEmail([
+            'emails' => [['email' => 'lead@example.com']],
+        ]));
+        $this->assertSame('15551234567', $provider->extractProfilePhone([
+            'phone_numbers' => [['number' => '+1 (555) 123-4567']],
+        ]));
     }
 
     public function test_calendar_event_body_maps_v1_aliases(): void

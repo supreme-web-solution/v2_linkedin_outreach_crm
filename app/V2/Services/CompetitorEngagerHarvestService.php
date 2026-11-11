@@ -184,7 +184,8 @@ class CompetitorEngagerHarvestService
             if (! is_array($reaction)) {
                 continue;
             }
-            $author = Arr::get($reaction, 'author', Arr::get($reaction, 'sender', []));
+            // v2 reactions use sender (User); keep author as legacy fallback.
+            $author = Arr::get($reaction, 'sender', Arr::get($reaction, 'author', []));
             $mapped = $this->mapEngager(is_array($author) ? $author : [], 'reaction');
             if ($mapped === null) {
                 continue;
@@ -315,10 +316,7 @@ class CompetitorEngagerHarvestService
         }
 
         $search = $provider->searchCompanies(['keywords' => $slug], $context);
-        $items = Arr::get($search, 'items', []);
-        if (! is_array($items)) {
-            $items = [];
-        }
+        $items = UnipileProvider::extractListItems($search);
 
         foreach ($items as $item) {
             if (! is_array($item)) {
@@ -541,10 +539,7 @@ class CompetitorEngagerHarvestService
             return null;
         }
 
-        $items = Arr::get($search, 'items', []);
-        if (! is_array($items)) {
-            return null;
-        }
+        $items = UnipileProvider::extractListItems($search);
 
         foreach ($items as $item) {
             if (is_array($item) && $this->personItemMatchesSlug($item, $slug)) {
@@ -580,8 +575,8 @@ class CompetitorEngagerHarvestService
                 continue;
             }
 
-            $items = Arr::get($search, 'items', []);
-            if (! is_array($items)) {
+            $items = UnipileProvider::extractListItems($search);
+            if ($items === []) {
                 continue;
             }
 
@@ -644,7 +639,11 @@ class CompetitorEngagerHarvestService
                 if (! is_array($item)) {
                     continue;
                 }
-                if ((string) (Arr::get($item, 'type') ?? 'POST') !== 'POST' && ! Arr::has($item, 'social_id')) {
+                // Keep posts; skip non-post rows unless they still carry a usable post id.
+                $type = strtoupper((string) (Arr::get($item, 'type') ?? 'POST'));
+                if ($type !== 'POST'
+                    && trim((string) (Arr::get($item, 'id') ?? Arr::get($item, 'social_id') ?? '')) === ''
+                ) {
                     continue;
                 }
                 $collected[] = $item;
@@ -849,17 +848,17 @@ class CompetitorEngagerHarvestService
             return [];
         }
 
-        $items = Arr::get($response, 'items', []);
-        if (! is_array($items)) {
-            return [];
-        }
+        $items = UnipileProvider::extractListItems($response);
 
         $matched = [];
         foreach ($items as $item) {
             if (! is_array($item)) {
                 continue;
             }
-            $author = Arr::get($item, 'author', Arr::get($item, 'share_urn', []));
+            $author = Arr::get($item, 'posted_by')
+                ?? Arr::get($item, 'author')
+                ?? Arr::get($item, 'share_urn')
+                ?? [];
             if (! is_array($author)) {
                 $author = [];
             }
@@ -882,20 +881,54 @@ class CompetitorEngagerHarvestService
         }
 
         usort($collected, function (array $a, array $b): int {
-            $scoreA = (int) Arr::get($a, 'reaction_counter', 0) + (int) Arr::get($a, 'comment_counter', 0);
-            $scoreB = (int) Arr::get($b, 'reaction_counter', 0) + (int) Arr::get($b, 'comment_counter', 0);
-
-            return $scoreB <=> $scoreA;
+            return $this->postEngagementScore($b) <=> $this->postEngagementScore($a);
         });
 
         $engaged = array_values(array_filter(
             $collected,
-            fn (array $post) => ((int) Arr::get($post, 'reaction_counter', 0) + (int) Arr::get($post, 'comment_counter', 0)) > 0
+            fn (array $post) => $this->postEngagementScore($post) > 0
         ));
 
         $pool = $engaged !== [] ? $engaged : $collected;
 
         return array_slice($pool, 0, $postsLimit);
+    }
+
+    /**
+     * @param  array<string, mixed>  $post
+     */
+    private function postEngagementScore(array $post): int
+    {
+        $reactions = Arr::get($post, 'reactions_counter')
+            ?? Arr::get($post, 'reaction_counter')
+            ?? 0;
+        $comments = Arr::get($post, 'comments_counter')
+            ?? Arr::get($post, 'comment_counter')
+            ?? 0;
+
+        return $this->counterToInt($reactions) + $this->counterToInt($comments);
+    }
+
+    private function counterToInt(mixed $value): int
+    {
+        if (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) {
+            return (int) $value;
+        }
+
+        if (! is_array($value)) {
+            return 0;
+        }
+
+        $sum = 0;
+        foreach ($value as $row) {
+            if (is_array($row)) {
+                $sum += (int) ($row['count'] ?? 0);
+            } elseif (is_numeric($row)) {
+                $sum += (int) $row;
+            }
+        }
+
+        return $sum;
     }
 
     /**
@@ -913,8 +946,8 @@ class CompetitorEngagerHarvestService
             $this->pageDelay();
 
             $response = $fetchPage($cursor);
-            $pageItems = Arr::get($response, 'items', []);
-            if (! is_array($pageItems) || $pageItems === []) {
+            $pageItems = UnipileProvider::extractListItems($response);
+            if ($pageItems === []) {
                 break;
             }
 
@@ -928,7 +961,7 @@ class CompetitorEngagerHarvestService
                 }
             }
 
-            $cursor = Arr::get($response, 'cursor');
+            $cursor = UnipileProvider::extractNextCursor($response);
             if (! is_string($cursor) || $cursor === '') {
                 break;
             }
@@ -938,25 +971,24 @@ class CompetitorEngagerHarvestService
     }
 
     /**
+     * Resolve a post id for reactions/comments.
+     * v2 uses `id`; keep legacy `social_id` / urn fallbacks.
+     *
      * @param  array<string, mixed>  $post
      */
     private function resolvePostSocialId(array $post): string
     {
+        $id = trim((string) (Arr::get($post, 'id') ?? ''));
+        if ($id !== '') {
+            return $id;
+        }
+
         $socialId = trim((string) (Arr::get($post, 'social_id') ?? ''));
         if ($socialId !== '') {
             return $socialId;
         }
 
-        $id = trim((string) (Arr::get($post, 'id') ?? ''));
-        if ($id === '') {
-            return '';
-        }
-
-        if (str_starts_with($id, 'urn:')) {
-            return $id;
-        }
-
-        return 'urn:li:activity:'.$id;
+        return '';
     }
 
     /**
@@ -1023,8 +1055,9 @@ class CompetitorEngagerHarvestService
 
         [$firstName, $lastName] = $this->resolveAuthorName($author, $nameFallback, $publicId);
 
-        $headline = Arr::get($author, 'headline')
-            ?? Arr::get($author, 'description')
+        // v2 User.description replaces headline; keep legacy headline/occupation.
+        $headline = Arr::get($author, 'description')
+            ?? Arr::get($author, 'headline')
             ?? Arr::get($author, 'occupation');
 
         $networkDistance = Arr::get($author, 'network_distance')

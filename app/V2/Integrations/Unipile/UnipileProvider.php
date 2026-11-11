@@ -814,7 +814,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         $currentCompany = $this->normalizeClassicParameterIds(
             $accountId,
             'COMPANY',
-            $filters['current_company'] ?? null,
+            // v1 used company; Classic v2 expects current_company.
+            $filters['current_company'] ?? ($filters['company'] ?? null),
         );
         if ($currentCompany !== null) {
             $apiFilters['current_company'] = $currentCompany;
@@ -999,6 +1000,10 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     public function listClassicSearchParameters(string $accountId, string $type, string $keywords, int $limit = 20): array
     {
         $type = strtoupper(trim($type));
+        // v1 COMMON CONNECTIONS → v2 CLASSIC RELATION
+        if ($type === 'CONNECTIONS') {
+            $type = 'RELATION';
+        }
         $keywords = trim($keywords);
         $limit = max(1, min(100, $limit));
 
@@ -1016,10 +1021,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             return [];
         }
 
-        $items = Arr::get($result, 'items', []);
-        if (! is_array($items)) {
-            return [];
-        }
+        // v2 returns { data: [...] }; legacy envelopes may still use items.
+        $items = self::extractListItems($result);
 
         $out = [];
         foreach ($items as $item) {
@@ -1033,8 +1036,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             }
 
             $label = trim((string) (
-                $item['title']
-                ?? $item['name']
+                $item['name']
+                ?? $item['title']
                 ?? $item['label']
                 ?? $item['text']
                 ?? ''
@@ -1086,18 +1089,31 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             );
         }
 
-        $requestedLimit = max(1, min(100, $limit));
+        // Classic: POST /linkedin/search (cursor). Sales Nav / Recruiter use product-specific paths (offset).
+        if (preg_match('#/sales/#i', $url) === 1) {
+            $searchPath = '/linkedin/sales-navigator/search';
+            $pagination = 'offset';
+            // Unipile Sales Nav from-URL accepts limit 1–50 per page.
+            $maxPage = 50;
+        } elseif (preg_match('#/talent/#i', $url) === 1) {
+            $searchPath = '/linkedin/recruiter/search';
+            $pagination = 'offset';
+            $maxPage = 100;
+        } else {
+            $searchPath = $this->endpoint('search');
+            $pagination = 'cursor';
+            $maxPage = 100;
+        }
 
-        // Classic from-URL search: body is only { url }. Pagination is cursor query param.
-        // Sales Nav / Recruiter from-URL remains offset-based on the same path.
-        $pagination = preg_match('#/sales/|/talent/#i', $url) === 1 ? 'offset' : 'cursor';
+        $requestedLimit = max(1, min(100, $limit));
 
         return $this->searchUntilLimit(
             $accountId,
             ['url' => $url],
             $requestedLimit,
-            $this->endpoint('search'),
+            $searchPath,
             pagination: $pagination,
+            maxPageSize: $maxPage,
         );
     }
 
@@ -1118,8 +1134,10 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         int $requestedLimit,
         ?string $searchPath = null,
         string $pagination = 'cursor',
+        int $maxPageSize = 100,
     ): array {
         $searchPath ??= $this->endpoint('search');
+        $maxPageSize = max(1, min(100, $maxPageSize));
         $target = max(1, min(100, $requestedLimit));
         $allItems = [];
         $seenIds = [];
@@ -1160,7 +1178,7 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             } else {
                 // Sales Nav / Recruiter from-URL: limit + offset are query params, not body.
                 $remaining = $target - count($allItems);
-                $query['limit'] = max(1, min(100, $remaining));
+                $query['limit'] = max(1, min($maxPageSize, $remaining));
                 $query['offset'] = $offset;
             }
 
@@ -1404,11 +1422,20 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
 
         $email = $this->extractProfileEmail($profile);
 
+        // v2 User.description is the title/headline; keep legacy headline/occupation.
+        $headline = trim((string) (
+            Arr::get($profile, 'headline')
+            ?: Arr::get($profile, 'description')
+            ?: Arr::get($profile, 'occupation')
+            ?: ''
+        ));
+
         return array_merge($profile, array_filter([
             'id' => $providerId !== '' ? $providerId : null,
             'provider_id' => $providerId !== '' ? $providerId : null,
             'public_identifier' => $publicId !== '' ? $publicId : null,
             'full_name' => $name !== '' ? $name : null,
+            'headline' => $headline !== '' ? $headline : null,
             'profile_url' => $publicId !== '' ? 'https://www.linkedin.com/in/'.$publicId : null,
             'email' => $email,
         ], fn ($v) => $v !== null && $v !== ''));
@@ -1426,27 +1453,36 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             return $direct;
         }
 
-        $contactInfo = Arr::get($profile, 'contact_info', Arr::get($profile, 'contactInfo', []));
-        if (! is_array($contactInfo)) {
-            return null;
+        // v2: emails live on the profile root; v1 used contact_info.emails.
+        $bags = [
+            Arr::get($profile, 'emails'),
+            Arr::get($profile, 'contact_info.emails'),
+            Arr::get($profile, 'contactInfo.emails'),
+        ];
+
+        foreach ($bags as $list) {
+            if (! is_array($list)) {
+                continue;
+            }
+            foreach ($list as $candidate) {
+                if (is_array($candidate)) {
+                    $candidate = Arr::get($candidate, 'email')
+                        ?? Arr::get($candidate, 'address')
+                        ?? Arr::get($candidate, 'value')
+                        ?? '';
+                }
+                $email = trim((string) $candidate);
+                if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    return $email;
+                }
+            }
         }
 
-        foreach (Arr::get($contactInfo, 'emails', []) as $candidate) {
-            if (is_array($candidate)) {
-                $candidate = Arr::get($candidate, 'email')
-                    ?? Arr::get($candidate, 'address')
-                    ?? Arr::get($candidate, 'value')
-                    ?? '';
+        foreach (['contact_info.email', 'contactInfo.email'] as $path) {
+            $single = trim((string) (Arr::get($profile, $path) ?? ''));
+            if ($single !== '' && filter_var($single, FILTER_VALIDATE_EMAIL)) {
+                return $single;
             }
-            $email = trim((string) $candidate);
-            if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                return $email;
-            }
-        }
-
-        $single = trim((string) (Arr::get($contactInfo, 'email') ?? ''));
-        if ($single !== '' && filter_var($single, FILTER_VALIDATE_EMAIL)) {
-            return $single;
         }
 
         return null;
@@ -1462,27 +1498,38 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             return $this->normalizePhone($direct);
         }
 
-        $contactInfo = Arr::get($profile, 'contact_info', Arr::get($profile, 'contactInfo', []));
-        if (! is_array($contactInfo)) {
-            return null;
+        // v2: phone_numbers on root; v1 used contact_info.phones.
+        $bags = [
+            Arr::get($profile, 'phone_numbers'),
+            Arr::get($profile, 'phones'),
+            Arr::get($profile, 'contact_info.phones'),
+            Arr::get($profile, 'contact_info.phone_numbers'),
+            Arr::get($profile, 'contactInfo.phones'),
+        ];
+
+        foreach ($bags as $list) {
+            if (! is_array($list)) {
+                continue;
+            }
+            foreach ($list as $candidate) {
+                if (is_array($candidate)) {
+                    $candidate = Arr::get($candidate, 'number')
+                        ?? Arr::get($candidate, 'phone')
+                        ?? Arr::get($candidate, 'value')
+                        ?? '';
+                }
+                $phone = $this->normalizePhone((string) $candidate);
+                if ($phone !== '') {
+                    return $phone;
+                }
+            }
         }
 
-        foreach (Arr::get($contactInfo, 'phones', Arr::get($contactInfo, 'phone_numbers', [])) as $candidate) {
-            if (is_array($candidate)) {
-                $candidate = Arr::get($candidate, 'number')
-                    ?? Arr::get($candidate, 'phone')
-                    ?? Arr::get($candidate, 'value')
-                    ?? '';
+        foreach (['contact_info.phone', 'contactInfo.phone'] as $path) {
+            $single = $this->normalizePhone((string) (Arr::get($profile, $path) ?? ''));
+            if ($single !== '') {
+                return $single;
             }
-            $phone = $this->normalizePhone((string) $candidate);
-            if ($phone !== '') {
-                return $phone;
-            }
-        }
-
-        $single = $this->normalizePhone((string) (Arr::get($contactInfo, 'phone') ?? ''));
-        if ($single !== '') {
-            return $single;
         }
 
         return null;
@@ -2034,7 +2081,69 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             'attachments' => Arr::get($payload, 'attachments'),
         ], fn ($value) => $value !== null && $value !== '' && $value !== []);
 
-        return $this->accountScopedRequest('POST', $this->endpoint('start_chat'), $accountId, $body);
+        // LinkedIn uses inboxes in v2; WhatsApp/IG/etc. keep POST /chats/send.
+        $endpoint = $this->resolveStartChatEndpoint(
+            $userIds,
+            $specifics,
+            array_merge($payload, $context),
+        );
+
+        return $this->accountScopedRequest('POST', $endpoint, $accountId, $body);
+    }
+
+    /**
+     * LinkedIn Classic/SN/Recruiter start chats via /inboxes/{inbox_id}/chat.
+     * Other providers use the generic /chats/send route.
+     *
+     * @param  list<string>  $userIds
+     * @param  array<string, mixed>  $specifics
+     * @param  array<string, mixed>  $hints
+     */
+    private function resolveStartChatEndpoint(array $userIds, array $specifics, array $hints): string
+    {
+        $explicitInbox = trim((string) (
+            Arr::get($hints, 'inbox_id')
+            ?? Arr::get($hints, 'inbox')
+            ?? ''
+        ));
+        if ($explicitInbox !== '') {
+            return '/inboxes/'.rawurlencode($explicitInbox).'/chat';
+        }
+
+        $linkedinSpecifics = is_array($specifics['linkedin'] ?? null) ? $specifics['linkedin'] : [];
+        $providerHint = strtolower(trim((string) (
+            Arr::get($hints, 'provider')
+            ?? Arr::get($hints, 'account_type')
+            ?? Arr::get($hints, 'channel')
+            ?? ''
+        )));
+
+        $looksLinkedIn = $linkedinSpecifics !== []
+            || str_contains($providerHint, 'linkedin')
+            || str_contains($providerHint, 'sales')
+            || str_contains($providerHint, 'recruiter');
+
+        if (! $looksLinkedIn) {
+            foreach ($userIds as $id) {
+                if ($this->isLinkedInMemberId($id) || $this->isLinkedInVanitySlug($id)) {
+                    $looksLinkedIn = true;
+                    break;
+                }
+            }
+        }
+
+        if (! $looksLinkedIn) {
+            return $this->endpoint('start_chat');
+        }
+
+        if (isset($linkedinSpecifics['sales_navigator']) || str_contains($providerHint, 'sales')) {
+            return '/inboxes/SALES_NAVIGATOR_PRIMARY/chat';
+        }
+        if (isset($linkedinSpecifics['recruiter']) || str_contains($providerHint, 'recruiter')) {
+            return '/inboxes/RECRUITER_PRIMARY/chat';
+        }
+
+        return '/inboxes/CLASSIC_PRIMARY/chat';
     }
 
     /**
@@ -2332,18 +2441,29 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
         }
 
         if ($action === 'follow') {
-            $profile = $this->getProfileByIdentifier($providerId, ['account_id' => $accountId]);
+            $userId = $this->ensureLinkedInProviderId($providerId, array_merge($payload, [
+                'account_id' => $accountId,
+            ]));
 
-            return [
-                'action' => 'follow',
-                'profile_viewed' => true,
-                'note' => 'LinkedIn follow is not exposed by Unipile; profile was retrieved instead.',
-                'profile' => $profile,
-            ];
+            // v2: POST /users/me/follow/{user_id}
+            return $this->accountScopedRequest(
+                'POST',
+                '/users/me/follow/'.rawurlencode($userId),
+                $accountId,
+            );
         }
 
         if ($action === 'unfollow') {
-            throw new UnipileException('LinkedIn unfollow is not supported.');
+            $userId = $this->ensureLinkedInProviderId($providerId, array_merge($payload, [
+                'account_id' => $accountId,
+            ]));
+
+            // v2: POST /users/me/unfollow/{user_id}
+            return $this->accountScopedRequest(
+                'POST',
+                '/users/me/unfollow/'.rawurlencode($userId),
+                $accountId,
+            );
         }
 
         if ($action === 'like_post') {
@@ -2363,6 +2483,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 $accountId,
                 array_filter([
                     'text' => $text !== '' ? $text : 'Great insights.',
+                    // v1 as_organization → v2 comment_as
+                    'comment_as' => Arr::get($payload, 'comment_as') ?? Arr::get($payload, 'as_organization'),
                 ], fn ($value) => $value !== null && $value !== '')
             );
         }
@@ -2376,8 +2498,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
     /**
      * Like the most recent public post for a LinkedIn profile.
      *
-     * Unipile requires the post social_id (urn:li:activity:…) and reaction type
-     * linkedin_like — not a /linkedin/user/{id} action named like_post.
+     * Unipile v2 reactions use the post `id` and reaction type linkedin_like
+     * — not a /linkedin/user/{id} action named like_post.
      *
      * @return array<string, mixed>
      */
@@ -2395,7 +2517,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             throw new UnipileException('No recent LinkedIn posts found to like for this profile.', 422);
         }
 
-        $socialId = '';
+        // v2: use post `id` everywhere (social_id removed). Keep legacy social_id as fallback.
+        $postId = '';
         $picked = null;
         foreach ($posts as $post) {
             if (! is_array($post)) {
@@ -2403,8 +2526,8 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             }
 
             $candidate = trim((string) (
-                Arr::get($post, 'social_id')
-                ?? Arr::get($post, 'id')
+                Arr::get($post, 'id')
+                ?? Arr::get($post, 'social_id')
                 ?? ''
             ));
 
@@ -2412,36 +2535,27 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 continue;
             }
 
-            // Prefer social_id / urn forms Unipile expects for reactions.
-            if (str_starts_with($candidate, 'urn:li:') || ctype_digit($candidate)) {
-                $socialId = $candidate;
-                $picked = $post;
-                break;
-            }
-
-            if ($socialId === '') {
-                $socialId = $candidate;
-                $picked = $post;
-            }
+            $postId = $candidate;
+            $picked = $post;
+            break;
         }
 
-        if ($socialId === '') {
+        if ($postId === '') {
             throw new UnipileException('No recent LinkedIn posts found to like for this profile.', 422);
         }
 
-        $reaction = $this->reactToPost($socialId, 'linkedin_like', [
+        $reaction = $this->reactToPost($postId, 'linkedin_like', [
             'account_id' => $accountId,
         ]);
 
         Log::info('[Unipile] Liked latest post', [
             'profile_id' => $providerId,
-            'social_id' => $socialId,
-            'post_id' => Arr::get($picked, 'id'),
+            'post_id' => $postId,
         ]);
 
         return [
             'action' => 'like_post',
-            'social_id' => $socialId,
+            'post_id' => $postId,
             'post' => $picked,
             'reaction' => $reaction,
         ];
@@ -2700,9 +2814,12 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
                 continue;
             }
 
-            // Some payloads wrap items under { items: [...] }.
+            // Some payloads wrap items under { items|data: [...] }.
             if (isset($skills['items']) && is_array($skills['items'])) {
                 return array_values($skills['items']);
+            }
+            if (isset($skills['data']) && is_array($skills['data']) && array_is_list($skills['data'])) {
+                return array_values($skills['data']);
             }
 
             // List of skill objects.

@@ -40,69 +40,74 @@ class CompetitorEngagerHarvestServiceTest extends TestCase
         ]);
 
         Http::fake([
+            'unipile.test/v2/*/linkedin/search/companies*' => Http::response([
+                'data' => [[
+                    'type' => 'COMPANY',
+                    'id' => '1035',
+                    'name' => 'Microsoft',
+                    'profile_url' => 'https://www.linkedin.com/company/microsoft/',
+                ]],
+            ]),
+            'unipile.test/v2/*/linkedin/search/posts*' => Http::response([
+                'data' => [[
+                    'type' => 'POST',
+                    'id' => '111',
+                    'reactions_counter' => [['reaction' => 'linkedin_like', 'count' => 2]],
+                    'comments_counter' => 2,
+                ]],
+            ]),
             'unipile.test/v2/*/linkedin/search*' => function ($request) {
-                $payload = $request->data();
-                if (($payload['category'] ?? '') === 'companies') {
-                    return Http::response([
-                        'items' => [[
-                            'type' => 'COMPANY',
-                            'id' => '1035',
-                            'name' => 'Microsoft',
-                            'profile_url' => 'https://www.linkedin.com/company/microsoft/',
-                        ]],
-                    ]);
-                }
-
                 return Http::response([
-                    'items' => [[
+                    'data' => [[
                         'type' => 'POST',
-                        'social_id' => 'urn:li:activity:111',
                         'id' => '111',
+                        'reactions_counter' => [['reaction' => 'linkedin_like', 'count' => 2]],
+                        'comments_counter' => 2,
                     ]],
                 ]);
             },
-            'unipile.test/v2/*/posts/urn%3Ali%3Aactivity%3A111/reactions*' => Http::response([
-                'items' => [[
-                    'author' => [
+            // v2 reactions/comments use post `id` (not legacy social_id urn path).
+            'unipile.test/v2/*/posts/111/reactions*' => Http::response([
+                'data' => [[
+                    'sender' => [
                         'id' => 'ACoAAA111',
-                        'type' => 'INDIVIDUAL',
-                        'name' => 'Jane Doe',
-                        'headline' => 'VP Sales',
+                        'type' => 'individual',
+                        'display_name' => 'Jane Doe',
+                        'description' => 'VP Sales',
                         'public_identifier' => 'jane-doe',
                         'profile_url' => 'https://www.linkedin.com/in/jane-doe',
                     ],
                 ], [
-                    // Some Unipile payloads omit `name` and only send first/last.
-                    'author' => [
+                    // Some Unipile payloads omit display_name and only send first/last.
+                    'sender' => [
                         'id' => 'ACoAAA333',
-                        'type' => 'INDIVIDUAL',
+                        'type' => 'individual',
                         'first_name' => 'Alex',
                         'last_name' => 'Rivera',
-                        'headline' => 'Operator',
+                        'description' => 'Operator',
                         'public_identifier' => 'alex-rivera',
                         'profile_url' => 'https://www.linkedin.com/in/alex-rivera',
-                        'network_distance' => 'THIRD_DEGREE',
+                        'specifics' => ['network_distance' => 'THIRD_DEGREE'],
                     ],
                 ]],
             ]),
-            'unipile.test/v2/*/posts/urn%3Ali%3Aactivity%3A111/comments*' => Http::response([
-                'items' => [[
-                    // Name lives on string `author`; profile fields on author_details.
-                    'author_details' => [
+            'unipile.test/v2/*/posts/111/comments*' => Http::response([
+                'data' => [[
+                    'author' => [
                         'id' => 'ACoAAA222',
-                        'is_company' => false,
-                        'headline' => 'Founder',
+                        'type' => 'individual',
+                        'display_name' => 'John Smith',
+                        'description' => 'Founder',
                         'profile_url' => 'https://www.linkedin.com/in/john-smith',
                     ],
-                    'author' => 'John Smith',
                 ], [
                     // No name fields — fall back to public identifier slug.
-                    'author_details' => [
+                    'author' => [
                         'id' => 'ACoAAA444',
-                        'headline' => 'Bookkeeper',
+                        'description' => 'Bookkeeper',
                         'public_identifier' => 'sam-taylor-a1b2c3d4',
                         'profile_url' => 'https://www.linkedin.com/in/sam-taylor-a1b2c3d4',
-                        'network_distance' => 'SECOND_DEGREE',
+                        'specifics' => ['network_distance' => 'SECOND_DEGREE'],
                     ],
                 ]],
             ]),

@@ -289,8 +289,8 @@ class LinkedInAudienceBuilderService
             return null;
         }
 
-        $elements = Arr::get($result, 'items', Arr::get($result, 'data.items', []));
-        if (! is_array($elements) || $elements === []) {
+        $elements = UnipileProvider::extractListItems(is_array($result) ? $result : []);
+        if ($elements === []) {
             Log::info('[Soci] LinkedIn search empty for filters', [
                 'user_id' => $user->id,
                 'filters' => $filters,
@@ -333,7 +333,9 @@ class LinkedInAudienceBuilderService
                 [
                     'public_identifier' => Arr::get($item, 'public_identifier', Arr::get($item, 'publicIdentifier')),
                     'full_name' => Arr::get($item, 'full_name', Arr::get($item, 'name')),
-                    'headline' => Arr::get($item, 'headline'),
+                    'headline' => Arr::get($item, 'headline')
+                        ?: Arr::get($item, 'description')
+                        ?: Arr::get($item, 'occupation'),
                     'company_name' => Arr::get($item, 'company_name', Arr::get($item, 'current_company')),
                     'location' => Arr::get($item, 'location'),
                     'email' => Arr::get($item, 'email'),
@@ -463,7 +465,9 @@ class LinkedInAudienceBuilderService
             [
                 'public_identifier' => $publicId !== '' ? $publicId : null,
                 'full_name' => $fullName !== '' ? $fullName : null,
-                'headline' => Arr::get($profile, 'headline'),
+                'headline' => Arr::get($profile, 'headline')
+                    ?: Arr::get($profile, 'description')
+                    ?: Arr::get($profile, 'occupation'),
                 'company_name' => Arr::get($profile, 'company_name', Arr::get($profile, 'current_company')),
                 'location' => Arr::get($profile, 'location'),
                 'email' => Arr::get($profile, 'email'),
@@ -532,11 +536,11 @@ class LinkedInAudienceBuilderService
     public function summarizeProfileDetail(array $profile, ?string $fallbackUrl = null): array
     {
         $publicId = trim((string) (Arr::get($profile, 'public_identifier') ?? Arr::get($profile, 'publicIdentifier') ?? ''));
+        // v2: description=headline, bio=about. Keep v1 summary/about/headline fallbacks.
         $about = trim((string) (
-            Arr::get($profile, 'summary')
+            Arr::get($profile, 'bio')
+            ?? Arr::get($profile, 'summary')
             ?? Arr::get($profile, 'about')
-            ?? Arr::get($profile, 'description')
-            ?? Arr::get($profile, 'bio')
             ?? ''
         ));
         $location = trim((string) (
@@ -551,13 +555,18 @@ class LinkedInAudienceBuilderService
             ?? Arr::get($profile, 'company')
             ?? ''
         ));
-        $headline = trim((string) (Arr::get($profile, 'headline') ?? Arr::get($profile, 'occupation') ?? ''));
+        $headline = trim((string) (
+            Arr::get($profile, 'description')
+            ?: Arr::get($profile, 'headline')
+            ?: Arr::get($profile, 'occupation')
+            ?: ''
+        ));
 
         $experience = [];
-        $rawExp = Arr::get($profile, 'work_experience')
+        $rawExp = Arr::get($profile, 'experience')
+            ?? Arr::get($profile, 'work_experience')
             ?? Arr::get($profile, 'experiences')
             ?? Arr::get($profile, 'positions')
-            ?? Arr::get($profile, 'experience')
             ?? [];
         if (is_array($rawExp)) {
             foreach (array_slice($rawExp, 0, 3) as $row) {

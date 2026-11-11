@@ -204,11 +204,8 @@ class CallCalendarService
             return [];
         }
 
-        $items = Arr::get($response, 'items', Arr::get($response, 'data', []));
-        if (isset($items['items']) && is_array($items['items'])) {
-            $items = $items['items'];
-        }
-        if (!is_array($items)) {
+        $items = UnipileProvider::extractListItems(is_array($response) ? $response : []);
+        if ($items === []) {
             return [];
         }
 
@@ -897,8 +894,8 @@ class CallCalendarService
             return [];
         }
 
-        $items = Arr::get($response, 'items', Arr::get($response, 'data', []));
-        if (!is_array($items)) {
+        $items = UnipileProvider::extractListItems(is_array($response) ? $response : []);
+        if ($items === []) {
             return [];
         }
 

@@ -41,7 +41,9 @@ class OutreachPersistenceService
             array_filter([
                 'public_identifier' => $publicIdentifier !== '' ? $publicIdentifier : $recipientId,
                 'full_name' => Arr::get($profile, 'full_name'),
-                'headline' => Arr::get($profile, 'headline'),
+                'headline' => Arr::get($profile, 'headline')
+                    ?: Arr::get($profile, 'description')
+                    ?: Arr::get($profile, 'occupation'),
                 'company_name' => Arr::get($profile, 'company_name'),
                 'location' => Arr::get($profile, 'location'),
             ], fn ($value) => $value !== null && $value !== '')

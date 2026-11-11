@@ -102,7 +102,7 @@ class LeadController extends Controller
                 Log::error('[Search] URL-based search failed', ['error' => $e->getMessage()]);
                 return response()->json(['message' => 'URL search failed: '.$e->getMessage()], 422);
             }
-            $elements = Arr::get($result, 'items', Arr::get($result, 'data.items', []));
+            $elements = UnipileProvider::extractListItems(is_array($result) ? $result : []);
         }
 
         // ── Route: filter-based search ────────────────────────────────────────
@@ -125,11 +125,7 @@ class LeadController extends Controller
 
                 return response()->json(['message' => $message], 422);
             }
-            $elements = Arr::get($result, 'items', Arr::get($result, 'data.items', []));
-        }
-
-        if (!is_array($elements)) {
-            $elements = [];
+            $elements = UnipileProvider::extractListItems(is_array($result) ? $result : []);
         }
 
         $requestedLimit = isset($data['limit'])
@@ -142,6 +138,8 @@ class LeadController extends Controller
                 $result['items'] = $elements;
             } elseif (isset($result['data']['items']) && is_array($result['data']['items'])) {
                 $result['data']['items'] = $elements;
+            } elseif (isset($result['data']) && is_array($result['data']) && array_is_list($result['data'])) {
+                $result['data'] = $elements;
             }
         }
 
@@ -177,7 +175,9 @@ class LeadController extends Controller
                     [
                         'public_identifier' => Arr::get($item, 'public_identifier'),
                         'full_name'         => Arr::get($item, 'full_name', Arr::get($item, 'name')),
-                        'headline'          => Arr::get($item, 'headline'),
+                        'headline'          => Arr::get($item, 'headline')
+                            ?: Arr::get($item, 'description')
+                            ?: Arr::get($item, 'occupation'),
                         'company_name'      => Arr::get($item, 'company_name', Arr::get($item, 'current_company')),
                         'location'          => Arr::get($item, 'location'),
                         'email'             => Arr::get($item, 'email'),
@@ -406,10 +406,7 @@ class LeadController extends Controller
                 'source_external_id' => $data['source_external_id'],
             ]);
 
-            $elements = Arr::get($providerResult, 'items', Arr::get($providerResult, 'data.items', []));
-            if (!is_array($elements)) {
-                $elements = [];
-            }
+            $elements = UnipileProvider::extractListItems(is_array($providerResult) ? $providerResult : []);
         }
 
         $stored = 0;
@@ -433,7 +430,9 @@ class LeadController extends Controller
                     [
                         'public_identifier' => Arr::get($item, 'public_identifier'),
                         'full_name' => Arr::get($item, 'full_name', Arr::get($item, 'name')),
-                        'headline' => Arr::get($item, 'headline'),
+                        'headline' => Arr::get($item, 'headline')
+                            ?: Arr::get($item, 'description')
+                            ?: Arr::get($item, 'occupation'),
                         'company_name' => Arr::get($item, 'company_name'),
                         'location' => Arr::get($item, 'location'),
                         'email' => Arr::get($item, 'email'),

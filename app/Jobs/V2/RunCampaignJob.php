@@ -341,8 +341,9 @@ class RunCampaignJob implements ShouldQueue
                         'limit' => 20,
                     ], $context);
 
-                    $items = Arr::get($response, 'items', $response);
-                    $count = is_array($items) ? count($items) : 0;
+                    // v2 returns { data: [...] }; never count the envelope itself.
+                    $items = UnipileProvider::extractListItems(is_array($response) ? $response : []);
+                    $count = count($items);
                     $minimumReplies = max(1, (int) ($node['min_reply_count'] ?? 1));
                     $haltWhenMissingReply = (bool) ($node['halt_if_missing_reply'] ?? false);
 
@@ -366,8 +367,8 @@ class RunCampaignJob implements ShouldQueue
                 'campaign_send_message',
                 function (string $providerKey) use ($providerManager, $chatId, $context): array {
                     $response = $providerManager->messaging($providerKey)->listMessages($chatId, ['limit' => 20], $context);
-                    $items = Arr::get($response, 'items', $response);
-                    $count = is_array($items) ? count($items) : 0;
+                    $items = UnipileProvider::extractListItems(is_array($response) ? $response : []);
+                    $count = count($items);
                     return [
                         'chat_id' => $chatId,
                         'message_count' => $count,
@@ -456,7 +457,14 @@ class RunCampaignJob implements ShouldQueue
                 function (string $providerKey) use ($providerManager, $stepType, $postId, $message, $context): array {
                     if ($stepType === 'view-post-engagers') {
                         $response = $providerManager->post($providerKey)->listPostReactions($postId, [], $context);
-                        return ['action' => 'view_post_engagers', 'response' => $response];
+                        $items = UnipileProvider::extractListItems(is_array($response) ? $response : []);
+
+                        return [
+                            'action' => 'view_post_engagers',
+                            'response' => is_array($response) ? $response : [],
+                            'items' => $items,
+                            'count' => count($items),
+                        ];
                     }
 
                     /** @var UnipileProvider $concrete */
