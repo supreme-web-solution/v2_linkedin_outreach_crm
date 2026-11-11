@@ -181,7 +181,7 @@ class CampaignStepExecutor
             ];
         }
 
-        if (in_array($normalized, ['profile-view', 'endorse', 'like-post'], true)) {
+        if (in_array($normalized, ['profile-view', 'endorse', 'like-post', 'follow'], true)) {
             if ($recipientId === '') {
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
             }
@@ -209,6 +209,14 @@ class CampaignStepExecutor
                             ]));
 
                             return ['action' => 'like_post', 'response' => $response];
+                        }
+
+                        if ($normalized === 'follow') {
+                            $response = $concrete->performLinkedinProfileAction('follow', array_merge($context, [
+                                'recipient_id' => $recipientId,
+                            ]));
+
+                            return ['action' => 'follow', 'response' => $response];
                         }
 
                         $response = $concrete->performLinkedinProfileAction('endorse', array_merge($context, [
@@ -284,7 +292,7 @@ class CampaignStepExecutor
             'endorse' => 'endorse',
             'profile-view' => 'profile-view',
             'view-profile' => 'profile-view',
-            'follow' => 'profile-view',
+            'follow' => 'follow',
             'like-post' => 'like-post',
             'like_post' => 'like-post',
             'call' => 'call',

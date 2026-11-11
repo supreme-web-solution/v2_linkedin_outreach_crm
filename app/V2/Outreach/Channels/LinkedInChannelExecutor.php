@@ -77,7 +77,7 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
                 'send_message' => $this->sendMessage($providerKey, $recipientId, $message, $context),
                 'like_post' => $this->likePost($providerKey, $recipientId, $context),
                 'endorse' => $this->profileAction($providerKey, 'endorse', $recipientId, $context),
-                'follow' => $this->completed($this->providerManager->profile($providerKey)->getProfileByIdentifier($recipientId, $context)),
+                'follow' => $this->profileAction($providerKey, 'follow', $recipientId, $context),
                 default => ['status' => 'failed', 'error_message' => "Unsupported LinkedIn action: {$action}"],
             };
 
@@ -249,7 +249,12 @@ class LinkedInChannelExecutor implements ChannelExecutorInterface
     {
         /** @var UnipileProvider $concrete */
         $concrete = $this->providerManager->get($providerKey, UnipileProvider::class);
-        $mapped = $action === 'endorse' ? 'endorse' : 'view_profile';
+        $mapped = match ($action) {
+            'endorse' => 'endorse',
+            'follow' => 'follow',
+            'unfollow' => 'unfollow',
+            default => 'view_profile',
+        };
 
         return $this->completed($concrete->performLinkedinProfileAction($mapped, array_merge($context, [
             'recipient_id' => $recipientId,

@@ -421,7 +421,7 @@ class RunCampaignJob implements ShouldQueue
             );
         }
 
-        if (in_array($stepType, ['profile-view', 'endorse'], true)) {
+        if (in_array($stepType, ['profile-view', 'endorse', 'follow'], true)) {
             if ($recipientId === '') {
                 return ['status' => 'skipped', 'payload' => ['reason' => 'missing_recipient_id']];
             }
@@ -437,11 +437,12 @@ class RunCampaignJob implements ShouldQueue
 
                     /** @var UnipileProvider $concrete */
                     $concrete = $providerManager->get($providerKey, UnipileProvider::class);
-                    $response = $concrete->performLinkedinProfileAction('endorse', array_merge($context, [
+                    $action = $stepType === 'follow' ? 'follow' : 'endorse';
+                    $response = $concrete->performLinkedinProfileAction($action, array_merge($context, [
                         'recipient_id' => $recipientId,
                     ]));
 
-                    return ['action' => 'endorse', 'response' => $response];
+                    return ['action' => $action, 'response' => $response];
                 }
             );
         }
@@ -595,7 +596,7 @@ class RunCampaignJob implements ShouldQueue
             'endorse' => 'endorse',
             'profile-view' => 'profile-view',
             'view-profile' => 'profile-view',
-            'follow' => 'profile-view',
+            'follow' => 'follow',
             'like-post' => 'like-post',
             'comment-post' => 'comment-post',
             'view-post-engagers' => 'view-post-engagers',

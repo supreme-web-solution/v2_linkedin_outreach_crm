@@ -95,4 +95,24 @@ class UnipileGetProfileByIdentifierTest extends TestCase
             'campaign_id' => 1,
         ]);
     }
+
+    public function test_get_profile_maps_v2_description_into_headline(): void
+    {
+        Http::fake([
+            'unipile.test/v2/acc_li/users/*' => Http::response([
+                'provider_id' => 'ACoHeadline',
+                'full_name' => 'Jane Doe',
+                'description' => 'VP Sales at Acme',
+                'bio' => 'About Jane',
+            ], 200),
+        ]);
+
+        $profile = app(UnipileProvider::class)->getProfileByIdentifier('ACoHeadline', [
+            'account_id' => 'acc_li',
+        ]);
+
+        $this->assertSame('VP Sales at Acme', $profile['headline'] ?? null);
+        $this->assertSame('VP Sales at Acme', $profile['description'] ?? null);
+        $this->assertSame('About Jane', $profile['bio'] ?? null);
+    }
 }

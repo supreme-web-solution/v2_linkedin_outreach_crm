@@ -2203,7 +2203,12 @@ class UnipileProvider implements AccountProviderInterface, SearchProviderInterfa
             '_quiet' => ! empty($context['_quiet']) ? true : null,
         ], fn ($value) => $value !== null && $value !== '' && $value !== []);
 
-        return $this->accountScopedRequest('GET', '/users/'.rawurlencode($identifier), $accountId, $query);
+        $profile = $this->accountScopedRequest('GET', '/users/'.rawurlencode($identifier), $accountId, $query);
+
+        return $this->normalizeProfileItem(
+            is_array($profile) ? $profile : [],
+            $this->isLinkedInVanitySlug($identifier) ? $identifier : null,
+        );
     }
 
     public function listRelations(array $filters = [], array $context = []): array

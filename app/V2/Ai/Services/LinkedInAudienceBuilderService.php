@@ -516,7 +516,10 @@ class LinkedInAudienceBuilderService
             'profile_detail' => $detail,
             'sample_profiles' => [[
                 'name' => $fullName,
-                'headline' => $detail['headline'] ?? Arr::get($profile, 'headline'),
+                'headline' => $detail['headline']
+                    ?? (Arr::get($profile, 'headline')
+                        ?: Arr::get($profile, 'description')
+                        ?: Arr::get($profile, 'occupation')),
                 'about' => $detail['about'] ?? null,
                 'location' => $detail['location'] ?? null,
                 'company' => $detail['company'] ?? null,
@@ -631,7 +634,10 @@ class LinkedInAudienceBuilderService
             $detail = $this->summarizeProfileDetail($item, is_string($url) ? $url : null);
             $samples[] = [
                 'name' => $name !== '' ? $name : $publicId,
-                'headline' => $detail['headline'] ?? Arr::get($item, 'headline'),
+                'headline' => $detail['headline']
+                    ?? (Arr::get($item, 'headline')
+                        ?: Arr::get($item, 'description')
+                        ?: Arr::get($item, 'occupation')),
                 'about' => $detail['about'] ?? null,
                 'location' => $detail['location'] ?? Arr::get($item, 'location'),
                 'company' => $detail['company'] ?? null,

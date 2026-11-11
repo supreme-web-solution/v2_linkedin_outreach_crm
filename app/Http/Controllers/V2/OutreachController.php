@@ -242,12 +242,6 @@ class OutreachController extends Controller
             'profile_id' => ['required', 'string'],
             'action'     => ['required', 'string', 'in:view_profile,follow,endorse,unfollow'],
         ]);
-        if ($data['action'] === 'follow') {
-            $data['action'] = 'view_profile';
-        }
-        if ($data['action'] === 'unfollow') {
-            return response()->json(['error' => 'LinkedIn unfollow is not supported.'], 422);
-        }
         try {
             $providerKey = $this->providerManager->defaultProvider();
             /** @var \App\V2\Integrations\Unipile\UnipileProvider $provider */
